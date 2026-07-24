@@ -1,0 +1,7 @@
+{
+  "host": "WATCH_IP",
+  "port": 8765,
+  "phoneHost": "PHONE_IP",
+  "phonePort": 8766,
+  "pairingCode": "PAIRING_CODE"
+}

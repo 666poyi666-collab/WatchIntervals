@@ -1,0 +1,83 @@
+package com.poyi.watchintervals.phone;
+
+import android.app.Activity;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.osmdroid.config.Configuration;
+import org.osmdroid.util.BoundingBox;
+import org.osmdroid.util.GeoPoint;
+import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Marker;
+import org.osmdroid.views.overlay.Polyline;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Locale;
+
+/** Phone history detail with a real slippy-map base layer and system-sports style metrics. */
+public class HistoryDetailActivity extends Activity {
+    private MapView map;
+
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
+        Configuration.getInstance().load(this,getSharedPreferences("osmdroid",MODE_PRIVATE));
+        Configuration.getInstance().setUserAgentValue(getPackageName());
+        JSONObject record;
+        try { record=new JSONObject(getIntent().getStringExtra("record")); } catch(Exception error) { finish(); return; }
+
+        ScrollView scroll=new ScrollView(this); scroll.setBackgroundColor(Color.rgb(244,245,241));
+        LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(18),dp(18),dp(18),dp(28)); scroll.addView(root);
+        TextView back=text("‹  运动记录",26,true,Color.rgb(24,27,25)); back.setOnClickListener(v->finish()); root.addView(back,new LinearLayout.LayoutParams(-1,dp(54)));
+        root.addView(text(new SimpleDateFormat("yyyy年MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.optLong("startedAt"))),14,false,Color.DKGRAY));
+
+        FrameLayout mapShell=new FrameLayout(this); mapShell.setBackground(round(Color.rgb(226,229,223),18));
+        map=new MapView(this); map.setTileSource(new AmapTileSource()); map.setMinZoomLevel(4d); map.setMaxZoomLevel(18d); map.setMultiTouchControls(true); map.setTilesScaledToDpi(true); map.getZoomController().setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER);
+        mapShell.addView(map,new FrameLayout.LayoutParams(-1,-1));
+        JSONArray route=record.optJSONArray("route"); ArrayList<GeoPoint> points=points(route);
+        if(points.isEmpty()){
+            TextView empty=text("本次记录没有有效定位轨迹",16,true,Color.DKGRAY);empty.setGravity(Gravity.CENTER);empty.setBackground(round(Color.argb(220,244,245,241),18));
+            FrameLayout.LayoutParams ep=new FrameLayout.LayoutParams(-1,dp(76),Gravity.CENTER);ep.setMargins(dp(28),0,dp(28),0);mapShell.addView(empty,ep);
+            map.getController().setZoom(14d);map.getController().setCenter(new GeoPoint(39.9042,116.4074));
+        }else{
+            Polyline line=new Polyline();line.setPoints(points);line.getOutlinePaint().setColor(Color.rgb(139,221,48));line.getOutlinePaint().setStrokeWidth(dp(6));map.getOverlays().add(line);
+            Marker start=marker(points.get(0),"起点",Color.rgb(35,190,205)); Marker end=marker(points.get(points.size()-1),"终点",Color.rgb(139,221,48));map.getOverlays().add(start);map.getOverlays().add(end);
+            if(points.size()==1){map.getController().setZoom(17d);map.getController().setCenter(points.get(0));}
+            else {BoundingBox box=BoundingBox.fromGeoPoints(points); map.post(()->map.zoomToBoundingBox(box,true,dp(52)));}
+        }
+        LinearLayout.LayoutParams mapParams=new LinearLayout.LayoutParams(-1,dp(360));mapParams.topMargin=dp(16);root.addView(mapShell,mapParams);
+        TextView attribution=text("高德地图  ·  绿色为运动轨迹",11,false,Color.GRAY);attribution.setGravity(Gravity.CENTER);root.addView(attribution,new LinearLayout.LayoutParams(-1,dp(38)));
+
+        double meters=record.optDouble("distanceMeters");long duration=record.optLong("durationMs");int steps=record.optInt("steps"),heart=record.optInt("averageHeartRate");
+        LinearLayout summary=card();summary.addView(text("运动概览",17,true,Color.rgb(24,27,25)));LinearLayout summaryRow=new LinearLayout(this);summaryRow.addView(metricCell("总距离",formatDistance(meters),true),weight());summaryRow.addView(metricCell("运动时间",formatDuration(duration),false),weight());summaryRow.addView(metricCell("平均配速",formatPace(duration,meters),false),weight());summary.addView(summaryRow);root.addView(summary,marginTop(8));
+        LinearLayout detail=card();detail.addView(text("详细数据",17,true,Color.rgb(24,27,25)));LinearLayout detailRow=new LinearLayout(this);detailRow.addView(metricCell("平均心率",heart>0?heart+" bpm":"--",false),weight());detailRow.addView(metricCell("步数",steps+" 步",false),weight());LinearLayout detailRow2=new LinearLayout(this);detailRow2.addView(metricCell("平均步频",duration>0&&steps>0?Math.round(steps/(duration/60000d))+" 步/分":"--",false),weight());detailRow2.addView(metricCell("轨迹点",points.size()+" 个",false),weight());detail.addView(detailRow);detail.addView(detailRow2);root.addView(detail,marginTop(14));
+        if(record.has("bestPaceSecondsPerKm")||record.has("elevationGainMeters")){LinearLayout performance=card();performance.addView(text("运动表现",17,true,Color.rgb(24,27,25)));if(record.has("bestPaceSecondsPerKm"))performance.addView(dataLine("最佳配速",formatDuration(record.optLong("bestPaceSecondsPerKm")*1000L)+" /公里"));if(record.has("elevationGainMeters"))performance.addView(dataLine("累计爬升",record.optDouble("elevationGainMeters")+" 米"));root.addView(performance,marginTop(14));}
+        JSONArray splits=record.optJSONArray("splits");if(splits!=null&&splits.length()>0){LinearLayout splitCard=card();splitCard.addView(text("公里分段",17,true,Color.rgb(24,27,25)));for(int i=0;i<splits.length();i++){JSONObject split=splits.optJSONObject(i);if(split!=null)splitCard.addView(dataLine(split.optInt("index")+" 公里",formatDuration(split.optLong("durationMs"))+"  ·  "+formatDuration(split.optLong("paceSecondsPerKm")*1000L)+" /公里"));}root.addView(splitCard,marginTop(14));}
+        JSONArray stageResults=record.optJSONArray("stageResults");if(stageResults!=null&&stageResults.length()>0){LinearLayout stageCard=card();stageCard.addView(text("训练阶段",17,true,Color.rgb(24,27,25)));for(int i=0;i<stageResults.length();i++){JSONObject stage=stageResults.optJSONObject(i);if(stage!=null)stageCard.addView(dataLine(stage.optInt("index")+"  "+stage.optString("name"),formatDuration(stage.optLong("completedAtMs"))));}root.addView(stageCard,marginTop(14));}
+        setContentView(scroll);
+    }
+
+    private ArrayList<GeoPoint> points(JSONArray route){ArrayList<GeoPoint> result=new ArrayList<>();if(route!=null)for(int i=0;i<route.length();i++){Object raw=route.opt(i);double lat=Double.NaN,lon=Double.NaN;if(raw instanceof JSONArray){JSONArray p=(JSONArray)raw;if(p.length()>=2){lat=p.optDouble(0,Double.NaN);lon=p.optDouble(1,Double.NaN);}}else if(raw instanceof JSONObject){JSONObject p=(JSONObject)raw;lat=p.optDouble("latitude",Double.NaN);lon=p.optDouble("longitude",Double.NaN);}if(Double.isFinite(lat)&&Double.isFinite(lon))result.add(AmapTileSource.fromWgs84(lat,lon));}return result;}
+    private TextView dataLine(String label,String value){TextView v=text(label+"                                      "+value,14,false,Color.rgb(35,38,36));v.setPadding(0,dp(9),0,dp(9));return v;}
+    private Marker marker(GeoPoint point,String title,int color){Marker marker=new Marker(map);marker.setPosition(point);marker.setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_CENTER);marker.setTitle(title);GradientDrawable icon=new GradientDrawable();icon.setShape(GradientDrawable.OVAL);icon.setColor(color);icon.setStroke(dp(3),Color.WHITE);icon.setSize(dp(20),dp(20));marker.setIcon(icon);return marker;}
+    private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(12),dp(18),dp(12));v.setBackground(round(Color.WHITE,16));return v;}
+    private TextView metricCell(String label,String value,boolean hero){TextView v=text(label+"\n"+value,hero?18:16,true,Color.rgb(24,27,25));v.setGravity(Gravity.CENTER);v.setLineSpacing(dp(4),1f);v.setPadding(dp(3),dp(13),dp(3),dp(13));return v;}
+    private TextView text(String value,int size,boolean bold,int color){TextView v=new TextView(this);v.setText(value);v.setTextSize(size);v.setTextColor(color);if(bold)v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return v;}
+    private GradientDrawable round(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
+    private LinearLayout.LayoutParams marginTop(int top){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);return p;}
+    private LinearLayout.LayoutParams weight(){return new LinearLayout.LayoutParams(0,-2,1f);}
+    private String formatDistance(double meters){return meters<1000?Math.round(meters)+" 米":String.format(Locale.CHINA,"%.2f 公里",meters/1000d);}
+    private String formatDuration(long millis){long total=Math.max(0,millis/1000),h=total/3600,m=(total%3600)/60,s=total%60;return h>0?String.format(Locale.CHINA,"%d:%02d:%02d",h,m,s):String.format(Locale.CHINA,"%02d:%02d",m,s);}
+    private String formatPace(long millis,double meters){if(meters<1||millis<=0)return "-- /公里";long sec=Math.round(millis/1000d*1000d/meters);return String.format(Locale.CHINA,"%d:%02d /公里",sec/60,sec%60);}
+    private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    @Override protected void onResume(){super.onResume();if(map!=null)map.onResume();}
+    @Override protected void onPause(){if(map!=null)map.onPause();super.onPause();}
+}

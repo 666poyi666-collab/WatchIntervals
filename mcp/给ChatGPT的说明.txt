@@ -1,0 +1,15 @@
+步序运动 MCP
+
+1. 本机已经使用：
+   C:\Users\poyi\.watchintervals.json
+
+2. MCP 配置：
+   C:\开发\手表开发\mcp\chatgpt-mcp-config.json
+
+3. MCP 启动入口：
+   C:\开发\手表开发\mcp\start_buxu_mcp.cmd
+
+4. 服务提供训练状态、计划分组、每日计划、历史、完整轨迹、运动汇总，
+   以及开始、暂停、继续、结束、同步、选择计划等操作。
+
+5. 手机和手表需处于同一局域网，手机“步序”和手表“步序”保持运行。

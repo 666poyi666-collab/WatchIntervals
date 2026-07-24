@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+
+android {
+    namespace 'com.poyi.watchintervals'
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId 'com.poyi.watchintervals'
+        minSdk 30
+        targetSdk 30
+        versionCode 26
+        versionName '0.16.0'
+        manifestPlaceholders = [BAIDU_MAP_AK: (project.findProperty('BAIDU_MAP_AK') ?: 'TOKEN')]
+        buildConfigField 'String', 'BAIDU_MAP_AK', '"' + (project.findProperty('BAIDU_MAP_AK') ?: 'TOKEN') + '"'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'org.osmdroid:osmdroid-android:6.1.20'
+    implementation files('libs/baidu-map-7.5.9-local.jar')
+}

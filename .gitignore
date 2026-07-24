@@ -1,0 +1,43 @@
+# Gradle and Android build output
+.gradle/
+**/build/
+local.properties
+
+# IDE and operating-system files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Signing material and local credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*
+
+# Python runtime artifacts
+**/.venv/
+**/__pycache__/
+*.py[cod]
+
+# Local MCP runtime state and downloaded tunnel client
+mcp/tunnel-client/
+mcp/chatgpt-mcp-config.json
+mcp/ChatGPT*.txt
+mcp/*URL*.txt
+mcp/*.log
+mcp/*.pid
+
+# Device analysis, packaged output, and local automation
+analysis/
+dist/
+.agents/
+
+# Root-level test captures and third-party APK samples
+/*.png
+/*.xml
+/*.apk
+
