@@ -128,7 +128,8 @@
 - 协议使用 16 字节帧头，默认 MTU 23 可传输；真机 MTU 517 测试后补充 512 字节属性值上限及 Android 13 原子写 API。
 - 手表新增共享 `WatchCommandRouter`；手机计划 outbox、定位中继和正常业务通过 `WatchConnectionManager` 选择 BLE/LAN，不再直接依赖固定 IP。
 - 真机日志确认广播、连接、MTU、四项 CCCD、过渡 AUTH、`/v1/sync/operations`、`/v1/plan/profile` 和 `/v1/location` 成功；手机 UI 已显示 BLE + LAN 加速状态。
-- 两端升级为 0.19.0 debug 候选并覆盖安装。测试仍使用网络 ADB；安全配对、控制取证、无 Wi-Fi、后台、重启、长时及功耗门禁保持开放。
+- 无活动训练时点击手机“暂停”收到手表 `409 state_mismatch`，验证控制请求和 expectedState 前置条件且未修改训练数据。
+- 两端升级为 0.19.0 debug 候选并覆盖安装。测试仍使用网络 ADB；安全配对、真实训练控制/重复 commandId、无 Wi-Fi、后台、重启、长时及功耗门禁保持开放。
 
 ## 决策记录
 

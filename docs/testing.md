@@ -119,7 +119,8 @@ git diff --check
 - 双端协商 MTU 517，手机依次完成 EVENTS、SYNC_RX、PAIRING、HEARTBEAT 四个 CCCD indication 订阅，并完成过渡 AUTH。
 - 真机发现并修复三项 Xiaomi 栈兼容问题：认证后 GATT 操作竞态、Android 13 原子写 API、MTU 517 时属性值不得超过 512 字节。
 - 手表日志确认 `POST /v1/sync/operations`、`GET /v1/plan/profile`、`POST /v1/location` 均经 GATT 返回 200；手机 UI 显示“蓝牙连接 · LAN 加速”。
-- 本轮通过网络 ADB 安装和读取脱敏日志，因此不满足 BLE-001；控制按钮、后台、重启、长时间和功耗门禁仍未计为通过。
+- 手机“暂停”按钮在会话为 STOPPED 时经连接管理器收到手表 `409 state_mismatch`，证明 BLE 控制路由和状态前置条件生效且没有修改训练；真实训练控制与重复 commandId 仍待门禁。
+- 本轮通过网络 ADB 安装和读取脱敏日志，因此不满足 BLE-001；后台、重启、长时间和功耗门禁仍未计为通过。
 
 ## 6. 建议优先补齐的自动测试
 
