@@ -413,6 +413,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             fileStore = WorkoutFileStore.openRecoverable(this);
             if (fileStore != null) {
                 org.json.JSONObject checkpoint = fileStore.readCheckpoint();
+                fileStore.recoverToCheckpoint(checkpoint);
                 ArrayList<Stage> restoredStages = PlanStore.decode(checkpoint.optString("plan"));
                 if (restoredStages.isEmpty()) { fileStore.discard(); fileStore = null; return false; }
                 stages = restoredStages;

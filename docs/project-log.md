@@ -104,6 +104,15 @@
 - 真机遍历训练核心、控制、自由记录计划和轨迹四页，未发现裁切或重叠；室内未佩戴测试没有轨迹/心率，不作为户外数据验收。
 - 首次推送稳定化分支触发 GitHub Actions；Linux runner 暴露 `gradlew` 缺少可执行位并以 exit 126 失败，修正 Git mode 为 100755 后重跑。
 
+## 2026-07-25：活动样本检查点一致性
+
+- 关联 `REQ-DATA-010`、`BUG-012`。
+- 将 checkpoint 中的 route/heart offset 定义为样本提交边界；服务恢复统计前先截断 offset 后的完整或损坏尾行，并在非法半行 offset 时回退到上一完整行。
+- 采用截断而非路线重放，因为路线文件无法无歧义还原系统运动距离、步数估距及阶段边界；错误重放会比丢弃未提交尾部产生更严重的重复累计。
+- 有效样本计数同步改为只统计可解析 JSON 行。
+- `WorkoutFileStoreTest` 新增 2 项，`:app:testDebugUnitTest` 通过；GitHub Actions run `30164226710` 亦已完整通过此前冻结提交的测试、lint、双端构建和产物上传。
+- 完整执行 `gradlew.bat test lint :app:assembleDebug :phone:assembleDebug` 成功；手表 APK SHA-256 为 `8DA31F39A1172DB4C43CADE5ED2187C0BE49B7BD4487644ACF6882CD75CE4F44`，通过 USB 覆盖安装后网络 ADB 仍保持在线。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |

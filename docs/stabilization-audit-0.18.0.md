@@ -14,7 +14,7 @@
 | MCP 版本 | `0.6.0` |
 | 冻结提交 | 42 个文件，1869 行新增、260 行删除 |
 | APK | `dist/0.18.0-debug/`，被 Git 忽略 |
-| 手表 APK | 9,431,242 bytes；SHA-256 `95FFE16635C6CEC9F1A90B4B6A55EE0D068E62B14D8270F8644C56A3218F5438` |
+| 手表 APK | 9,432,142 bytes；SHA-256 `8DA31F39A1172DB4C43CADE5ED2187C0BE49B7BD4487644ACF6882CD75CE4F44` |
 | 手机 APK | 958,597 bytes；SHA-256 `72A0A14E0BB04869E51A4E356941AC6604F8F5BFAAB8CBC7EA6C07DA845CE15D` |
 
 本地执行并通过：
@@ -26,7 +26,7 @@ powershell -ExecutionPolicy Bypass -File mcp\tests\test_persistent_tunnel.ps1
 git diff --check
 ```
 
-手表 JVM 测试 3 项、MCP 测试 10 项通过；Gateway `/healthz` 和 MCP `initialize` 本地烟雾通过。GitHub Actions 文件存在，但冻结时尚未推送分支，因此没有远端 CI 运行证据。
+手表 JVM 测试现为 7 项、MCP 测试 10 项通过；Gateway `/healthz` 和 MCP `initialize` 本地烟雾通过。GitHub Actions run `30164226710` 已完整通过并上传 APK 与报告产物。
 
 ## 2. NDJSON 与历史审计
 
@@ -40,10 +40,11 @@ git diff --check
 - 删除历史和淘汰第 201 条记录会删除对应目录；启动 reconcile 重建、排序并裁剪摘要索引。
 - 旧 `workout_history.json` 逐条迁移，首次成功迁移保留备份，下次启动删除。
 
-未满足：
+后续修正：
 
-- checkpoint 中的 route/heart offset 目前只记录、不用于重放，见 `BUG-012`。
-- 有效行计数按物理行计数，损坏中间行可能使 `routePointCount` 高于可解析点数。
+- checkpoint 的 route/heart offset 已改为权威提交边界；恢复累计值前截断 offset 后的完整或损坏尾行，避免样本与统计不一致，见 `BUG-012`。
+- 有效行计数改为只统计可解析 JSON 行，损坏行不再抬高 `routePointCount`。
+- 修复版已通过 USB `install -r` 覆盖至 OWW221，应用数据保留，网络 ADB 在安装后仍在线。
 - 尚无真实进程终止、文件中断和 7200/14400 个 Location 文件样本测试；现有 14400 测试只覆盖指标增量守恒。
 
 ## 3. 历史 API 审计
@@ -100,4 +101,4 @@ git diff --check
 5. 真实 ChatGPT Secure MCP Tunnel 绑定与分层离线错误。
 6. BLE 息屏、后台、双端重启、重连和 12 小时门禁；通过前不接入 SyncEngine。
 
-正式签名、GitHub Release 和合入 main 必须等待上述相关门禁及 `BUG-012` 完成。
+正式签名、GitHub Release 和合入 main 仍须等待户外、网络、Tunnel 和相关真机门禁完成。

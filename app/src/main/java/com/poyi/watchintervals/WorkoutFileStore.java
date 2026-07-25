@@ -11,6 +11,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -121,6 +122,26 @@ final class WorkoutFileStore implements AutoCloseable {
 
     JSONObject readCheckpoint() throws Exception {
         return new JSONObject(readText(new File(directory, CHECKPOINT)));
+    }
+
+    /**
+     * The checkpoint is the committed transaction boundary for sample files.
+     * Any later complete or partial lines may not be reflected in its aggregate
+     * metrics, so discard them before the service restores those metrics.
+     */
+    synchronized void recoverToCheckpoint(JSONObject checkpoint) throws Exception {
+        routeWriter.flush();
+        heartWriter.flush();
+        if (checkpoint.has("routeOffset")) {
+            long offset = truncateToCompleteLine(new File(directory, ROUTE), checkpoint.optLong("routeOffset", 0L));
+            routeStream.getChannel().position(offset);
+        }
+        if (checkpoint.has("heartOffset")) {
+            long offset = truncateToCompleteLine(new File(directory, HEART), checkpoint.optLong("heartOffset", 0L));
+            heartStream.getChannel().position(offset);
+        }
+        routePointCount = countValidLines(new File(directory, ROUTE));
+        heartSampleCount = countValidLines(new File(directory, HEART));
     }
 
     ArrayList<Location> readRoutePreview(int maximum) {
@@ -250,6 +271,21 @@ final class WorkoutFileStore implements AutoCloseable {
         return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
     }
 
+    static long truncateToCompleteLine(File file, long requestedOffset) throws Exception {
+        if (!file.exists()) return 0L;
+        try (RandomAccessFile access = new RandomAccessFile(file, "rw")) {
+            long offset = Math.max(0L, Math.min(requestedOffset, access.length()));
+            while (offset > 0L) {
+                access.seek(offset - 1L);
+                if (access.read() == '\n') break;
+                offset--;
+            }
+            access.setLength(offset);
+            access.getFD().sync();
+            return offset;
+        }
+    }
+
     static void deleteTree(File file) {
         if (file == null || !file.exists()) return;
         File[] children = file.listFiles();
@@ -261,7 +297,11 @@ final class WorkoutFileStore implements AutoCloseable {
         int count = 0;
         if (!file.isFile()) return 0;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
-            while (reader.readLine() != null) count++;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                try { new JSONObject(line); count++; }
+                catch (Exception ignored) { /* Ignore a damaged trailing line. */ }
+            }
         } catch (Exception ignored) {}
         return count;
     }

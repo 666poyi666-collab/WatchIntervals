@@ -55,6 +55,7 @@
 5. 轨迹点只在通过精度、速度、时间间隔过滤后入库。
 6. 恢复会话必须兼容旧检查点；损坏检查点应清除或跳过坏字段，不阻塞新训练。
 7. 缺失/过期的心率显示为未知，不能沿用无限期旧值。
+8. checkpoint 是轨迹和心率文件的提交边界；恢复累计值前必须截断 offset 后的完整或损坏尾行，不能保留未被统计确认的样本。
 
 ## 4. 数据和存储
 
@@ -62,7 +63,7 @@
 | --- | --- | --- | --- |
 | 当前计划 | SharedPreferences `plans` | 阶段 JSON 数组 | 含名称、分组、要求 |
 | 多计划库 | SharedPreferences `plan_library_v2` | schema 2 | 手机为主库，手表保留同步副本 |
-| 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入 |
+| 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入；恢复时按已确认 offset 截断尾部 |
 | 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
 | 配对码 | SharedPreferences `bridge` | 六位十进制字符串 | 当前持久保存，不自动轮换 |
 | MCP 配置 | `%USERPROFILE%/.watchintervals.json` | host/port/phoneHost/phonePort/pairingCode | 禁止提交真实配置 |
