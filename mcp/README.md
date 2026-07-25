@@ -1,6 +1,6 @@
 # 步序运动 MCP
 
-本地 MCP 通过手表配对 API 查询完整训练历史、轨迹、实际步数、心率、训练计划，并控制开始、暂停、继续和结束。
+本地 MCP 通过手机和手表配对 API 查询训练摘要、分页轨迹、实际步数、心率、训练计划，并控制开始、暂停、继续和结束。
 
 已提供状态、命名计划/分组/要求读写、阶段读写、训练聚合统计、历史列表、单条完整轨迹、系统睡眠列表/最近记录/汇总，以及开始、暂停、继续、结束、删除。`watch_status.backgroundLocation` 应为 `true`，以保证从手机或 MCP 后台启动后仍能连续定位。
 
@@ -14,10 +14,10 @@
 python -m unittest discover -s mcp\tests -v
 ```
 
-配置文件默认为 `%USERPROFILE%/.watchintervals.json`：
+配置文件默认为 `%USERPROFILE%/.watchintervals.json`。设备 ID 是身份，host 仅作为可更新的最后地址缓存：
 
 ```json
-{"host":"192.168.1.44","port":8765,"phoneHost":"192.168.1.84","phonePort":8766,"pairingCode":"手表首页显示的六位码"}
+{"watchDeviceId":"WATCH_DEVICE_ID","phoneDeviceId":"PHONE_DEVICE_ID","host":"WATCH_LAST_HOST","port":8765,"phoneHost":"PHONE_LAST_HOST","phonePort":8766,"pairingCode":"手表首页显示的六位码"}
 ```
 
 Codex/ChatGPT MCP 启动命令：
@@ -30,8 +30,10 @@ python C:\开发\手表开发\mcp\watch_intervals_mcp.py
 
 ## ChatGPT 长效远程连接
 
-ChatGPT 使用 OpenAI Secure MCP Tunnel 连接本机服务。固定 Tunnel ID 不随电脑或
-进程重启改变，插件只需绑定一次。项目已包含 `tunnel-client` Windows x64 客户端：
+ChatGPT 使用 OpenAI Secure MCP Tunnel 连接本机 Gateway。Gateway 固定监听
+`http://127.0.0.1:8767/mcp`，同时提供 `/healthz` 和 `/readyz`；Tunnel 通过
+`--mcp-server-url` 连接它。固定 Tunnel ID 不随电脑或进程重启改变，插件只需绑定一次。
+项目已包含 `tunnel-client` Windows x64 客户端：
 
 1. 运行 `打开ChatGPT远程连接设置.cmd`。
 2. 在 Platform 创建 Tunnel，复制 `tunnel_id`，再创建 Tunnel Runtime API Key。
@@ -41,8 +43,8 @@ ChatGPT 使用 OpenAI Secure MCP Tunnel 连接本机服务。固定 Tunnel ID �
 powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\install_persistent_chatgpt_tunnel.ps1 -TunnelId tunnel_xxx
 ```
 
-脚本安全提示输入 Runtime API Key，使用 Windows DPAPI CurrentUser 加密保存，建立
-登录自启动任务并立即启动守护进程。守护进程退出后自动重连。ChatGPT 中创建开发者
+脚本安全提示输入 Runtime API Key，使用 Windows DPAPI CurrentUser 加密保存，分别建立
+Gateway 与 Tunnel 登录自启动任务并立即启动。进程退出后由任务重新拉起。ChatGPT 中创建开发者
 模式 App 时，Connection 选择 **Tunnel**，再选择同一个 Tunnel ID；以后不再填写 URL。
 
 状态检查：
@@ -51,9 +53,13 @@ powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\install_pers
 powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\check_persistent_chatgpt_tunnel.ps1
 ```
 
-`setup_chatgpt_tunnel.ps1` 和 `run_chatgpt_tunnel.ps1` 保留为兼容入口。Quick Tunnel
+状态脚本分别报告 Gateway、Tunnel、手机和手表层级；`TUNNEL_OFFLINE` 只用于本机检查，
+远程工具仅返回 `PHONE_OFFLINE`、`WATCH_OFFLINE`、`WATCH_TIMEOUT`、`WATCH_AUTH_FAILED`
+等调用链内可判断的错误。`setup_chatgpt_tunnel.ps1` 和 `run_chatgpt_tunnel.ps1` 保留为兼容入口。Quick Tunnel
 脚本只用于临时排障，不作为长期连接。
 
 所有数据默认停留在手表、手机和本机；MCP 只响应已配对的本地请求。
 
 计划与分组以手机计划库为准。MCP 可创建、重命名、删除分组，增删改选计划，并通过 `sync_plan_library` 立即把完整计划库推送到手表；训练状态与历史仍直接读取手表。
+
+当前 Gateway、发现和重试逻辑已具备本地测试基础，但尚未在真实 Secure MCP Tunnel 上完成端到端绑定验证。手机离开家庭 LAN、Windows 未登录/未联网或进入睡眠时，本轮不保证远程可用。

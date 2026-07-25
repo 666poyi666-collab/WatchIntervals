@@ -7,19 +7,19 @@
 
 ## 1. 开放项
 
-### BUG-001：缺少自动化测试
+### BUG-001：关键路径自动化测试仍不完整
 
-- 状态：Open
+- 状态：In Progress
 - 严重度：P1
 - 影响：所有当前版本
-- 现象：`app` 和 `phone` 仅有 `src/main`，没有 `test`/`androidTest`；训练状态和数据迁移依赖人工回归。
+- 现象：已有指标纯 Java 测试、MCP 契约测试和 CI，但训练状态边界、文件中断恢复、schema 迁移和 UI 仍主要依赖人工回归。
 - 风险：传感器切换、暂停、恢复和历史 schema 修改容易产生回归。
-- 处理：按 `testing.md` 第 6 节依次建立纯 Java、Robolectric/仪器和 API 契约测试。
+- 处理：继续按 `testing.md` 第 6 节补齐纯 Java、Robolectric/仪器和 API 契约测试。
 - 关闭条件：核心状态机、编解码和协议在 CI 中自动执行。
 
 ### BUG-002：pause/resume API 实际采用 toggle，调用不幂等
 
-- 状态：Open
+- 状态：Fixed，待真机验证
 - 严重度：P1
 - 影响：手表 0.16.0
 - 复现：连续调用两次 `/v1/control/pause`；第二次会继续训练。对已暂停训练调用 `resume` 之外的重复请求也可能反转状态。
@@ -39,12 +39,12 @@
 
 ### BUG-004：仓库缺少 Gradle Wrapper
 
-- 状态：Open
+- 状态：Fixed
 - 严重度：P2
 - 影响：新开发环境、CI
 - 现象：README 使用 `gradle`，但仓库没有 `gradlew` 和 `gradle/wrapper`；依赖本机安装或缓存的 8.14.3。
 - 处理：使用 8.14.3 生成 wrapper，提交 wrapper 配置和校验后的脚本。
-- 关闭条件：全新环境可执行 `./gradlew :app:assembleDebug :phone:assembleDebug`。
+- 验证：已生成 8.14.3 Wrapper；本地通过 `gradlew.bat` 执行测试与双模块编译，CI 使用相同入口。
 
 ### BUG-005：关键路径存在大量吞异常，诊断证据不足
 
@@ -93,6 +93,24 @@
 - 修复：改用 OpenAI Secure MCP Tunnel 固定 Tunnel ID；Runtime Key 使用 Windows DPAPI CurrentUser 加密，计划任务在登录后启动守护脚本，客户端退出后 5 秒重连。
 - 关闭条件：完成一次 Tunnel 绑定，重启电脑后 `check_persistent_chatgpt_tunnel.ps1` 显示 `Online=True`，ChatGPT 无需修改连接即可调用 `watch_status` 和 `summarize_sleep`。
 
+### BUG-010：最后阶段达标后训练提前终止
+
+- 状态：Fixed，待 OWW221 户外验证
+- 严重度：P1
+- 影响：手表 0.17.0 及以前
+- 现象：最后阶段达标后立即停止 GPS、传感器和前台服务，用户继续运动的数据不再记录。
+- 修复：分离 SessionState 与 PlanState；计划完成后进入自由记录，只有手动结束才保存并停止。
+- 验证：新增短时间计划回归；仍需完成 30–60 分钟户外、暂停和进程恢复测试。
+
+### BUG-011：超过 600 个轨迹点后早期路线持续丢失
+
+- 状态：Fixed，待压力与户外验证
+- 严重度：P1
+- 影响：手表 0.17.0 及以前
+- 根因：内存数组达到 600 后持续删除第二个点，检查点和历史又整段重写该数组。
+- 修复：原始轨迹/心率改为每训练独立 NDJSON 追加文件；检查点仅保存标量和文件偏移；地图使用最多 600 点简化预览。
+- 验证：新增存储结构和单元测试基线；仍需注入 7200/14400 点并执行真机长时压力测试。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。
@@ -110,6 +128,8 @@
 | BUG-H009 | MCP `set_training_plan_profile` 只写手表当前 profile，手机计划库无记录且后续同步会覆盖 | 改为手机库幂等写入、选择、同步并回读两端校验；失败不再报告成功 | Fixed；MCP 0.4.1、`mcp/tests/test_watch_intervals_mcp.py` |
 | BUG-H010 | 厂商睡眠 duration 初版按秒命名，真机 352 实际表示 352 分钟 | API、手机和 MCP 统一改为 `*Minutes`，真机以 session 起止时间交叉验证 | Fixed；WT-015、睡眠汇总单元测试 |
 | BUG-H011 | 手机睡眠页只展示首个 session，且把缺失评分/血氧显示为 0 | 时长使用 record 总时长，深睡/REM/阶段聚合全部 session；缺失指标显示 `--`，MCP 汇总返回 `null` 及样本数 | Fixed；PT-008、API-010 |
+| BUG-H012 | pause/resume API 采用 toggle，重复调用会反转状态 | 增加显式 action、commandId、expectedState、expiresAt 和有限结果缓存 | Fixed；API-006，待真机重试验证 |
+| BUG-H013 | 仓库缺少 Gradle Wrapper | 加入并锁定 Gradle 8.14.3 Wrapper，CI 与本地统一入口 | Fixed；CI/本地构建验证 |
 
 ## 3. 新缺陷模板
 

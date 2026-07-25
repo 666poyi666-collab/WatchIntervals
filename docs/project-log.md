@@ -82,6 +82,18 @@
 - 新增长效 ChatGPT Tunnel 安装、守护和检查脚本：固定 Tunnel ID，Runtime Key 经 DPAPI 加密，登录后自动启动并在退出后重连；关联 `REQ-SYNC-004`、`BUG-009`。
 - APK SHA-256：watch `3FC388C682E0AFD393AD4CD916C9152B3B8E8C3992447840AC636D2E4D0F70DA`；phone `A44B5212E9F847C1B29013A2AD60B01C4C2954C7A027EE125DD94F393D7907D7`。
 
+## 2026-07-25：户外可靠性、协议 v2 与工程基线
+
+- 关联 `REQ-WORKOUT-002`、`REQ-WORKOUT-007`、`REQ-DATA-010` 至 `REQ-DATA-012`、`REQ-SYNC-004` 至 `REQ-SYNC-006`，以及对应 BUG 台账。
+- 提交 Gradle 8.14.3 Wrapper 和 GitHub Actions；CI 统一执行 Python/Java 测试、Android lint、两端构建、差异检查及 debug 产物打包。
+- 将计划完成与会话结束分离：最后阶段达标后进入自由记录，训练服务继续持有状态和传感器，只有手动结束才归档。
+- 活动轨迹和心率改为 NDJSON 追加文件，检查点保持有界并原子替换；历史改为每记录独立目录和最多 200 条的摘要索引。
+- 增加 10 秒平滑速度、来源距离/切换证据、计划内与自由记录统计，以及历史摘要/详情/游标分页协议。
+- 手机增加计划 outbox 和 operationId/revision/ACK 基础协议；控制命令分离 pause/resume 并加入状态前置条件和过期时间。
+- Windows MCP 拆为长期 Gateway 与 Tunnel 两层，手机/手表通过 mDNS 和稳定设备 ID 恢复运行时地址；远程可调用错误不再包含无法自证的 `TUNNEL_OFFLINE`。
+- BLE 只实现 debug ping/pong POC，不接入同步引擎；真实户外、后台 BLE、Windows Tunnel 端到端和功耗门禁均保留为待验证项。
+- 本轮本地证据：两端 Java 编译、手表单元测试、10 项 MCP 测试和 `git diff --check` 通过；完整 lint/APK 构建与哈希记录见本次交付结果。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
@@ -93,6 +105,9 @@
 | ADR-005 | 厂商能力运行时探测而非按包版本猜测 | 服务存在不代表运动能力开放 | 每次固件变化都需重新验证 capabilities |
 | ADR-006 | APK 通过 GitHub Release 分发，不进 Git | 避免仓库历史膨胀 | Release 必须记录哈希和构建类型 |
 | ADR-007 | 睡眠使用 HealthKit Store 只读 API并保留原始 stage type | 权限边界稳定，避免依赖私有数据库及猜测未公开枚举 | 需系统授权；固件变化后复测字段单位和语义 |
+| ADR-008 | 原始训练样本使用每会话追加文件，历史索引只存摘要 | 避免长训练反复序列化和整体重写大 JSON | 恢复、归档和删除必须处理目录级原子性 |
+| ADR-009 | 计划完成状态与训练会话状态正交 | 达标不代表用户已经结束户外运动 | UI、检查点和控制 API 均需同时表达两个状态 |
+| ADR-010 | BLE 必须先通过真机稳定性门禁再接入 SyncEngine | OWW221 后台和 GATT 角色能力尚无证据 | 未通过时继续发布可靠 LAN，不把 POC 宣称为功能 |
 
 ## 工作日志模板
 

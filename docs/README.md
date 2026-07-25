@@ -20,11 +20,11 @@
 | 项目 | 当前值 |
 | --- | --- |
 | 基线日期 | 2026-07-25 |
-| 手表应用 | `app`，`com.poyi.watchintervals`，`0.17.0`（27） |
-| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.10.1`（11） |
+| 手表应用 | `app`，`com.poyi.watchintervals`，`0.18.0`（28） |
+| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.11.0`（12） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | GitHub 私有仓库；`v0.17.0` 为 debug APK 预发布 |
+| 发布状态 | `0.18.0` 户外可靠性 debug 候选，待 OWW221 长时间真机验证 |
 
 ## 事实来源
 

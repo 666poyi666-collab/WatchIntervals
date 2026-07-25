@@ -103,5 +103,28 @@ class SleepToolsTests(unittest.TestCase):
             self.assertEqual(MCP.call("get_latest_sleep", {})["record"]["timestamp"], 30)
 
 
+class ProtocolV2Tests(unittest.TestCase):
+    def test_get_workout_collects_all_route_pages(self):
+        responses = [
+            {"id":"record","route":[{"preview":True}],"routeTruncated":True},
+            {"items":[{"latitude":1}],"nextCursor":1,"total":2},
+            {"items":[{"latitude":2}],"nextCursor":None,"total":2},
+        ]
+        with patch.object(MCP,"request",side_effect=responses) as request:
+            result=MCP.get_workout_full("record")
+        self.assertEqual([1,2],[item["latitude"] for item in result["route"]])
+        self.assertFalse(result["routeTruncated"])
+        self.assertIn("cursor=1",request.call_args_list[2].args[1])
+
+    def test_pause_control_is_idempotent_command(self):
+        with patch.object(MCP,"request",return_value={"accepted":True}) as request:
+            MCP.call("pause_workout",{})
+        method,path,body=request.call_args.args
+        self.assertEqual(("POST","/v1/control/pause"),(method,path))
+        self.assertEqual("RUNNING",body["expectedState"])
+        self.assertTrue(body["commandId"])
+        self.assertGreater(body["expiresAt"],int(MCP.time.time()*1000))
+
+
 if __name__ == "__main__":
     unittest.main()

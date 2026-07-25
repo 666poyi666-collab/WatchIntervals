@@ -1,0 +1,51 @@
+name: Android and MCP
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Verify changed files
+        shell: bash
+        run: |
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          else
+            git diff --check
+          fi
+      - name: Test MCP
+        run: python -m unittest discover -s mcp/tests -v
+      - name: Test, lint, and build Android apps
+        run: ./gradlew test lint :app:assembleDebug :phone:assembleDebug --stacktrace
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p ci-artifacts
+          cp app/build/outputs/apk/debug/app-debug.apk ci-artifacts/watch-debug.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk ci-artifacts/phone-debug.apk
+          (cd ci-artifacts && sha256sum *.apk > SHA-256.txt)
+          printf '{"commit":"%s","workflowRun":"%s","buildType":"debug"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > ci-artifacts/build-info.json
+      - name: Upload APKs and reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchintervals-debug-${{ github.sha }}
+          path: |
+            ci-artifacts/
+            app/build/reports/tests/
+            phone/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+            phone/build/reports/lint-results-debug.html

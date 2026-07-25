@@ -44,7 +44,7 @@
 
 ## 3. 核心状态和不变量
 
-训练状态按 `idle -> preparing -> running <-> paused -> completed/stopped` 演进。
+训练状态拆为两个维度：会话 `PREPARING -> RUNNING <-> PAUSED -> STOPPED`，计划 `ACTIVE -> COMPLETED`。计划完成后会话继续处于 RUNNING/PAUSED 并进入自由记录。
 
 必须保持以下不变量：
 
@@ -62,8 +62,8 @@
 | --- | --- | --- | --- |
 | 当前计划 | SharedPreferences `plans` | 阶段 JSON 数组 | 含名称、分组、要求 |
 | 多计划库 | SharedPreferences `plan_library_v2` | schema 2 | 手机为主库，手表保留同步副本 |
-| 活动会话 | SharedPreferences `active_session` | 兼容 schema 2 前检查点 | 用于进程/任务恢复 |
-| 训练历史 | `files/workout_history.json` | `WorkoutRecord` schema 2，200 条 | 临时文件写入后替换 |
+| 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入 |
+| 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
 | 配对码 | SharedPreferences `bridge` | 六位十进制字符串 | 当前持久保存，不自动轮换 |
 | MCP 配置 | `%USERPROFILE%/.watchintervals.json` | host/port/phoneHost/phonePort/pairingCode | 禁止提交真实配置 |
 | Tunnel 凭据 | `%LOCALAPPDATA%/WatchIntervals/tunnel` | DPAPI CurrentUser + 本地 profile | Runtime Key 不写入仓库、命令行和日志 |
@@ -95,29 +95,34 @@
 | `GET/PUT /v1/plan/profile` | 当前计划名称、分组、要求和阶段 |
 | `GET/PUT /v1/plan-library` | 完整计划库 |
 | `PUT /v1/plan-selection` | 选择计划 |
-| `GET /v1/history` | 全部历史 |
+| `GET /v1/history` | 历史摘要列表，不含完整样本 |
 | `GET/DELETE /v1/history/{id}` | 详情或删除 |
+| `GET /v1/history/{id}/route?cursor=&limit=` | 分页读取原始 WGS-84 轨迹 |
+| `GET /v1/history/{id}/heart?cursor=&limit=` | 分页读取心率样本 |
 | `GET /v1/sleep?days=1..31` | 系统睡眠记录、session 和原始阶段时间线；默认 7 天 |
 | `POST /v1/location` | 手机定位中继 |
 | `POST /v1/control/{start|pause|resume|toggle|stop}` | 训练控制 |
+| `POST /v1/sync/operations` | 计划 outbox 操作去重与 ACK |
 
 ### 手机 `:8766`
 
 手机计划库为计划分组和多计划的主数据源，MCP 通过该端口读写后同步至手表。协议细节以 `PhonePlanBridgeService` 和 `mcp/watch_intervals_mcp.py` 为准；新增端点时必须补充独立契约测试。
 
+手机同时广播 `_watchintervals-phone._tcp.`。`/v1/status` 返回稳定 `phoneDeviceId` 与 `protocolVersion`；Windows Gateway 只把 IP 当运行时端点，旧地址失败后通过 mDNS 发现并校验身份。
+
 ### 协议规范
 
 - 请求/响应使用 UTF-8 JSON；请求体当前限制 256,000 字节。
 - 睡眠响应的 `state` 为 `ready`、`permission_required` 或 `error`，`source=system_healthkit`。duration 字段单位为分钟，时间戳单位为毫秒；stage 同时保留厂商 `type` 和不推断语义的 `system_N` 标签。
-- 2xx 表示处理成功；4xx 返回稳定错误码；控制接口要保持幂等语义，当前 `pause/resume` 的 toggle 实现见 `BUG-002`。
+- 2xx 表示处理成功；4xx 返回稳定错误码。控制接口使用 `commandId`、`expectedState` 与 `expiresAt`；重复命令返回缓存结果，过期命令不执行。
 - 局域网 API 使用明文 HTTP，仅用于受信网络；安全改进见 `BUG-003`。
 
 ## 7. 开发环境和构建
 
-前置条件：JDK 17、Android SDK 35、Gradle 8.14.3。当前仓库未包含 Gradle Wrapper（`BUG-004`）。
+前置条件：JDK 17、Android SDK 35。仓库 Wrapper 锁定 Gradle 8.14.3。
 
 ```powershell
-gradle :app:assembleDebug :phone:assembleDebug
+.\gradlew.bat :app:assembleDebug :phone:assembleDebug
 adb -s WATCH_SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s PHONE_SERIAL install -r phone/build/outputs/apk/debug/phone-debug.apk
 ```
@@ -154,6 +159,13 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 
 - ChatGPT 插件绑定 OpenAI Tunnel ID，不再依赖会变化的 Quick Tunnel URL。
 - `install_persistent_chatgpt_tunnel.ps1` 只在首次安装时读取 Runtime Key，并用 Windows DPAPI CurrentUser 加密保存。
-- `run_persistent_chatgpt_tunnel.ps1` 由用户登录计划任务启动，使用互斥锁避免重复实例，tunnel-client 退出后等待 5 秒重连。
+- Personal Gateway 独立监听 `127.0.0.1:8767/mcp`，复用 stdio MCP 的工具核心；Tunnel profile 使用 `mcp-server-url` 连接它。
+- Gateway 与 Tunnel 使用两个登录计划任务及独立互斥锁；任一进程退出后等待 5 秒重启。
 - 本地健康端点仅监听环回地址；`check_persistent_chatgpt_tunnel.ps1` 检查任务、凭据、`healthz` 和 `readyz`。
 - 删除或轮换 Runtime Key 后必须重新执行安装脚本；仓库和发布包不得包含 profile、密钥、Tunnel ID 或运行日志。
+
+## 11. BLE POC 边界
+
+- Debug APK 包含固定 UUID 的手表 Peripheral/GATT Server 与手机 Central/GATT Client ping/pong 探针。
+- POC 仅验证广播、连接和命令，不承载正式计划、历史、睡眠、轨迹或手机定位中继。
+- 只有完成 OWW221 息屏、后台、双端重启和 12 小时门禁后，才允许把 BLE 接入 SyncEngine；当前正式传输仍为 LAN。

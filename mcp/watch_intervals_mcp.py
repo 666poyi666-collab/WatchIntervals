@@ -1,28 +1,109 @@
 #!/usr/bin/env python3
 """Dependency-free local MCP server for 步序."""
-import json, os, sys, urllib.request, urllib.error, urllib.parse, uuid
+import json, os, sys, urllib.request, urllib.error, urllib.parse, uuid, socket, time
 from pathlib import Path
 
 CONFIG = Path(os.environ.get("WATCH_INTERVALS_CONFIG", Path.home() / ".watchintervals.json"))
 
 def config():
-    data = {"host": "192.168.1.44", "port": 8765, "phoneHost": "192.168.1.84", "phonePort": 8766, "pairingCode": ""}
+    data = {"host": "", "port": 8765, "phoneHost": "", "phonePort": 8766, "pairingCode": ""}
     if CONFIG.exists(): data.update(json.loads(CONFIG.read_text("utf-8")))
     data["host"] = os.environ.get("WATCH_INTERVALS_HOST", data["host"])
     data["pairingCode"] = os.environ.get("WATCH_INTERVALS_CODE", data["pairingCode"])
     return data
 
+class DeviceError(RuntimeError):
+    def __init__(self, code, message, retryable=True, **details):
+        self.payload = {"code":code,"message":message,"retryable":retryable,**details}
+        super().__init__(json.dumps(self.payload, ensure_ascii=False))
+
+def _save_runtime_host(key, host, device_id_key=None, device_id=None):
+    data = config(); data[key] = host
+    if device_id_key and device_id: data[device_id_key] = device_id
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+
+def _discover(service_type, expected_id, id_field, port, code):
+    try:
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+    except ImportError as error:
+        raise DeviceError("DISCOVERY_UNAVAILABLE", "未安装 zeroconf，无法自动发现设备", True) from error
+    found = []
+    class Listener(ServiceListener):
+        def add_service(self, zc, type_, name):
+            info = zc.get_service_info(type_, name, timeout=1500)
+            if info:
+                for address in info.parsed_addresses(): found.append((address, info.port or port))
+        def update_service(self, zc, type_, name): self.add_service(zc, type_, name)
+        def remove_service(self, zc, type_, name): pass
+    zc = Zeroconf(); browser = ServiceBrowser(zc, service_type, Listener())
+    try:
+        deadline=time.time()+5
+        checked=set()
+        while time.time()<deadline:
+            for host, discovered_port in list(found):
+                if (host,discovered_port) in checked: continue
+                checked.add((host,discovered_port))
+                try:
+                    req=urllib.request.Request(f"http://{host}:{discovered_port}/v1/status",headers={"X-Pairing-Code":code})
+                    with urllib.request.urlopen(req,timeout=2) as response: status=json.loads(response.read().decode())
+                    if not expected_id or status.get(id_field)==expected_id: return host,status.get(id_field)
+                except urllib.error.HTTPError as error:
+                    if error.code == 401: raise DeviceError("AUTH_FAILED", "设备拒绝了配对凭据", False)
+                except Exception: pass
+            time.sleep(.15)
+    finally:
+        browser.cancel(); zc.close()
+    raise DeviceError("DEVICE_OFFLINE", "局域网内未发现已配对设备", True)
+
 def request(method, path, body=None):
     cfg = config(); url = f"http://{cfg['host']}:{cfg['port']}{path}"
     payload = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     req = urllib.request.Request(url, data=payload, method=method, headers={"X-Pairing-Code": cfg["pairingCode"], "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=15) as response: return json.loads(response.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response: return json.loads(response.read().decode())
+    except urllib.error.HTTPError as error:
+        if error.code == 401: raise DeviceError("WATCH_AUTH_FAILED","手表配对凭据无效",False)
+        raise DeviceError("WATCH_OFFLINE",f"手表请求失败：HTTP {error.code}",True)
+    except (urllib.error.URLError, TimeoutError, socket.timeout):
+        try:
+            host,device_id=_discover("_watchintervals._tcp.local.",cfg.get("watchDeviceId",""),"deviceId",cfg["port"],cfg["pairingCode"])
+            _save_runtime_host("host",host,"watchDeviceId",device_id)
+            cfg["host"]=host;url=f"http://{host}:{cfg['port']}{path}";req=urllib.request.Request(url,data=payload,method=method,headers={"X-Pairing-Code":cfg["pairingCode"],"Content-Type":"application/json"})
+            with urllib.request.urlopen(req,timeout=15) as response:return json.loads(response.read().decode())
+        except DeviceError as error:
+            if error.payload.get("code") == "AUTH_FAILED": raise DeviceError("WATCH_AUTH_FAILED","手表配对凭据无效",False)
+            raise DeviceError("WATCH_OFFLINE","手表当前不在线",True)
+        except (TimeoutError, socket.timeout): raise DeviceError("WATCH_TIMEOUT","手表请求超时",True)
+        except urllib.error.HTTPError as error:
+            if error.code == 401: raise DeviceError("WATCH_AUTH_FAILED","手表配对凭据无效",False)
+            raise DeviceError("WATCH_OFFLINE",f"手表请求失败：HTTP {error.code}",True)
+        except urllib.error.URLError: raise DeviceError("WATCH_OFFLINE","手表当前不在线",True)
 
 def phone_request(method, path, body=None):
     cfg = config(); url = f"http://{cfg['phoneHost']}:{cfg.get('phonePort',8766)}{path}"
     payload = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     req = urllib.request.Request(url, data=payload, method=method, headers={"X-Pairing-Code": cfg.get("phonePairingCode",cfg["pairingCode"]), "Content-Type":"application/json"})
-    with urllib.request.urlopen(req, timeout=15) as response: return json.loads(response.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response: return json.loads(response.read().decode())
+    except urllib.error.HTTPError as error:
+        if error.code == 401: raise DeviceError("PHONE_AUTH_FAILED","手机配对凭据无效",False)
+        raise DeviceError("PHONE_OFFLINE",f"手机请求失败：HTTP {error.code}",True)
+    except (urllib.error.URLError, TimeoutError, socket.timeout):
+        try:
+            phone_code=cfg.get("phonePairingCode",cfg["pairingCode"])
+            host,device_id=_discover("_watchintervals-phone._tcp.local.",cfg.get("phoneDeviceId",""),"phoneDeviceId",cfg.get("phonePort",8766),phone_code)
+            _save_runtime_host("phoneHost",host,"phoneDeviceId",device_id)
+            cfg["phoneHost"]=host;url=f"http://{host}:{cfg.get('phonePort',8766)}{path}";req=urllib.request.Request(url,data=payload,method=method,headers={"X-Pairing-Code":phone_code,"Content-Type":"application/json"})
+            with urllib.request.urlopen(req,timeout=15) as response:return json.loads(response.read().decode())
+        except DeviceError as error:
+            if error.payload.get("code") == "AUTH_FAILED": raise DeviceError("PHONE_AUTH_FAILED","手机配对凭据无效",False)
+            raise DeviceError("PHONE_OFFLINE","手机当前不在线",True)
+        except (TimeoutError, socket.timeout): raise DeviceError("PHONE_TIMEOUT","手机请求超时",True)
+        except urllib.error.HTTPError as error:
+            if error.code == 401: raise DeviceError("PHONE_AUTH_FAILED","手机配对凭据无效",False)
+            raise DeviceError("PHONE_OFFLINE",f"手机请求失败：HTTP {error.code}",True)
+        except urllib.error.URLError: raise DeviceError("PHONE_OFFLINE","手机当前不在线",True)
 
 def _profile_plan_id(profile):
     """Keep repeated writes of the same named profile idempotent."""
@@ -98,6 +179,18 @@ def summarize_sleep_result(result):
         "latestSleep": max(records, key=lambda item: item.get("timestamp", 0)) if records else None,
     }
 
+def get_workout_full(record_id):
+    encoded=urllib.parse.quote(record_id)
+    result=request("GET","/v1/history/"+encoded)
+    route=[];cursor=0
+    while True:
+        page=request("GET",f"/v1/history/{encoded}/route?cursor={cursor}&limit=1000")
+        route.extend(page.get("items",[]));next_cursor=page.get("nextCursor")
+        if next_cursor is None:break
+        cursor=int(next_cursor)
+    result["route"]=route;result["routeTruncated"]=False
+    return result
+
 TOOLS = [
     ("watch_status", "查询手表连接、版本和训练状态", {"type":"object","properties":{}}),
     ("get_training_plan", "读取当前训练计划", {"type":"object","properties":{}}),
@@ -147,7 +240,7 @@ def call(name, args):
     if name == "summarize_workouts":
         rows=request("GET", "/v1/history"); total_duration=sum(x.get("durationMs",0) for x in rows); hr=[x.get("averageHeartRate",0) for x in rows if x.get("averageHeartRate",0)>0]
         return {"workoutCount":len(rows),"totalDistanceMeters":sum(x.get("distanceMeters",0) for x in rows),"totalDurationMs":total_duration,"totalSteps":sum(x.get("steps",0) for x in rows),"averageHeartRate":round(sum(hr)/len(hr)) if hr else 0,"latestWorkout":rows[0] if rows else None}
-    if name == "get_workout": return request("GET", "/v1/history/" + urllib.parse.quote(args["id"]))
+    if name == "get_workout": return get_workout_full(args["id"])
     if name == "list_sleep_records": return request("GET", "/v1/sleep?days=" + str(max(1, min(31, int(args.get("days", 7))))))
     if name == "get_latest_sleep":
         result=request("GET", "/v1/sleep?days=7"); records=result.get("records", [])
@@ -157,26 +250,39 @@ def call(name, args):
         return summarize_sleep_result(request("GET", "/v1/sleep?days="+str(days)))
     if name == "delete_workout": return request("DELETE", "/v1/history/" + urllib.parse.quote(args["id"]))
     controls = {"start_workout":"start","pause_workout":"pause","resume_workout":"resume","stop_workout":"stop"}
-    if name in controls: return request("POST", "/v1/control/" + controls[name], {})
+    if name in controls:
+        action=controls[name]; expected={"start":"STOPPED","pause":"RUNNING","resume":"PAUSED"}.get(action)
+        command={"commandId":str(uuid.uuid4()),"expiresAt":int(time.time()*1000)+30_000}
+        if expected: command["expectedState"]=expected
+        return request("POST", "/v1/control/" + action, command)
     raise ValueError("unknown tool: " + name)
 
 def respond(obj):
     sys.stdout.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n"); sys.stdout.flush()
 
-def main():
-    for line in sys.stdin:
+def handle_message(msg):
+        ident = msg.get("id"); method = msg.get("method")
         try:
-            msg = json.loads(line.lstrip("\ufeff")); ident = msg.get("id"); method = msg.get("method")
-            if method == "notifications/initialized": continue
-            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.5.1"}}
+            if method == "notifications/initialized": return None
+            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.6.0"}}
             elif method == "tools/list":
                 result = {"tools":[{"name":n,"description":d,"inputSchema":s,"annotations":{"readOnlyHint":n in {"watch_status","get_training_plan","get_training_plan_profile","list_plan_groups","list_training_plans","list_workouts","summarize_workouts","get_workout","get_latest_sleep","list_sleep_records","summarize_sleep"},"destructiveHint":n in {"delete_workout","delete_plan_group","delete_training_plan"}}} for n,d,s in TOOLS]}
             elif method == "tools/call":
                 p=msg.get("params",{}); value=call(p.get("name"),p.get("arguments",{})); result={"content":[{"type":"text","text":json.dumps(value,ensure_ascii=False)}],"structuredContent":{"result":value}}
             elif method == "ping": result={}
             else: raise ValueError("unsupported method: " + str(method))
-            if ident is not None: respond({"jsonrpc":"2.0","id":ident,"result":result})
+            if ident is not None: return {"jsonrpc":"2.0","id":ident,"result":result}
+            return None
         except Exception as error:
-            if 'ident' in locals() and ident is not None: respond({"jsonrpc":"2.0","id":ident,"error":{"code":-32000,"message":str(error)}})
+            if ident is not None:return {"jsonrpc":"2.0","id":ident,"error":{"code":-32000,"message":str(error)}}
+            return None
+
+def main():
+    for line in sys.stdin:
+        try:
+            value=handle_message(json.loads(line.lstrip("\ufeff")))
+            if value is not None: respond(value)
+        except Exception as error:
+            respond({"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":str(error)}})
 
 if __name__ == "__main__": main()

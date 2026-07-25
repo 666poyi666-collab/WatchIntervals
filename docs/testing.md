@@ -5,12 +5,13 @@
 
 ## 1. 测试原则
 
-本项目的高风险区域不是页面能否打开，而是长时间状态、传感器切换、后台运行和跨设备同步。测试分为纯逻辑、Android 集成、模拟器界面、手表真机、手机真机和 MCP 契约六层。当前仓库尚无自动化测试源码，这是 `BUG-001`。
+本项目的高风险区域不是页面能否打开，而是长时间状态、传感器切换、后台运行和跨设备同步。测试分为纯逻辑、Android 集成、模拟器界面、手表真机、手机真机和 MCP 契约六层。仓库已包含指标纯 Java 测试、MCP 契约测试和 GitHub Actions 基线；状态边界、文件中断注入和真机自动化仍需继续扩充。
 
 ## 2. 每次提交最小检查
 
 ```powershell
-gradle :app:assembleDebug :phone:assembleDebug
+.\gradlew.bat test lint :app:assembleDebug :phone:assembleDebug
+python -m unittest discover -s mcp\tests -v
 git diff --check
 ```
 
@@ -40,6 +41,10 @@ git diff --check
 | WT-013 | 原生运动降级 | 在当前 OWW221 固件启动 | 能力为空时显示未开放并继续 GPS/步数 |
 | WT-014 | 系统睡眠授权 | 首次启动确认“读取睡眠数据” | 系统健康权限页可见，允许后 Store API 不再返回 `Missing permissions` |
 | WT-015 | 系统睡眠回读 | 请求最近 14 天 | 返回真实记录、session、stage 时间线；duration 按分钟解释，时间戳按毫秒输出 |
+| WT-016 | 计划完成后自由记录 | 15 秒计划达标后继续运动 2 分钟 | 计划提示完成，但计时、距离、轨迹、心率和步数继续；手动结束只保存一次 |
+| WT-017 | 长时间追加轨迹 | 注入 7200/14400 个混合来源点并中断恢复 | 无 OOM；检查点大小有界；损坏尾行可忽略；原始点和统计一致 |
+| WT-018 | 来源切换 | 步数、手表 GPS、手机 GPS、系统距离依次切换 | 不重复累计；速度窗口重置；来源距离守恒 |
+| WT-019 | 四页训练 UI | 378×496 遍历核心、计划、轨迹、控制页 | 文字和安全区正常；默认核心页；控制入口可达 |
 
 ## 4. 手机真机回归
 
@@ -53,6 +58,8 @@ git diff --check
 | PT-006 | 定位中继 | 授权后前台服务运行，手表接收并过滤位置 |
 | PT-007 | 重启恢复 | 手机重启后计划桥服务恢复，计划库不丢失 |
 | PT-008 | 睡眠页 | 授权后显示时长、评分、血氧、深睡、REM 和阶段数量；未授权时有明确提示 |
+| PT-009 | 手机服务发现 | 手机 IP 改变后 Gateway 通过 `_watchintervals-phone._tcp.` 找到相同 phoneDeviceId |
+| PT-010 | 计划 outbox | 手表离线修改计划，恢复 LAN 后自动 ACK | 操作不丢失、不重复，pending 归零 |
 
 ## 5. MCP/API 回归
 
@@ -69,6 +76,13 @@ git diff --check
 | API-009 | `list_sleep_records` 保留系统来源、全部 session 和 stage 原始类型/时间线 |
 | API-010 | `get_latest_sleep` 对无记录返回空；`summarize_sleep` 只对有效值求平均且单位为分钟 |
 | API-011 | 长效 Tunnel 首次绑定后在线；结束 tunnel-client、重新登录和重启电脑后均自动恢复，ChatGPT 连接配置不变 |
+| API-012 | 历史列表不含完整样本；详情返回预览；route/heart 游标可无重无漏读完整数据 |
+| API-013 | Gateway 与 Tunnel 分别终止后自动恢复；设备离线时 Gateway 仍 ready 并返回分层错误 |
+| API-014 | 重复 operationId 返回 already_applied；旧 revision 返回 conflict；ACK 丢失重试不重复应用 |
+
+## 5.1 BLE POC 门禁
+
+Debug POC 通过 ADB 显式启动，只验证 ping/pong。正式接入前必须完成：手表息屏 30 分钟仍可发现、手机后台恢复、双端重启无需重新配对、50 次连接循环、1000 次命令丢包率低于 1%、连续 12 小时无永久断联。未完成时不得把 BLE 描述为正式同步能力。
 
 ## 6. 建议优先补齐的自动测试
 

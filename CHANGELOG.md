@@ -6,7 +6,23 @@
 
 ### Added
 
-- 新增固定 Tunnel ID 的 ChatGPT 长效 MCP 连接、DPAPI 凭据存储、登录自启动、自动重连和健康检查脚本。
+- 提交 Gradle 8.14.3 Wrapper 和 GitHub Actions，自动测试、lint、构建两端 debug APK，并生成哈希和构建信息。
+- 活动训练采用追加式轨迹/心率文件、有界原子检查点；历史改为独立记录目录和摘要索引，并提供详情及 route/heart 分页 API。
+- 新增 10 秒平滑当前/最高速度、四类距离来源证据、计划内/自由记录距离及四页手表训练界面。
+- 新增 Windows 长期 HTTP Gateway、手机 mDNS 广播、设备 ID 校验和分层离线错误；Tunnel 改为连接本地 Gateway。
+- 新增计划持久 outbox、operationId、revision、ACK 和删除操作基础协议，以及 debug-only BLE GATT ping/pong POC。
+
+### Changed
+
+- 最后一个计划阶段达标不再结束训练；进入自由记录并继续计时、定位和采样，只有手动结束才归档。
+- pause/resume 使用明确动作和带前置状态、过期时间的幂等命令，不再映射为 toggle。
+- 历史列表只返回摘要，完整样本通过记录详情和游标分页读取。
+
+### Known Issues
+
+- `0.18.0/0.11.0` 为 debug 候选，尚未完成三次 30–60 分钟户外对比、进程终止矩阵、378×496 全页面截图和功耗测试。
+- BLE 仅为手动授权后的 debug POC，尚未通过后台、息屏、双端重启、连续重连和 12 小时门禁，未接入 SyncEngine。
+- Windows Gateway 与 Secure MCP Tunnel 尚未进行真实远程端到端绑定验证。
 
 ## [Phone 0.10.1 / MCP 0.5.1] - 2026-07-25
 

@@ -6,6 +6,8 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.os.IBinder;
+import android.net.nsd.NsdManager;
+import android.net.nsd.NsdServiceInfo;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
@@ -26,6 +28,7 @@ public class PhonePlanBridgeService extends Service {
     private static final String CHANNEL = "phone_plan_bridge";
     private final ExecutorService workers = Executors.newCachedThreadPool();
     private ServerSocket server;
+    private NsdManager.RegistrationListener registration;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -33,7 +36,7 @@ public class PhonePlanBridgeService extends Service {
         notifications.createNotificationChannel(new NotificationChannel(CHANNEL, "计划与 MCP 同步", NotificationManager.IMPORTANCE_MIN));
         Notification notification = new Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("训练计划同步已开启").setContentText("手机计划库可供手表与 MCP 使用").build();
-        startForeground(63, notification); workers.execute(this::serve);
+        startForeground(63, notification); registerNsd(); workers.execute(this::serve);
     }
 
     private void serve() {
@@ -77,7 +80,7 @@ public class PhonePlanBridgeService extends Service {
 
     private void route(Socket socket, String method, String path, String body) throws Exception {
         JSONObject result;
-        if ("GET".equals(method) && "/v1/status".equals(path)) result = new JSONObject().put("device","phone").put("authoritative",true).put("port",PORT).put("libraryRevision",PhonePlanLibrary.load(this).optLong("revision"));
+        if ("GET".equals(method) && "/v1/status".equals(path)) result = new JSONObject().put("device","phone").put("phoneDeviceId",phoneDeviceId()).put("appVersion",BuildConfig.VERSION_NAME).put("protocolVersion",2).put("authoritative",true).put("port",PORT).put("libraryRevision",PhonePlanLibrary.load(this).optLong("revision")).put("pendingOperations",PhoneSyncOutbox.size(this));
         else if ("GET".equals(method) && "/v1/plan-library".equals(path)) result = PhonePlanLibrary.load(this);
         else if ("GET".equals(method) && "/v1/plan-groups".equals(path)) result = new JSONObject().put("groups",PhonePlanLibrary.load(this).getJSONArray("groups"));
         else if ("POST".equals(method) && "/v1/plan-groups".equals(path)) { result = PhonePlanLibrary.createGroup(this,new JSONObject(body).optString("name")); result = mutation("group",result); }
@@ -86,23 +89,26 @@ public class PhonePlanBridgeService extends Service {
         else if ("GET".equals(method) && "/v1/plans".equals(path)) { JSONObject library=PhonePlanLibrary.load(this);result=new JSONObject().put("plans",library.getJSONArray("plans")).put("selectedPlanId",library.optString("selectedPlanId")); }
         else if ("POST".equals(method) && "/v1/plans".equals(path)) { result=PhonePlanLibrary.upsert(this,new JSONObject(body));result=mutation("library",result); }
         else if (path.startsWith("/v1/plans/") && "PUT".equals(method)) { JSONObject item=new JSONObject(body).put("id",tail(path));result=PhonePlanLibrary.upsert(this,item);result=mutation("library",result); }
-        else if (path.startsWith("/v1/plans/") && "DELETE".equals(method)) { result=PhonePlanLibrary.deletePlan(this,tail(path));result=mutation("library",result); }
+        else if (path.startsWith("/v1/plans/") && "DELETE".equals(method)) { String id=tail(path);result=PhonePlanLibrary.deletePlan(this,id);PhoneSyncOutbox.enqueueLibrary(this,result,"delete",id);result=new JSONObject().put("library",result).put("sync",syncToWatch()); }
         else if ("PUT".equals(method) && "/v1/plan-selection".equals(path)) { result=PhonePlanLibrary.select(this,new JSONObject(body).optString("planId"));result=mutation("library",result); }
         else if ("POST".equals(method) && "/v1/sync".equals(path)) result=syncToWatch();
         else { respond(socket,404,new JSONObject().put("error","not_found").toString());return; }
         respond(socket,200,result.toString());
     }
 
-    private JSONObject mutation(String key, JSONObject value) throws Exception { JSONObject sync=syncToWatch();return new JSONObject().put(key,value).put("sync",sync); }
+    private JSONObject mutation(String key, JSONObject value) throws Exception { JSONObject library=PhonePlanLibrary.load(this);PhoneSyncOutbox.enqueueLibrary(this,library,"upsert",key);JSONObject sync=syncToWatch();return new JSONObject().put(key,value).put("sync",sync); }
     private JSONObject syncToWatch() {
         try {
             String host=getSharedPreferences("connection",MODE_PRIVATE).getString("host","");String code=getSharedPreferences("connection",MODE_PRIVATE).getString("code","");
             if(host.isEmpty()||code.isEmpty())return new JSONObject().put("state","pending").put("reason","watch_not_configured");
-            new WatchClient(host,code).put("/v1/plan-library",PhonePlanLibrary.load(this).toString());return new JSONObject().put("state","synced").put("host",host);
+            if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,PhonePlanLibrary.load(this),"upsert","library");
+            JSONObject result=PhoneSyncOutbox.drain(this,new WatchClient(host,code));return result.put("host",host);
         } catch(Exception error){try{return new JSONObject().put("state","pending").put("reason",error.getMessage());}catch(Exception ignored){return new JSONObject();}}
     }
+    private String phoneDeviceId(){android.content.SharedPreferences p=getSharedPreferences("device_identity",MODE_PRIVATE);String id=p.getString("phone_device_id","");if(id.isEmpty()){id=java.util.UUID.randomUUID().toString();p.edit().putString("phone_device_id",id).apply();}return id;}
+    private void registerNsd(){NsdServiceInfo info=new NsdServiceInfo();info.setServiceName("WatchIntervals-Phone-"+phoneDeviceId().substring(0,8));info.setServiceType("_watchintervals-phone._tcp.");info.setPort(PORT);try{info.setAttribute("deviceId",phoneDeviceId());info.setAttribute("protocolVersion","2");}catch(Exception ignored){}registration=new NsdManager.RegistrationListener(){public void onRegistrationFailed(NsdServiceInfo i,int c){}public void onUnregistrationFailed(NsdServiceInfo i,int c){}public void onServiceRegistered(NsdServiceInfo i){}public void onServiceUnregistered(NsdServiceInfo i){}};try{getSystemService(NsdManager.class).registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);}catch(Exception error){android.util.Log.w("PhonePlanBridge","mDNS registration failed",error);}}
     private String tail(String path){return path.substring(path.lastIndexOf('/')+1);}
     private void respond(Socket socket,int status,String body)throws Exception{byte[] data=body.getBytes(StandardCharsets.UTF_8);String reason=status==200?"OK":status==400?"Bad Request":status==401?"Unauthorized":"Not Found";String header="HTTP/1.1 "+status+" "+reason+"\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+data.length+"\r\nConnection: close\r\n\r\n";OutputStream out=socket.getOutputStream();out.write(header.getBytes(StandardCharsets.US_ASCII));out.write(data);out.flush();}
-    @Override public void onDestroy(){try{if(server!=null)server.close();}catch(Exception ignored){}workers.shutdownNow();super.onDestroy();}
+    @Override public void onDestroy(){try{if(server!=null)server.close();}catch(Exception ignored){}try{if(registration!=null)getSystemService(NsdManager.class).unregisterService(registration);}catch(Exception ignored){}workers.shutdownNow();super.onDestroy();}
     @Override public IBinder onBind(Intent intent){return null;}
 }

@@ -5,6 +5,7 @@ $client = Join-Path $root 'tunnel-client\tunnel-client.exe'
 $scripts = @(
     'install_persistent_chatgpt_tunnel.ps1',
     'run_persistent_chatgpt_tunnel.ps1',
+    'run_persistent_gateway.ps1',
     'check_persistent_chatgpt_tunnel.ps1'
 )
 

@@ -11,15 +11,17 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $client = Join-Path $root 'tunnel-client\tunnel-client.exe'
-$server = Join-Path $root 'watch_intervals_mcp.py'
+$server = Join-Path $root 'personal_gateway.py'
 $runner = Join-Path $root 'run_persistent_chatgpt_tunnel.ps1'
+$gatewayRunner = Join-Path $root 'run_persistent_gateway.ps1'
 $stateDir = Join-Path $env:LOCALAPPDATA 'WatchIntervals\tunnel'
 $profileDir = Join-Path $stateDir 'profiles'
 $secretFile = Join-Path $stateDir 'runtime-key.dpapi'
 $taskName = 'WatchIntervals ChatGPT Tunnel'
+$gatewayTaskName = 'WatchIntervals Personal MCP Gateway'
 $python = 'C:/Progra~1/Python312/python.exe'
 
-foreach ($path in @($client, $server, $runner)) {
+foreach ($path in @($client, $server, $runner, $gatewayRunner)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "缺少长效通道组件：$path" }
 }
 New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
@@ -39,10 +41,8 @@ try {
     [IO.File]::WriteAllText($secretFile, [Convert]::ToBase64String($encrypted), [Text.Encoding]::ASCII)
 
     $env:CONTROL_PLANE_API_KEY = $plainKey
-    $serverForCommand = $server.Replace('\', '/')
-    $mcpCommand = "$python $serverForCommand"
-    & $client init --sample sample_mcp_stdio_local --profile buxu-sports `
-        --profile-dir $profileDir --tunnel-id $TunnelId --mcp-command $mcpCommand `
+    & $client init --profile buxu-sports `
+        --profile-dir $profileDir --tunnel-id $TunnelId --mcp-server-url 'http://127.0.0.1:8767/mcp' `
         --health-listen-addr '127.0.0.1:8877' --force
     if ($LASTEXITCODE -ne 0) { throw "Tunnel 配置生成失败：$LASTEXITCODE" }
 
@@ -62,6 +62,17 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
     -Principal $principal -Description '步序 MCP 固定 ChatGPT 通道；登录后启动并自动重连。' -Force | Out-Null
+$gatewayArguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$gatewayRunner`""
+$gatewayAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $gatewayArguments
+Register-ScheduledTask -TaskName $gatewayTaskName -Action $gatewayAction -Trigger $trigger -Settings $settings `
+    -Principal $principal -Description '步序长期 Personal MCP Gateway。' -Force | Out-Null
+Start-ScheduledTask -TaskName $gatewayTaskName
+$gatewayDeadline = (Get-Date).AddSeconds(20)
+do {
+    Start-Sleep -Milliseconds 500
+    try { $gatewayReady = Invoke-RestMethod -Uri 'http://127.0.0.1:8767/readyz' -TimeoutSec 2 } catch { $gatewayReady = $null }
+} until ($null -ne $gatewayReady -or (Get-Date) -ge $gatewayDeadline)
+if ($null -eq $gatewayReady) { throw 'Gateway 已安装，但 20 秒内未就绪。' }
 Start-ScheduledTask -TaskName $taskName
 
 $deadline = (Get-Date).AddSeconds(30)

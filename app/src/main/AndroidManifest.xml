@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />
     <uses-feature android:name="android.hardware.sensor.heartrate" android:required="false" />
@@ -22,6 +22,8 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_CLIENT_SERVICE" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_STORE_SERVICE" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_EXERCISE_SERVICE" />
@@ -79,6 +81,7 @@
             android:exported="false"
             android:foregroundServiceType="location" />
         <service android:name=".WatchBridgeService" android:exported="false" />
+        <service android:name=".BleProbeService" android:exported="true" tools:ignore="ExportedService" />
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
         </receiver>

@@ -45,7 +45,7 @@ public class MainActivity extends Activity {
         startForegroundService(new Intent(this, PhonePlanBridgeService.class));
         buildUi();
         android.content.SharedPreferences preferences = getSharedPreferences("connection", MODE_PRIVATE);
-        host.setText(preferences.getString("host", "192.168.1.44"));
+        host.setText(preferences.getString("host", ""));
         code.setText(preferences.getString("code", ""));
         discoverWatch();
     }
@@ -190,8 +190,11 @@ public class MainActivity extends Activity {
                         io.execute(() -> {
                             try {
                                 JSONObject status = new JSONObject(new WatchClient(address, pairing).get("/v1/status"));
+                                String discoveredId=status.optString("deviceId");String expectedId=getSharedPreferences("connection",MODE_PRIVATE).getString("watch_device_id","");
+                                if(!expectedId.isEmpty()&&!expectedId.equals(discoveredId)){resolving=false;return;}
                                 runOnUiThread(() -> {
                                     host.setText(address);
+                                    getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",discoveredId).apply();
                                     connection.setText("已发现并连接 " + status.optString("device") + " · " + address);
                                     stopDiscovery();
                                     syncAll();
@@ -222,7 +225,9 @@ public class MainActivity extends Activity {
         getSharedPreferences("connection", MODE_PRIVATE).edit().putString("host", host.getText().toString().trim()).putString("code", code.getText().toString().trim()).apply();
         runIo(() -> {
             WatchClient client = client(); JSONObject status = new JSONObject(client.get("/v1/status"));
-            JSONObject library = PhonePlanLibrary.load(this); client.put("/v1/plan-library", library.toString());
+            String expected=getSharedPreferences("connection",MODE_PRIVATE).getString("watch_device_id","");String actual=status.optString("deviceId");if(!expected.isEmpty()&&!expected.equals(actual))throw new IllegalStateException("发现的设备身份与已配对手表不一致");
+            if(expected.isEmpty()&&!actual.isEmpty())getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",actual).apply();
+            JSONObject library = PhonePlanLibrary.load(this); if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");PhoneSyncOutbox.drain(this,client);
             JSONObject plan = new JSONObject(client.get("/v1/plan/profile")); JSONArray history = new JSONArray(client.get("/v1/history"));
             runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · 手表端 " + status.optString("appVersion") + " · 手机辅助轨迹"); showPlan(plan); showHistory(history); ensureLocationRelay(); });
         });
@@ -282,7 +287,7 @@ public class MainActivity extends Activity {
     private void addStage(String kind,String unit,int target){ try{ stages.add(new JSONObject().put("kind",kind).put("unit",unit).put("target",target)); }catch(Exception ignored){} renderPlan(); }
     private void savePlan(){ if(!saveLocalPlan(false)) return; showPlanLibrary(); try {
         PhonePlanLibrary.select(this, editingPlanId); JSONObject library=PhonePlanLibrary.load(this);
-        runIo(()->{ client().put("/v1/plan-library",library.toString()); runOnUiThread(()->{connection.setText("完整计划库已同步到手表");renderSavedPlans();}); });
+        queueAndSyncLibrary(library,"完整计划库已同步到手表");
     } catch(Exception error) { connection.setText("计划格式错误"); } }
     private void applyTemplate(boolean fartlek){ stages.clear(); try {
         if(fartlek){ if(planName.getText().toString().trim().isEmpty())planName.setText("变速跑安排"); planRequirement.setText("快跑 2 分钟，快走恢复 1 分钟，连续完成 6 组。"); for(int i=0;i<6;i++){stages.add(new JSONObject().put("kind","RUN").put("unit","TIME").put("target",120));stages.add(new JSONObject().put("kind","WALK").put("unit","TIME").put("target",60));} }
@@ -335,7 +340,19 @@ public class MainActivity extends Activity {
 
     private void syncLibraryQuietly(String successText){
         JSONObject library=PhonePlanLibrary.load(this);
-        runIo(()->{client().put("/v1/plan-library",library.toString());runOnUiThread(()->connection.setText(successText));});
+        queueAndSyncLibrary(library,successText);
+    }
+
+    private void queueAndSyncLibrary(JSONObject library,String successText){
+        runIo(()->{
+            try {
+                PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");
+                JSONObject sync=PhoneSyncOutbox.drain(this,client());
+                runOnUiThread(()->connection.setText("synced".equals(sync.optString("state"))?successText:"计划已保存，等待手表连接"));
+            } catch(Exception error) {
+                runOnUiThread(()->connection.setText("计划已保存，等待手表连接"));
+            }
+        });
     }
 
     private JSONArray copyStages(){
@@ -420,9 +437,14 @@ public class MainActivity extends Activity {
     }
 
     private void deleteSavedPlan(String id){
-        try{PhonePlanLibrary.deletePlan(this,id);if(id.equals(editingPlanId))editingPlanId="";renderSavedPlans();JSONObject library=PhonePlanLibrary.load(this);runIo(()->client().put("/v1/plan-library",library.toString()));}catch(Exception error){connection.setText("删除计划失败："+error.getMessage());}
+        try{PhonePlanLibrary.deletePlan(this,id);if(id.equals(editingPlanId))editingPlanId="";renderSavedPlans();syncLibraryQuietly("安排已删除");}catch(Exception error){connection.setText("删除计划失败："+error.getMessage());}
     }
-    private void control(String action){ runIo(()->{ client().post("/v1/control/"+action); runOnUiThread(()->connection.setText("训练操作已发送："+action)); }); }
+    private void control(String action){ runIo(()->{ try {
+        String expected="pause".equals(action)?"RUNNING":"resume".equals(action)?"PAUSED":"start".equals(action)?"STOPPED":"";
+        JSONObject command=new JSONObject().put("commandId",java.util.UUID.randomUUID().toString()).put("expiresAt",System.currentTimeMillis()+30_000L);
+        if(!expected.isEmpty())command.put("expectedState",expected);
+        client().post("/v1/control/"+action,command.toString()); runOnUiThread(()->connection.setText("训练操作已发送："+action));
+    } catch(Exception error){runOnUiThread(()->connection.setText("训练操作失败："+error.getMessage()));} }); }
 
     private void showHistory(JSONArray array){
         historyList.removeAllViews(); historySummary.setText(array.length()+" 次训练 · 点击查看地图轨迹与完整数据");
@@ -434,10 +456,9 @@ public class MainActivity extends Activity {
             long duration=record.optLong("durationMs"); double meters=record.optDouble("distanceMeters");
             TextView primary=text(formatDistance(meters)+"  ·  "+formatDuration(duration)+"  ·  "+formatPace(duration,meters),17,true,Color.rgb(28,31,29));
             row.addView(primary);
-            JSONArray route=record.optJSONArray("route");
-            TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+(route==null?0:route.length())+" 个轨迹点",13,false,Color.DKGRAY);
+            TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+record.optInt("routePointCount")+" 个轨迹点",13,false,Color.DKGRAY);
             row.addView(secondary);
-            row.setOnClickListener(v->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",record.toString())));
+            row.setOnClickListener(v->runIo(()->{try{String detail=client().get("/v1/history/"+android.net.Uri.encode(record.optString("id")));runOnUiThread(()->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",detail)));}catch(Exception error){runOnUiThread(()->connection.setText("读取训练详情失败："+error.getMessage()));}}));
             LinearLayout.LayoutParams params=margin(); params.setMargins(0,dp(10),0,0); historyList.addView(row,params);
         }
     }
