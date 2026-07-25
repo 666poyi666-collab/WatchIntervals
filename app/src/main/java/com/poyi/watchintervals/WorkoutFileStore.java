@@ -111,13 +111,20 @@ final class WorkoutFileStore implements AutoCloseable {
     }
 
     synchronized void writeCheckpoint(JSONObject checkpoint, boolean force) throws Exception {
+        long routeOffset = flushAndPosition(routeWriter, routeStream);
+        long heartOffset = flushAndPosition(heartWriter, heartStream);
         maintain(force);
         checkpoint.put("sessionId", sessionId())
                 .put("routePointCount", routePointCount)
                 .put("heartSampleCount", heartSampleCount)
-                .put("routeOffset", routeStream.getChannel().position())
-                .put("heartOffset", heartStream.getChannel().position());
+                .put("routeOffset", routeOffset)
+                .put("heartOffset", heartOffset);
         writeAtomic(new File(directory, CHECKPOINT), checkpoint.toString());
+    }
+
+    static long flushAndPosition(BufferedWriter writer, FileOutputStream stream) throws Exception {
+        writer.flush();
+        return stream.getChannel().position();
     }
 
     JSONObject readCheckpoint() throws Exception {

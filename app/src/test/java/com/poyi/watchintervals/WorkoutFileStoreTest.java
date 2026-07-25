@@ -3,11 +3,31 @@ package com.poyi.watchintervals;
 import static org.junit.Assert.assertEquals;
 
 import java.io.File;
+import java.io.BufferedWriter;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import org.junit.Test;
 
 public class WorkoutFileStoreTest {
+    @Test public void checkpointOffsetIncludesBufferedSampleBytes() throws Exception {
+        File directory = Files.createTempDirectory("workout-store").toFile();
+        File samples = new File(directory, "route.ndjson");
+        String line = "{\"time\":1}\n";
+        try (FileOutputStream stream = new FileOutputStream(samples, true);
+             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(stream, StandardCharsets.UTF_8))) {
+            writer.write(line);
+            assertEquals(0L, stream.getChannel().position());
+
+            long offset = WorkoutFileStore.flushAndPosition(writer, stream);
+
+            assertEquals(line.getBytes(StandardCharsets.UTF_8).length, offset);
+            assertEquals(offset, samples.length());
+        }
+        WorkoutFileStore.deleteTree(directory);
+    }
+
     @Test public void truncatesCompleteAndPartialTailAtCheckpointBoundary() throws Exception {
         File directory = Files.createTempDirectory("workout-store").toFile();
         File samples = new File(directory, "route.ndjson");
