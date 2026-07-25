@@ -32,8 +32,8 @@ public class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<JSONObject> stages = new ArrayList<>();
     private EditText host, code, planName, planGroup, planRequirement;
-    private TextView connection, historySummary, currentWatchPlan;
-    private LinearLayout planList, historyList, savedPlanList, planCard, controlCard, historyCard, planLibraryPanel, planEditorPanel;
+    private TextView connection, historySummary, sleepSummary, currentWatchPlan;
+    private LinearLayout planList, historyList, sleepList, savedPlanList, planCard, controlCard, historyCard, sleepCard, planLibraryPanel, planEditorPanel;
     private String editingPlanId = "";
     private NsdManager nsdManager;
     private NsdManager.DiscoveryListener discoveryListener;
@@ -70,8 +70,8 @@ public class MainActivity extends Activity {
         root.addView(connectCard, margin());
 
         LinearLayout tabs=new LinearLayout(this);
-        Button planTab=button("计划",Color.rgb(28,31,29),Color.WHITE), controlTab=button("训练",Color.rgb(232,234,229),Color.BLACK), historyTab=button("历史",Color.rgb(232,234,229),Color.BLACK);
-        tabs.addView(planTab,weight());tabs.addView(controlTab,weight());tabs.addView(historyTab,weight());root.addView(tabs,margin());
+        Button planTab=button("计划",Color.rgb(28,31,29),Color.WHITE), controlTab=button("训练",Color.rgb(232,234,229),Color.BLACK), historyTab=button("历史",Color.rgb(232,234,229),Color.BLACK), sleepTab=button("睡眠",Color.rgb(232,234,229),Color.BLACK);
+        tabs.addView(planTab,weight());tabs.addView(controlTab,weight());tabs.addView(historyTab,weight());tabs.addView(sleepTab,weight());root.addView(tabs,margin());
 
         planCard = card();
         planCard.addView(text("训练计划", 24, true, Color.BLACK));
@@ -126,7 +126,11 @@ public class MainActivity extends Activity {
         historySummary = text("连接后读取", 14, false, Color.DKGRAY); historyCard.addView(historySummary);
         historyList = new LinearLayout(this); historyList.setOrientation(LinearLayout.VERTICAL); historyCard.addView(historyList);
         root.addView(historyCard, margin());
-        controlCard.setVisibility(View.GONE); historyCard.setVisibility(View.GONE);
+        sleepCard = card(); sleepCard.addView(text("系统睡眠", 22, true, Color.BLACK));
+        sleepSummary = text("连接后读取手表系统睡眠", 14, false, Color.DKGRAY); sleepCard.addView(sleepSummary);
+        sleepList = new LinearLayout(this); sleepList.setOrientation(LinearLayout.VERTICAL); sleepCard.addView(sleepList);
+        root.addView(sleepCard, margin());
+        controlCard.setVisibility(View.GONE); historyCard.setVisibility(View.GONE); sleepCard.setVisibility(View.GONE);
         scroll.addView(root); setContentView(scroll);
 
         connect.setOnClickListener(v -> syncAll());
@@ -140,16 +144,17 @@ public class MainActivity extends Activity {
         closeEditor.setOnClickListener(v->showPlanLibrary());
         intervalPlan.setOnClickListener(v -> applyTemplate(false));
         fartlekPlan.setOnClickListener(v -> applyTemplate(true));
-        planTab.setOnClickListener(v->showSection(0,planTab,controlTab,historyTab));
-        controlTab.setOnClickListener(v->showSection(1,planTab,controlTab,historyTab));
-        historyTab.setOnClickListener(v->showSection(2,planTab,controlTab,historyTab));
+        planTab.setOnClickListener(v->showSection(0,planTab,controlTab,historyTab,sleepTab));
+        controlTab.setOnClickListener(v->showSection(1,planTab,controlTab,historyTab,sleepTab));
+        historyTab.setOnClickListener(v->showSection(2,planTab,controlTab,historyTab,sleepTab));
+        sleepTab.setOnClickListener(v->{showSection(3,planTab,controlTab,historyTab,sleepTab);loadSleep();});
         renderSavedPlans();
     }
 
-    private void showSection(int section,Button planTab,Button controlTab,Button historyTab){
-        planCard.setVisibility(section==0?View.VISIBLE:View.GONE);controlCard.setVisibility(section==1?View.VISIBLE:View.GONE);historyCard.setVisibility(section==2?View.VISIBLE:View.GONE);
+    private void showSection(int section,Button planTab,Button controlTab,Button historyTab,Button sleepTab){
+        planCard.setVisibility(section==0?View.VISIBLE:View.GONE);controlCard.setVisibility(section==1?View.VISIBLE:View.GONE);historyCard.setVisibility(section==2?View.VISIBLE:View.GONE);sleepCard.setVisibility(section==3?View.VISIBLE:View.GONE);
         if(section==0)showPlanLibrary();
-        Button[] tabs={planTab,controlTab,historyTab};for(int i=0;i<tabs.length;i++){tabs[i].setBackground(rounded(i==section?Color.rgb(28,31,29):Color.rgb(232,234,229),16));tabs[i].setTextColor(i==section?Color.WHITE:Color.BLACK);}
+        Button[] tabs={planTab,controlTab,historyTab,sleepTab};for(int i=0;i<tabs.length;i++){tabs[i].setBackground(rounded(i==section?Color.rgb(28,31,29):Color.rgb(232,234,229),16));tabs[i].setTextColor(i==section?Color.WHITE:Color.BLACK);}
     }
 
     private void discoverWatch() {
@@ -434,6 +439,35 @@ public class MainActivity extends Activity {
             row.addView(secondary);
             row.setOnClickListener(v->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",record.toString())));
             LinearLayout.LayoutParams params=margin(); params.setMargins(0,dp(10),0,0); historyList.addView(row,params);
+        }
+    }
+
+    private void loadSleep(){
+        sleepSummary.setText("正在读取手表系统睡眠…");
+        io.execute(()->{try{
+            JSONObject result=new JSONObject(client().get("/v1/sleep?days=14"));
+            runOnUiThread(()->showSleep(result));
+        }catch(Exception error){runOnUiThread(()->sleepSummary.setText("读取失败："+error.getMessage()));}});
+    }
+
+    private void showSleep(JSONObject result){
+        sleepList.removeAllViews();
+        String state=result.optString("state");
+        if("permission_required".equals(state)){sleepSummary.setText("请在手表端打开步序并允许读取睡眠");return;}
+        if(!"ready".equals(state)){sleepSummary.setText("系统睡眠暂不可用："+result.optString("error","未知错误"));return;}
+        JSONArray records=result.optJSONArray("records");if(records==null)records=new JSONArray();
+        sleepSummary.setText("最近 14 天 · "+records.length()+" 条系统记录");
+        for(int i=0;i<records.length();i++){
+            JSONObject record=records.optJSONObject(i);if(record==null)continue;
+            JSONArray sessions=record.optJSONArray("sessions");JSONObject session=sessions==null?null:sessions.optJSONObject(0);
+            long start=session==null?record.optLong("timestamp"):session.optLong("startTime");
+            int duration=session==null?record.optInt("totalDurationMinutes"):session.optInt("sleepDurationMinutes");
+            LinearLayout row=card();row.setPadding(dp(16),dp(12),dp(16),dp(12));
+            row.addView(text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(start)),15,true,Color.BLACK));
+            row.addView(text(formatDuration(duration*60_000L)+" · 评分 "+record.optInt("sleepScore")+" · 平均血氧 "+record.optInt("spo2AveragePercent")+"%",16,true,Color.rgb(28,31,29)));
+            int stageCount=session==null||session.optJSONArray("stages")==null?0:session.optJSONArray("stages").length();
+            row.addView(text("深睡 "+formatDuration((session==null?0:session.optInt("deepDurationMinutes"))*60_000L)+" · REM "+formatDuration((session==null?0:session.optInt("remDurationMinutes"))*60_000L)+" · "+stageCount+" 个阶段",13,false,Color.DKGRAY));
+            LinearLayout.LayoutParams params=margin();params.topMargin=dp(10);sleepList.addView(row,params);
         }
     }
     private String formatDistance(double meters){return meters<1000?Math.round(meters)+" 米":String.format(Locale.CHINA,"%.2f 公里",meters/1000d);}

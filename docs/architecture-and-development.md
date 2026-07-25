@@ -10,7 +10,7 @@
   UI Activities
       -> WorkoutService（训练状态唯一运行时来源）
       -> PlanStore / PlanLibraryStore / HistoryStore
-      -> SystemExerciseBridge / SystemGpsBridge / Android Sensors
+      -> SystemExerciseBridge / SystemSleepBridge / SystemGpsBridge / Android Sensors
       -> WatchBridgeService :8765 + mDNS
                     ^
                     | 局域网 HTTP + X-Pairing-Code
@@ -36,8 +36,8 @@
 | 训练引擎 | `WorkoutService` | 状态机、计时、阶段推进、传感器融合、检查点、通知、震动、历史落盘 |
 | 训练模型 | `Stage`、`WorkoutRecord` | 阶段和历史 JSON schema |
 | 本地存储 | `PlanStore`、`PlanLibraryStore`、`HistoryStore` | 当前计划、多计划库、最多 200 条历史 |
-| 传感器桥 | `SystemExerciseBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力与系统 GPS 控制 |
-| 手表 API | `WatchBridgeService` | 配对、mDNS、计划/历史/控制/手机定位中继 |
+| 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
+| 手表 API | `WatchBridgeService` | 配对、mDNS、计划/历史/睡眠/控制/手机定位中继 |
 | 手机伴侣 | `phone/*` | 计划库、发现配对、同步、历史详情、定位中继 |
 | MCP | `mcp/*.py` | 将手表和手机 HTTP API 暴露为本地工具 |
 
@@ -95,6 +95,7 @@
 | `PUT /v1/plan-selection` | 选择计划 |
 | `GET /v1/history` | 全部历史 |
 | `GET/DELETE /v1/history/{id}` | 详情或删除 |
+| `GET /v1/sleep?days=1..31` | 系统睡眠记录、session 和原始阶段时间线；默认 7 天 |
 | `POST /v1/location` | 手机定位中继 |
 | `POST /v1/control/{start|pause|resume|toggle|stop}` | 训练控制 |
 
@@ -105,6 +106,7 @@
 ### 协议规范
 
 - 请求/响应使用 UTF-8 JSON；请求体当前限制 256,000 字节。
+- 睡眠响应的 `state` 为 `ready`、`permission_required` 或 `error`，`source=system_healthkit`。duration 字段单位为分钟，时间戳单位为毫秒；stage 同时保留厂商 `type` 和不推断语义的 `system_N` 标签。
 - 2xx 表示处理成功；4xx 返回稳定错误码；控制接口要保持幂等语义，当前 `pause/resume` 的 toggle 实现见 `BUG-002`。
 - 局域网 API 使用明文 HTTP，仅用于受信网络；安全改进见 `BUG-003`。
 
@@ -135,6 +137,7 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 5. 网络动作必须设置连接/读取超时，校验状态码和 JSON 字段。
 6. 378×496 手表界面固定执行文字溢出、底部安全区、横纵手势冲突检查。
 7. 修复缺陷时先在 `bugs.md` 建号，再补测试或可复现验证步骤。
+8. 厂商健康数据通过公开 Store Binder 和运行时匹配的 protobuf 类读取；禁止提交厂商 APK、反编译产物、权限记录或真实健康数据。
 
 ## 9. Git 和发布规范
 

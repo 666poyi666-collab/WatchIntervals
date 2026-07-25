@@ -71,5 +71,26 @@ class SetTrainingPlanProfileTests(unittest.TestCase):
         self.assertEqual(MCP._profile_plan_id(self.profile), MCP._profile_plan_id(dict(self.profile)))
 
 
+class SleepToolsTests(unittest.TestCase):
+    def test_sleep_summary_uses_available_system_metrics(self):
+        result = MCP.summarize_sleep_result({"state":"ready","source":"system_healthkit","records":[
+            {"totalDurationMinutes":420,"sleepScore":80,"spo2AveragePercent":96},
+            {"totalDurationMinutes":480,"sleepScore":90,"spo2AveragePercent":94},
+        ]})
+        self.assertEqual(result["recordCount"], 2)
+        self.assertEqual(result["averageDurationMinutes"], 450)
+        self.assertEqual(result["averageSleepScore"], 85)
+        self.assertEqual(result["averageSpo2Percent"], 95.0)
+
+    def test_latest_sleep_preserves_empty_state(self):
+        with patch.object(MCP, "request", return_value={"state":"ready","source":"system_healthkit","records":[]}):
+            self.assertIsNone(MCP.call("get_latest_sleep", {})["record"])
+
+    def test_latest_sleep_does_not_trust_service_order(self):
+        rows=[{"timestamp":10},{"timestamp":30},{"timestamp":20}]
+        with patch.object(MCP, "request", return_value={"state":"ready","source":"system_healthkit","records":rows}):
+            self.assertEqual(MCP.call("get_latest_sleep", {})["record"]["timestamp"], 30)
+
+
 if __name__ == "__main__":
     unittest.main()

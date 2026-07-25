@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [Watch 0.17.0 / Phone 0.10.0 / MCP 0.5.0] - 2026-07-25
+
+### Added
+
+- 手表通过系统 HealthKit Store 读取详细睡眠，手机新增睡眠页，MCP 新增最近睡眠、睡眠列表和睡眠汇总工具。
+- 睡眠响应包含评分、血氧、OSA 原值、心率/呼吸范围、多个 session 及完整原始阶段时间线，并明确授权和错误状态。
+
 ### Fixed
 
 - MCP `set_training_plan_profile` 现在持久写入手机主计划库并选择、同步、回读校验手表；同步 pending 或两端数据不一致时返回错误，不再产生短暂的手表-only 计划。
@@ -38,5 +45,6 @@
 - 当前 OWW221 固件未开放可用的系统户外跑能力映射。
 - 自动化测试和 Gradle Wrapper 尚待补齐。
 
-[Unreleased]: https://github.com/666poyi666-collab/WatchIntervals/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/666poyi666-collab/WatchIntervals/compare/v0.17.0...HEAD
+[Watch 0.17.0 / Phone 0.10.0 / MCP 0.5.0]: https://github.com/666poyi666-collab/WatchIntervals/compare/v0.16.0...v0.17.0
 [Watch 0.16.0 / Phone 0.9.0]: https://github.com/666poyi666-collab/WatchIntervals/releases/tag/v0.16.0

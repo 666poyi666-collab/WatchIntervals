@@ -74,6 +74,19 @@ def set_training_plan_profile(profile):
         "phoneMutation": saved.get("sync", {}),
     }
 
+def summarize_sleep_result(result):
+    records = result.get("records", [])
+    durations = [item.get("totalDurationMinutes", 0) for item in records if item.get("totalDurationMinutes", 0) > 0]
+    scores = [item.get("sleepScore", 0) for item in records if item.get("sleepScore", 0) > 0]
+    spo2 = [item.get("spo2AveragePercent", 0) for item in records if item.get("spo2AveragePercent", 0) > 0]
+    return {
+        "state": result.get("state"), "source": result.get("source"), "recordCount": len(records),
+        "averageDurationMinutes": round(sum(durations) / len(durations)) if durations else 0,
+        "averageSleepScore": round(sum(scores) / len(scores)) if scores else 0,
+        "averageSpo2Percent": round(sum(spo2) / len(spo2), 1) if spo2 else 0,
+        "latestSleep": max(records, key=lambda item: item.get("timestamp", 0)) if records else None,
+    }
+
 TOOLS = [
     ("watch_status", "查询手表连接、版本和训练状态", {"type":"object","properties":{}}),
     ("get_training_plan", "读取当前训练计划", {"type":"object","properties":{}}),
@@ -93,6 +106,9 @@ TOOLS = [
     ("list_workouts", "查询全部训练历史，包含轨迹、距离、步数、心率和时间", {"type":"object","properties":{}}),
     ("summarize_workouts", "汇总训练次数、总距离、总时长、总步数、平均心率和最近训练", {"type":"object","properties":{}}),
     ("get_workout", "按 ID 查询一条训练的完整统计和轨迹点", {"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
+    ("get_latest_sleep", "读取最近一条系统睡眠记录及完整阶段时间线", {"type":"object","properties":{}}),
+    ("list_sleep_records", "读取指定天数内的系统睡眠、评分、血氧、心率、呼吸与阶段", {"type":"object","properties":{"days":{"type":"integer","minimum":1,"maximum":31}}}),
+    ("summarize_sleep", "汇总指定天数内的系统睡眠时长、评分与平均血氧", {"type":"object","properties":{"days":{"type":"integer","minimum":1,"maximum":31}}}),
     ("start_workout", "按当前计划开始手表训练", {"type":"object","properties":{}}),
     ("pause_workout", "暂停当前训练", {"type":"object","properties":{}}),
     ("resume_workout", "继续当前训练", {"type":"object","properties":{}}),
@@ -121,6 +137,13 @@ def call(name, args):
         rows=request("GET", "/v1/history"); total_duration=sum(x.get("durationMs",0) for x in rows); hr=[x.get("averageHeartRate",0) for x in rows if x.get("averageHeartRate",0)>0]
         return {"workoutCount":len(rows),"totalDistanceMeters":sum(x.get("distanceMeters",0) for x in rows),"totalDurationMs":total_duration,"totalSteps":sum(x.get("steps",0) for x in rows),"averageHeartRate":round(sum(hr)/len(hr)) if hr else 0,"latestWorkout":rows[0] if rows else None}
     if name == "get_workout": return request("GET", "/v1/history/" + urllib.parse.quote(args["id"]))
+    if name == "list_sleep_records": return request("GET", "/v1/sleep?days=" + str(max(1, min(31, int(args.get("days", 7))))))
+    if name == "get_latest_sleep":
+        result=request("GET", "/v1/sleep?days=7"); records=result.get("records", [])
+        return {"state":result.get("state"),"source":result.get("source"),"record":max(records,key=lambda item:item.get("timestamp",0)) if records else None}
+    if name == "summarize_sleep":
+        days=max(1,min(31,int(args.get("days",7))))
+        return summarize_sleep_result(request("GET", "/v1/sleep?days="+str(days)))
     if name == "delete_workout": return request("DELETE", "/v1/history/" + urllib.parse.quote(args["id"]))
     controls = {"start_workout":"start","pause_workout":"pause","resume_workout":"resume","stop_workout":"stop"}
     if name in controls: return request("POST", "/v1/control/" + controls[name], {})
@@ -134,9 +157,9 @@ def main():
         try:
             msg = json.loads(line.lstrip("\ufeff")); ident = msg.get("id"); method = msg.get("method")
             if method == "notifications/initialized": continue
-            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.4.1"}}
+            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.5.0"}}
             elif method == "tools/list":
-                result = {"tools":[{"name":n,"description":d,"inputSchema":s,"annotations":{"readOnlyHint":n in {"watch_status","get_training_plan","get_training_plan_profile","list_plan_groups","list_training_plans","list_workouts","summarize_workouts","get_workout"},"destructiveHint":n in {"delete_workout","delete_plan_group","delete_training_plan"}}} for n,d,s in TOOLS]}
+                result = {"tools":[{"name":n,"description":d,"inputSchema":s,"annotations":{"readOnlyHint":n in {"watch_status","get_training_plan","get_training_plan_profile","list_plan_groups","list_training_plans","list_workouts","summarize_workouts","get_workout","get_latest_sleep","list_sleep_records","summarize_sleep"},"destructiveHint":n in {"delete_workout","delete_plan_group","delete_training_plan"}}} for n,d,s in TOOLS]}
             elif method == "tools/call":
                 p=msg.get("params",{}); value=call(p.get("name"),p.get("arguments",{})); result={"content":[{"type":"text","text":json.dumps(value,ensure_ascii=False)}],"structuredContent":{"result":value}}
             elif method == "ping": result={}

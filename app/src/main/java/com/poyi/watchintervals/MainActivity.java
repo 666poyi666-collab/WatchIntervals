@@ -27,6 +27,7 @@ import java.util.List;
 public class MainActivity extends Activity {
     private static final int REQUEST_PERMISSIONS = 10;
     private static final int REQUEST_BACKGROUND_LOCATION = 11;
+    private static final int REQUEST_SLEEP_PERMISSION = 12;
     private ArrayList<Stage> stages;
     private TextView ready, workout, start, planLine, planSummary, planDetails, sensorStatus, clock;
     private LinearLayout pagerHistoryList, pagerPlanList;
@@ -45,6 +46,12 @@ public class MainActivity extends Activity {
                 | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
         startForegroundService(new Intent(this, WatchBridgeService.class));
         buildUi();
+        if (!getPreferences(MODE_PRIVATE).getBoolean("sleep_permission_prompted", false)) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("sleep_permission_prompted", true).apply();
+            if (!SystemSleepBridge.requestPermission(this, REQUEST_SLEEP_PERMISSION)) {
+                getPreferences(MODE_PRIVATE).edit().putBoolean("sleep_permission_prompted", false).apply();
+            }
+        }
     }
 
     @Override protected void onResume() {
@@ -210,6 +217,13 @@ public class MainActivity extends Activity {
         if (requestCode == REQUEST_PERMISSIONS && (!needsLocation() || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)) requestAndStart();
         else if (requestCode == REQUEST_BACKGROUND_LOCATION) startTraining();
         else Toast.makeText(this, "需要定位权限才能记录距离", Toast.LENGTH_LONG).show();
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SLEEP_PERMISSION && resultCode != RESULT_OK) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("sleep_permission_prompted", false).apply();
+        }
     }
 
     private boolean needsLocation() {

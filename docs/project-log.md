@@ -69,6 +69,17 @@
 - MCP 0.4.1 改为：稳定 ID 写入手机计划库、选择计划、同步手表、回读手机列表/手表计划库/手表 profile，全部一致才返回成功。
 - 新增 4 个 Python 单元测试，覆盖成功、同步 pending、回读不一致和重试幂等 ID。
 
+## 2026-07-25：接入系统级详细睡眠
+
+- 关联 `REQ-DATA-008`、`REQ-DATA-009`、`BUG-H010`。
+- 新增只读 `SystemSleepBridge`，通过系统 HealthKit Store API 查询 `SleepSessionRecord`，不访问或复制厂商私有数据库。
+- 首次打开手表应用使用系统健康权限页请求“读取睡眠数据”；API 返回数据来源及 `ready`、`permission_required`、`error` 状态。
+- `/v1/sleep?days=N` 向手机和 MCP 提供评分、血氧、OSA 原值、心率/呼吸基准与范围、多个 session 和完整 stage 时间线。
+- OWW221 Android 11 真机经 USB 验证：14 天请求返回 8 条系统记录，存在多 session 和完整 stage；以起止时间确认厂商 duration 单位为分钟。
+- MCP 0.5.0 增加 `get_latest_sleep`、`list_sleep_records`、`summarize_sleep`，单元测试由 4 项增至 7 项。
+- 发布构建：手表 `0.17.0`（27）、手机 `0.10.0`（10），均为 debug prerelease。
+- APK SHA-256：watch `3FC388C682E0AFD393AD4CD916C9152B3B8E8C3992447840AC636D2E4D0F70DA`；phone `A44B5212E9F847C1B29013A2AD60B01C4C2954C7A027EE125DD94F393D7907D7`。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
@@ -79,6 +90,7 @@
 | ADR-004 | 局域网 mDNS + HTTP 作为当前传输 | 易部署且适合完整轨迹 | 仅适合受信网络，需后续协议加固 |
 | ADR-005 | 厂商能力运行时探测而非按包版本猜测 | 服务存在不代表运动能力开放 | 每次固件变化都需重新验证 capabilities |
 | ADR-006 | APK 通过 GitHub Release 分发，不进 Git | 避免仓库历史膨胀 | Release 必须记录哈希和构建类型 |
+| ADR-007 | 睡眠使用 HealthKit Store 只读 API并保留原始 stage type | 权限边界稳定，避免依赖私有数据库及猜测未公开枚举 | 需系统授权；固件变化后复测字段单位和语义 |
 
 ## 工作日志模板
 

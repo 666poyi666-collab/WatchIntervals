@@ -32,6 +32,7 @@ public class WatchBridgeService extends Service {
     private volatile boolean closed;
     private ServerSocket server;
     private NsdManager.RegistrationListener registration;
+    private SystemSleepBridge sleepBridge;
 
     static String pairingCode(Context context) {
         android.content.SharedPreferences preferences = context.getSharedPreferences("bridge", MODE_PRIVATE);
@@ -45,6 +46,7 @@ public class WatchBridgeService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
+        sleepBridge = new SystemSleepBridge(this);
         NotificationChannel channel = new NotificationChannel(CHANNEL, "手机与 MCP 连接", NotificationManager.IMPORTANCE_MIN);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
         Notification notification = new Notification.Builder(this, CHANNEL)
@@ -130,6 +132,10 @@ public class WatchBridgeService extends Service {
                 }
             } else if ("GET".equals(method) && "/v1/history".equals(path)) {
                 respond(socket, 200, HistoryStore.toJson(this).toString());
+            } else if ("GET".equals(method) && ("/v1/sleep".equals(path) || path.startsWith("/v1/sleep?"))) {
+                int days = queryDays(path);
+                JSONObject sleep = sleepBridge.read(days);
+                respond(socket, 200, sleep.toString());
             } else if ("GET".equals(method) && path.startsWith("/v1/history/")) {
                 WorkoutRecord record = HistoryStore.find(this, path.substring("/v1/history/".length()));
                 if (record == null) respond(socket, 404, error("workout_not_found"));
@@ -164,6 +170,15 @@ public class WatchBridgeService extends Service {
 
     private String error(String code) { try { return new JSONObject().put("error", code).toString(); } catch (Exception ignored) { return "{}"; } }
 
+    private int queryDays(String path) {
+        int marker = path.indexOf("days=");
+        if (marker < 0) return 7;
+        int end = path.indexOf('&', marker);
+        String value = path.substring(marker + 5, end < 0 ? path.length() : end);
+        try { return Math.max(1, Math.min(31, Integer.parseInt(value))); }
+        catch (NumberFormatException ignored) { return 7; }
+    }
+
     private void respond(Socket socket, int status, String body) throws Exception {
         byte[] data = body.getBytes(StandardCharsets.UTF_8);
         String reason = status == 200 ? "OK" : status == 401 ? "Unauthorized" : status == 404 ? "Not Found" : "Error";
@@ -186,6 +201,7 @@ public class WatchBridgeService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onDestroy() {
         closed = true; try { if (server != null) server.close(); } catch (Exception ignored) {}
+        if (sleepBridge != null) sleepBridge.close();
         try { if (registration != null) getSystemService(NsdManager.class).unregisterService(registration); } catch (Exception ignored) {}
         workers.shutdownNow(); super.onDestroy();
     }

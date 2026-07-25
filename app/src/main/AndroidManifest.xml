@@ -23,6 +23,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_CLIENT_SERVICE" />
+    <uses-permission android:name="heytap.wearable.permission.health.BIND_STORE_SERVICE" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_EXERCISE_SERVICE" />
     <uses-permission android:name="heytap.wearable.permission.healthkit.PROVIDER" />
 

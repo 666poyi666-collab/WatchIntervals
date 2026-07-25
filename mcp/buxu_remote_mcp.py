@@ -8,7 +8,7 @@ import watch_intervals_mcp as core
 path_token = os.environ.get("BUXU_MCP_PATH", "buxu")
 mcp = FastMCP(
     "步序运动",
-    instructions="查询和管理步序手机/手表中的训练计划、运动状态、历史与轨迹。",
+    instructions="查询和管理步序手机/手表中的训练计划、运动状态、历史、轨迹与系统睡眠。",
     host="127.0.0.1",
     port=int(os.environ.get("BUXU_MCP_PORT", "8878")),
     streamable_http_path=f"/{path_token}/mcp",
@@ -74,6 +74,15 @@ def summarize_workouts() -> dict: return core.call("summarize_workouts", {})
 
 @mcp.tool(description="按 ID 查询一条训练的完整统计和轨迹点")
 def get_workout(id: str) -> dict: return core.call("get_workout", {"id": id})
+
+@mcp.tool(description="读取最近一条手表系统睡眠及完整阶段时间线")
+def get_latest_sleep() -> dict: return core.call("get_latest_sleep", {})
+
+@mcp.tool(description="读取指定天数内的手表系统睡眠明细")
+def list_sleep_records(days: int = 7) -> dict: return core.call("list_sleep_records", {"days": days})
+
+@mcp.tool(description="汇总指定天数内的系统睡眠时长、评分和平均血氧")
+def summarize_sleep(days: int = 7) -> dict: return core.call("summarize_sleep", {"days": days})
 
 @mcp.tool(description="按当前计划开始手表训练")
 def start_workout() -> dict: return core.call("start_workout", {})
