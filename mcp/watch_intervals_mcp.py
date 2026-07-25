@@ -79,11 +79,22 @@ def summarize_sleep_result(result):
     durations = [item.get("totalDurationMinutes", 0) for item in records if item.get("totalDurationMinutes", 0) > 0]
     scores = [item.get("sleepScore", 0) for item in records if item.get("sleepScore", 0) > 0]
     spo2 = [item.get("spo2AveragePercent", 0) for item in records if item.get("spo2AveragePercent", 0) > 0]
+    records_with_sessions = sum(1 for item in records if item.get("sessions"))
+    records_with_stages = sum(1 for item in records if any(session.get("stages") for session in item.get("sessions", [])))
     return {
         "state": result.get("state"), "source": result.get("source"), "recordCount": len(records),
-        "averageDurationMinutes": round(sum(durations) / len(durations)) if durations else 0,
-        "averageSleepScore": round(sum(scores) / len(scores)) if scores else 0,
-        "averageSpo2Percent": round(sum(spo2) / len(spo2), 1) if spo2 else 0,
+        "averageDurationMinutes": round(sum(durations) / len(durations)) if durations else None,
+        "averageSleepScore": round(sum(scores) / len(scores)) if scores else None,
+        "averageSpo2Percent": round(sum(spo2) / len(spo2), 1) if spo2 else None,
+        "metricSampleCounts": {
+            "duration": len(durations), "sleepScore": len(scores), "spo2": len(spo2),
+            "sessions": records_with_sessions, "stages": records_with_stages,
+        },
+        "missingMetricCounts": {
+            "duration": len(records) - len(durations), "sleepScore": len(records) - len(scores),
+            "spo2": len(records) - len(spo2), "sessions": len(records) - records_with_sessions,
+            "stages": len(records) - records_with_stages,
+        },
         "latestSleep": max(records, key=lambda item: item.get("timestamp", 0)) if records else None,
     }
 
@@ -157,7 +168,7 @@ def main():
         try:
             msg = json.loads(line.lstrip("\ufeff")); ident = msg.get("id"); method = msg.get("method")
             if method == "notifications/initialized": continue
-            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.5.0"}}
+            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.5.1"}}
             elif method == "tools/list":
                 result = {"tools":[{"name":n,"description":d,"inputSchema":s,"annotations":{"readOnlyHint":n in {"watch_status","get_training_plan","get_training_plan_profile","list_plan_groups","list_training_plans","list_workouts","summarize_workouts","get_workout","get_latest_sleep","list_sleep_records","summarize_sleep"},"destructiveHint":n in {"delete_workout","delete_plan_group","delete_training_plan"}}} for n,d,s in TOOLS]}
             elif method == "tools/call":

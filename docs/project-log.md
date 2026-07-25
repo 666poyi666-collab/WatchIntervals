@@ -78,6 +78,7 @@
 - OWW221 Android 11 真机经 USB 验证：14 天请求返回 8 条系统记录，存在多 session 和完整 stage；以起止时间确认厂商 duration 单位为分钟。
 - MCP 0.5.0 增加 `get_latest_sleep`、`list_sleep_records`、`summarize_sleep`，单元测试由 4 项增至 7 项。
 - 发布构建：手表 `0.17.0`（27）、手机 `0.10.0`（10），均为 debug prerelease。
+- 睡眠精度复核发现系统记录存在指标缺失，且手机页只显示首个 session；手机 `0.10.1` 改为聚合全部 session，MCP `0.5.1` 用 `null` 和样本计数表达缺失值。
 - APK SHA-256：watch `3FC388C682E0AFD393AD4CD916C9152B3B8E8C3992447840AC636D2E4D0F70DA`；phone `A44B5212E9F847C1B29013A2AD60B01C4C2954C7A027EE125DD94F393D7907D7`。
 
 ## 决策记录

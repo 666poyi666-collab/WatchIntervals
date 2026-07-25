@@ -459,14 +459,21 @@ public class MainActivity extends Activity {
         sleepSummary.setText("最近 14 天 · "+records.length()+" 条系统记录");
         for(int i=0;i<records.length();i++){
             JSONObject record=records.optJSONObject(i);if(record==null)continue;
-            JSONArray sessions=record.optJSONArray("sessions");JSONObject session=sessions==null?null:sessions.optJSONObject(0);
-            long start=session==null?record.optLong("timestamp"):session.optLong("startTime");
-            int duration=session==null?record.optInt("totalDurationMinutes"):session.optInt("sleepDurationMinutes");
+            JSONArray sessions=record.optJSONArray("sessions");
+            long start=record.optLong("timestamp");int deep=0,rem=0,stageCount=0,sessionCount=sessions==null?0:sessions.length();
+            for(int j=0;j<sessionCount;j++){
+                JSONObject session=sessions.optJSONObject(j);if(session==null)continue;
+                long sessionStart=session.optLong("startTime");if(sessionStart>0&&(start<=0||sessionStart<start))start=sessionStart;
+                deep+=session.optInt("deepDurationMinutes");rem+=session.optInt("remDurationMinutes");
+                JSONArray stages=session.optJSONArray("stages");stageCount+=stages==null?0:stages.length();
+            }
+            int duration=record.optInt("totalDurationMinutes");
+            int score=record.optInt("sleepScore"),spo2=record.optInt("spo2AveragePercent");
             LinearLayout row=card();row.setPadding(dp(16),dp(12),dp(16),dp(12));
             row.addView(text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(start)),15,true,Color.BLACK));
-            row.addView(text(formatDuration(duration*60_000L)+" · 评分 "+record.optInt("sleepScore")+" · 平均血氧 "+record.optInt("spo2AveragePercent")+"%",16,true,Color.rgb(28,31,29)));
-            int stageCount=session==null||session.optJSONArray("stages")==null?0:session.optJSONArray("stages").length();
-            row.addView(text("深睡 "+formatDuration((session==null?0:session.optInt("deepDurationMinutes"))*60_000L)+" · REM "+formatDuration((session==null?0:session.optInt("remDurationMinutes"))*60_000L)+" · "+stageCount+" 个阶段",13,false,Color.DKGRAY));
+            row.addView(text(formatDuration(duration*60_000L)+" · 评分 "+(score>0?score:"--")+" · 平均血氧 "+(spo2>0?spo2+"%":"--"),16,true,Color.rgb(28,31,29)));
+            String sessionLabel=sessionCount>1?" · "+sessionCount+" 段睡眠":"";
+            row.addView(text("深睡 "+formatDuration(deep*60_000L)+" · REM "+formatDuration(rem*60_000L)+" · "+stageCount+" 个阶段"+sessionLabel,13,false,Color.DKGRAY));
             LinearLayout.LayoutParams params=margin();params.topMargin=dp(10);sleepList.addView(row,params);
         }
     }

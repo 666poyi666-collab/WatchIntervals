@@ -81,6 +81,17 @@ class SleepToolsTests(unittest.TestCase):
         self.assertEqual(result["averageDurationMinutes"], 450)
         self.assertEqual(result["averageSleepScore"], 85)
         self.assertEqual(result["averageSpo2Percent"], 95.0)
+        self.assertEqual(result["metricSampleCounts"]["sleepScore"], 2)
+
+    def test_sleep_summary_marks_missing_metrics_instead_of_reporting_zero(self):
+        result = MCP.summarize_sleep_result({"state":"ready","source":"system_healthkit","records":[
+            {"totalDurationMinutes":360,"sleepScore":0,"spo2AveragePercent":0,"sessions":[]},
+        ]})
+        self.assertIsNone(result["averageSleepScore"])
+        self.assertIsNone(result["averageSpo2Percent"])
+        self.assertEqual(result["missingMetricCounts"]["sleepScore"], 1)
+        self.assertEqual(result["missingMetricCounts"]["spo2"], 1)
+        self.assertEqual(result["missingMetricCounts"]["sessions"], 1)
 
     def test_latest_sleep_preserves_empty_state(self):
         with patch.object(MCP, "request", return_value={"state":"ready","source":"system_healthkit","records":[]}):
