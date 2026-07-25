@@ -1,6 +1,7 @@
 package com.poyi.watchintervals.phone;
 
 import android.content.Context;
+import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -31,6 +32,15 @@ final class PhoneSyncOutbox {
         java.util.HashSet<String> applied=new java.util.HashSet<>();if(acks!=null)for(int i=0;i<acks.length();i++){JSONObject ack=acks.optJSONObject(i);if(ack!=null&&("applied".equals(ack.optString("status"))||"already_applied".equals(ack.optString("status"))))applied.add(ack.optString("operationId"));}
         for(int i=0;i<pending.length();i++){JSONObject item=pending.optJSONObject(i);if(item!=null&&!applied.contains(item.optString("operationId")))remaining.put(item);}
         save(context,remaining);return new JSONObject().put("state",remaining.length()==0?"synced":"pending").put("pendingOperations",remaining.length()).put("acks",acks==null?new JSONArray():acks);
+    }
+
+    static synchronized JSONObject drain(Context context, WatchConnectionManager connection) throws Exception {
+        JSONArray pending=load(context);if(pending.length()==0){connection.setPendingOperations(0);return new JSONObject().put("state","synced").put("pendingOperations",0);}
+        JSONObject response=new JSONObject(connection.requestBlocking("POST","/v1/sync/operations",new JSONObject().put("operations",pending).toString(),20_000L));
+        JSONArray acks=response.optJSONArray("acks"),remaining=new JSONArray();
+        java.util.HashSet<String> applied=new java.util.HashSet<>();if(acks!=null)for(int i=0;i<acks.length();i++){JSONObject ack=acks.optJSONObject(i);if(ack!=null&&("applied".equals(ack.optString("status"))||"already_applied".equals(ack.optString("status"))))applied.add(ack.optString("operationId"));}
+        for(int i=0;i<pending.length();i++){JSONObject item=pending.optJSONObject(i);if(item!=null&&!applied.contains(item.optString("operationId")))remaining.put(item);}
+        save(context,remaining);connection.setPendingOperations(remaining.length());return new JSONObject().put("state",remaining.length()==0?"synced":"pending").put("pendingOperations",remaining.length()).put("acks",acks==null?new JSONArray():acks);
     }
 
     static synchronized int size(Context context){return load(context).length();}

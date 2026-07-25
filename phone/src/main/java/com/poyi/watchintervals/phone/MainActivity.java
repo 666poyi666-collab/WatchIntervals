@@ -26,9 +26,11 @@ import java.util.UUID;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_LOCATION_RELAY = 44;
+    private static final int REQUEST_BLUETOOTH = 45;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<JSONObject> stages = new ArrayList<>();
     private EditText host, code, planName, planGroup, planRequirement;
@@ -39,14 +41,22 @@ public class MainActivity extends Activity {
     private NsdManager.DiscoveryListener discoveryListener;
     private WifiManager.MulticastLock multicastLock;
     private boolean resolving;
+    private WatchConnectionManager watchConnection;
+    private boolean autoSynced;
+    private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         startForegroundService(new Intent(this, PhonePlanBridgeService.class));
         buildUi();
+        watchConnection=WatchConnectionManager.get(this);
+        watchConnection.observe(connectionObserver);
         android.content.SharedPreferences preferences = getSharedPreferences("connection", MODE_PRIVATE);
         host.setText(preferences.getString("host", ""));
         code.setText(preferences.getString("code", ""));
+        watchConnection.configurePairing(code.getText().toString().trim());
+        watchConnection.configureLan(host.getText().toString().trim(),code.getText().toString().trim());
+        ensureBluetoothConnection();
         discoverWatch();
     }
 
@@ -60,11 +70,11 @@ public class MainActivity extends Activity {
 
         LinearLayout connectCard = card();
         connectCard.addView(text("连接手表", 20, true, Color.BLACK));
-        host = input("手表 IP"); code = input("手表上的 6 位配对码"); code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        host = input("LAN 诊断地址");host.setVisibility(View.GONE); code = input("手表上的 6 位配对码"); code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         connectCard.addView(host); connectCard.addView(code);
         LinearLayout connectActions = new LinearLayout(this);
-        Button discover = button("自动发现", Color.rgb(232,234,229), Color.BLACK);
-        Button connect = button("连接并同步", Color.rgb(124,203,43), Color.BLACK);
+        Button discover = button("连接手表", Color.rgb(232,234,229), Color.BLACK);
+        Button connect = button("立即同步", Color.rgb(124,203,43), Color.BLACK);
         connectActions.addView(discover, weight()); connectActions.addView(connect, weight()); connectCard.addView(connectActions);
         connection = text("尚未连接", 14, false, Color.DKGRAY); connectCard.addView(connection);
         root.addView(connectCard, margin());
@@ -117,7 +127,7 @@ public class MainActivity extends Activity {
         controlCard = card(); controlCard.addView(text("训练控制", 22, true, Color.BLACK));
         controlCard.addView(text("远程操作会立即发送到当前连接的手表",13,false,Color.DKGRAY));
         LinearLayout controls = new LinearLayout(this);
-        for (String[] item : new String[][]{{"开始","start"},{"暂停/继续","toggle"},{"结束","stop"}}) {
+        for (String[] item : new String[][]{{"开始","start"},{"暂停","pause"},{"继续","resume"},{"结束","stop"}}) {
             Button action = button(item[0], Color.rgb(232,234,229), Color.BLACK); action.setOnClickListener(v -> control(item[1])); controls.addView(action, weight());
         }
         controlCard.addView(controls); root.addView(controlCard, margin());
@@ -159,7 +169,7 @@ public class MainActivity extends Activity {
 
     private void discoverWatch() {
         stopDiscovery();
-        connection.setText("正在局域网自动发现手表…");
+        if(watchConnection==null||watchConnection.snapshot().primaryTransport==null)connection.setText("正在寻找手表…");
         WifiManager wifi = (WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
         if (wifi != null) {
             multicastLock = wifi.createMulticastLock("watchintervals-discovery");
@@ -168,7 +178,7 @@ public class MainActivity extends Activity {
         nsdManager = (NsdManager)getSystemService(NSD_SERVICE);
         discoveryListener = new NsdManager.DiscoveryListener() {
             public void onDiscoveryStarted(String type) {}
-            public void onStartDiscoveryFailed(String type, int code) { runOnUiThread(() -> connection.setText("自动发现暂不可用，可直接输入手表 IP")); stopDiscovery(); }
+            public void onStartDiscoveryFailed(String type, int code) { stopDiscovery(); }
             public void onStopDiscoveryFailed(String type, int code) { releaseMulticast(); }
             public void onDiscoveryStopped(String type) { releaseMulticast(); }
             public void onServiceLost(NsdServiceInfo info) {}
@@ -183,7 +193,7 @@ public class MainActivity extends Activity {
                         if (address.isEmpty()) { resolving=false; return; }
                         if (pairing.length() != 6) {
                             resolving=false;
-                            runOnUiThread(() -> { host.setText(address); connection.setText("已发现手表 " + address + "，请输入配对码后同步"); });
+                            runOnUiThread(() -> { host.setText(address); connection.setText("已发现手表，请输入配对码"); });
                             stopDiscovery(); return;
                         }
                         // A LAN can contain stale/debug advertisements. Verify the pairing API before replacing the saved host.
@@ -195,7 +205,7 @@ public class MainActivity extends Activity {
                                 runOnUiThread(() -> {
                                     host.setText(address);
                                     getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",discoveredId).apply();
-                                    connection.setText("已发现并连接 " + status.optString("device") + " · " + address);
+                                    connection.setText("已发现 " + status.optString("device") + " · LAN 加速可用");
                                     stopDiscovery();
                                     syncAll();
                                 });
@@ -206,7 +216,7 @@ public class MainActivity extends Activity {
             }
         };
         try { nsdManager.discoverServices("_watchintervals._tcp.", NsdManager.PROTOCOL_DNS_SD, discoveryListener); }
-        catch (Exception error) { connection.setText("自动发现暂不可用，可直接输入手表 IP"); stopDiscovery(); }
+        catch (Exception error) { stopDiscovery(); }
     }
 
     private void stopDiscovery() {
@@ -224,14 +234,29 @@ public class MainActivity extends Activity {
     private void syncAll() {
         getSharedPreferences("connection", MODE_PRIVATE).edit().putString("host", host.getText().toString().trim()).putString("code", code.getText().toString().trim()).apply();
         runIo(() -> {
-            WatchClient client = client(); JSONObject status = new JSONObject(client.get("/v1/status"));
+            String pairing=code.getText().toString().trim();if(pairing.length()!=6)throw new IllegalArgumentException("请输入手表上的 6 位配对码");
+            watchConnection.configurePairing(pairing);watchConnection.configureLan(host.getText().toString().trim(),pairing);
+            watchConnection.connect().get(25,java.util.concurrent.TimeUnit.SECONDS);
+            JSONObject status = new JSONObject(watchConnection.requestBlocking("GET","/v1/status","",20_000L));
             String expected=getSharedPreferences("connection",MODE_PRIVATE).getString("watch_device_id","");String actual=status.optString("deviceId");if(!expected.isEmpty()&&!expected.equals(actual))throw new IllegalStateException("发现的设备身份与已配对手表不一致");
             if(expected.isEmpty()&&!actual.isEmpty())getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",actual).apply();
-            JSONObject library = PhonePlanLibrary.load(this); if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");PhoneSyncOutbox.drain(this,client);
-            JSONObject plan = new JSONObject(client.get("/v1/plan/profile")); JSONArray history = new JSONArray(client.get("/v1/history"));
-            runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · 手表端 " + status.optString("appVersion") + " · 手机辅助轨迹"); showPlan(plan); showHistory(history); ensureLocationRelay(); });
+            JSONObject library = PhonePlanLibrary.load(this); if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");PhoneSyncOutbox.drain(this,watchConnection);
+            JSONObject plan = new JSONObject(watchConnection.requestBlocking("GET","/v1/plan/profile","",20_000L)); JSONArray history = new JSONArray(watchConnection.requestBlocking("GET","/v1/history","",20_000L));
+            runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · " + transportLabel(watchConnection.snapshot())); showPlan(plan); showHistory(history); ensureLocationRelay(); });
         });
     }
+
+    private void ensureBluetoothConnection(){
+        if(android.os.Build.VERSION.SDK_INT>=31&&(checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN)!=android.content.pm.PackageManager.PERMISSION_GRANTED||checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)!=android.content.pm.PackageManager.PERMISSION_GRANTED)){
+            requestPermissions(new String[]{android.Manifest.permission.BLUETOOTH_SCAN,android.Manifest.permission.BLUETOOTH_CONNECT},REQUEST_BLUETOOTH);return;
+        }
+        startForegroundService(new Intent(this,PhoneCompanionService.class));
+    }
+
+    private String connectionLabel(WatchConnectionManager.Snapshot value){
+        switch(value.state){case CONNECTED_BLE_LAN:return "蓝牙连接 · LAN 加速";case CONNECTED_BLE:return "蓝牙已连接";case CONNECTED_LAN:return "LAN 已连接 · 正在恢复蓝牙";case SCANNING:return "正在通过蓝牙寻找手表";case CONNECTING_BLE:case DISCOVERING_SERVICES:case SUBSCRIBING:case AUTHENTICATING:return "正在建立蓝牙连接";case BLUETOOTH_DISABLED:return "蓝牙已关闭";case UNPAIRED:return "请输入手表上的配对码";case BACKOFF:return "手表不在附近，稍后自动重连";default:return "尚未连接";}
+    }
+    private String transportLabel(WatchConnectionManager.Snapshot value){return value.primaryTransport==null?"连接可用":value.primaryTransport==com.poyi.watchintervals.phone.connection.TransportType.BLE?(value.lanAvailable?"蓝牙 · LAN 加速":"蓝牙"):"LAN";}
 
     private void ensureLocationRelay() {
         if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -244,6 +269,7 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == REQUEST_LOCATION_RELAY && checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) ensureLocationRelay();
+        if(requestCode==REQUEST_BLUETOOTH&&checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN)==android.content.pm.PackageManager.PERMISSION_GRANTED&&checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)==android.content.pm.PackageManager.PERMISSION_GRANTED)ensureBluetoothConnection();
     }
 
     private void showPlan(JSONObject profile) {
@@ -347,7 +373,7 @@ public class MainActivity extends Activity {
         runIo(()->{
             try {
                 PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");
-                JSONObject sync=PhoneSyncOutbox.drain(this,client());
+                JSONObject sync=PhoneSyncOutbox.drain(this,watchConnection);
                 runOnUiThread(()->connection.setText("synced".equals(sync.optString("state"))?successText:"计划已保存，等待手表连接"));
             } catch(Exception error) {
                 runOnUiThread(()->connection.setText("计划已保存，等待手表连接"));
@@ -443,7 +469,7 @@ public class MainActivity extends Activity {
         String expected="pause".equals(action)?"RUNNING":"resume".equals(action)?"PAUSED":"start".equals(action)?"STOPPED":"";
         JSONObject command=new JSONObject().put("commandId",java.util.UUID.randomUUID().toString()).put("expiresAt",System.currentTimeMillis()+30_000L);
         if(!expected.isEmpty())command.put("expectedState",expected);
-        client().post("/v1/control/"+action,command.toString()); runOnUiThread(()->connection.setText("训练操作已发送："+action));
+        watchConnection.requestBlocking("POST","/v1/control/"+action,command.toString(),30_000L); runOnUiThread(()->connection.setText("训练操作已发送："+action));
     } catch(Exception error){runOnUiThread(()->connection.setText("训练操作失败："+error.getMessage()));} }); }
 
     private void showHistory(JSONArray array){
@@ -458,7 +484,7 @@ public class MainActivity extends Activity {
             row.addView(primary);
             TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+record.optInt("routePointCount")+" 个轨迹点",13,false,Color.DKGRAY);
             row.addView(secondary);
-            row.setOnClickListener(v->runIo(()->{try{String detail=client().get("/v1/history/"+android.net.Uri.encode(record.optString("id")));runOnUiThread(()->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",detail)));}catch(Exception error){runOnUiThread(()->connection.setText("读取训练详情失败："+error.getMessage()));}}));
+            row.setOnClickListener(v->runIo(()->{try{String detail=watchConnection.requestBlocking("GET","/v1/history/"+android.net.Uri.encode(record.optString("id")),"",20_000L);runOnUiThread(()->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",detail)));}catch(Exception error){runOnUiThread(()->connection.setText("读取训练详情失败："+error.getMessage()));}}));
             LinearLayout.LayoutParams params=margin(); params.setMargins(0,dp(10),0,0); historyList.addView(row,params);
         }
     }
@@ -466,7 +492,7 @@ public class MainActivity extends Activity {
     private void loadSleep(){
         sleepSummary.setText("正在读取手表系统睡眠…");
         io.execute(()->{try{
-            JSONObject result=new JSONObject(client().get("/v1/sleep?days=14"));
+            JSONObject result=new JSONObject(watchConnection.requestBlocking("GET","/v1/sleep?days=14","",20_000L));
             runOnUiThread(()->showSleep(result));
         }catch(Exception error){runOnUiThread(()->sleepSummary.setText("读取失败："+error.getMessage()));}});
     }
@@ -501,7 +527,6 @@ public class MainActivity extends Activity {
     private String formatDistance(double meters){return meters<1000?Math.round(meters)+" 米":String.format(Locale.CHINA,"%.2f 公里",meters/1000d);}
     private String formatDuration(long millis){long total=Math.max(0,millis/1000),hours=total/3600,minutes=(total%3600)/60,seconds=total%60;return hours>0?String.format(Locale.CHINA,"%d:%02d:%02d",hours,minutes,seconds):String.format(Locale.CHINA,"%02d:%02d",minutes,seconds);}
     private String formatPace(long millis,double meters){if(meters<1||millis<=0)return "-- /公里";long seconds=Math.round(millis/1000d*1000d/meters);return String.format(Locale.CHINA,"%d:%02d /公里",seconds/60,seconds%60);}
-    private WatchClient client(){ return new WatchClient(host.getText().toString().trim(),code.getText().toString().trim()); }
     private void runIo(Throwing action){ connection.setText("正在同步…"); io.execute(()->{ try{action.run();}catch(Exception error){runOnUiThread(()->connection.setText("连接失败："+error.getMessage()));} }); }
     interface Throwing{void run()throws Exception;}
     private String kindName(String kind){return "WALK".equals(kind)?"快走":"REST".equals(kind)?"休息":"跑步";}
@@ -513,5 +538,5 @@ public class MainActivity extends Activity {
     private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setBackground(rounded(bg,16));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
     private GradientDrawable rounded(int color,int radius){GradientDrawable shape=new GradientDrawable();shape.setColor(color);shape.setCornerRadius(dp(radius));return shape;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
-    @Override protected void onDestroy(){stopDiscovery();io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stopDiscovery();if(watchConnection!=null)watchConnection.removeObserver(connectionObserver);io.shutdownNow();super.onDestroy();}
 }

@@ -12,6 +12,7 @@ import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import org.json.JSONObject;
+import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -20,6 +21,8 @@ public final class PhoneLocationRelayService extends Service implements Location
     private static final String CHANNEL = "location_relay";
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private LocationManager locations;
+    private WatchConnectionManager connection;
+    private long sequence;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -28,6 +31,7 @@ public final class PhoneLocationRelayService extends Service implements Location
         Notification notification = new Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setContentTitle("正在辅助记录手表轨迹").setContentText("手表无有效定位时使用手机 GPS").setOngoing(true).build();
         startForeground(91, notification);
+        connection = WatchConnectionManager.get(this);
         locations = getSystemService(LocationManager.class);
         if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && locations != null) {
             try { locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 1f, this); } catch (Exception ignored) {}
@@ -39,16 +43,14 @@ public final class PhoneLocationRelayService extends Service implements Location
 
     @Override public void onLocationChanged(Location location) {
         if (location == null || (location.hasAccuracy() && location.getAccuracy() > 150f)) return;
-        android.content.SharedPreferences prefs = getSharedPreferences("connection", MODE_PRIVATE);
-        String host = prefs.getString("host", ""), code = prefs.getString("code", "");
-        if (host.isEmpty() || code.length() != 6) return;
         network.execute(() -> {
             try {
-                JSONObject point = new JSONObject().put("latitude", location.getLatitude()).put("longitude", location.getLongitude())
+                JSONObject point = new JSONObject().put("sequence",++sequence).put("time",location.getTime()).put("elapsedRealtimeNanos",location.getElapsedRealtimeNanos())
+                        .put("latitude", location.getLatitude()).put("longitude", location.getLongitude())
                         .put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 30f)
                         .put("speed", location.hasSpeed() ? location.getSpeed() : -1f)
-                        .put("source", "phone_companion");
-                new WatchClient(host, code).post("/v1/location", point.toString());
+                        .put("bearing",location.hasBearing()?location.getBearing():-1f).put("source", "phone_gps");
+                connection.requestBlocking("POST","/v1/location",point.toString(),8_000L);
             } catch (Exception ignored) {}
         });
     }

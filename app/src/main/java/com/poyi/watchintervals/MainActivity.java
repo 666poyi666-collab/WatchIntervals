@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
                 | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
                 | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
         startForegroundService(new Intent(this, WatchBridgeService.class));
+        startForegroundService(new Intent(this, WatchLinkService.class));
         buildUi();
         if (!getPreferences(MODE_PRIVATE).getBoolean("sleep_permission_prompted", false)) {
             getPreferences(MODE_PRIVATE).edit().putBoolean("sleep_permission_prompted", true).apply();

@@ -20,12 +20,12 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 基线日期 | 2026-07-25 |
-| 手表应用 | `app`，`com.poyi.watchintervals`，`0.18.0`（28） |
-| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.11.0`（12） |
+| 基线日期 | 2026-07-26 |
+| 手表应用 | `app`，`com.poyi.watchintervals`，`0.19.0`（29） |
+| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.19.0`（13） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | `0.18.0` 户外可靠性 debug 候选，待 OWW221 长时间真机验证 |
+| 发布状态 | `0.19.0` BLE 集成 debug 候选，待安全配对、无 Wi-Fi、后台与长时间门禁 |
 
 ## 事实来源
 

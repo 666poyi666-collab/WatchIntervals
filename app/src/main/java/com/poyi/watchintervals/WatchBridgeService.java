@@ -34,6 +34,7 @@ public class WatchBridgeService extends Service {
     private ServerSocket server;
     private NsdManager.RegistrationListener registration;
     private SystemSleepBridge sleepBridge;
+    private WatchCommandRouter commandRouter;
 
     static String pairingCode(Context context) {
         android.content.SharedPreferences preferences = context.getSharedPreferences("bridge", MODE_PRIVATE);
@@ -47,7 +48,7 @@ public class WatchBridgeService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
-        sleepBridge = new SystemSleepBridge(this);
+        commandRouter = new WatchCommandRouter(this);
         NotificationChannel channel = new NotificationChannel(CHANNEL, "手机与 MCP 连接", NotificationManager.IMPORTANCE_MIN);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
         Notification notification = new Notification.Builder(this, CHANNEL)
@@ -96,6 +97,11 @@ public class WatchBridgeService extends Service {
             String body = bodyBuilder.toString();
 
             if (!pairingCode(this).equals(headers.get("x-pairing-code"))) { respond(socket, 401, error("pairing_required")); return; }
+            if (commandRouter != null) {
+                WatchCommandRouter.Result routed = commandRouter.route(method, path, body);
+                respond(socket, routed.status, routed.body);
+                return;
+            }
             if ("GET".equals(method) && "/v1/status".equals(path)) {
                 JSONObject status = new JSONObject().put("device", "OWW221").put("appVersion", BuildConfig.VERSION_NAME)
                         .put("deviceId", deviceId()).put("protocolVersion", 2)
@@ -234,6 +240,7 @@ public class WatchBridgeService extends Service {
     @Override public void onDestroy() {
         closed = true; try { if (server != null) server.close(); } catch (Exception ignored) {}
         if (sleepBridge != null) sleepBridge.close();
+        if (commandRouter != null) commandRouter.close();
         try { if (registration != null) getSystemService(NsdManager.class).unregisterService(registration); } catch (Exception ignored) {}
         workers.shutdownNow(); super.onDestroy();
     }

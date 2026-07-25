@@ -121,6 +121,15 @@
 - 为消除计划库已提交但结果缓存未提交的重复执行窗口，执行前记录 `in_progress` 和初始 revision，恢复时用单调 library revision 判断已提交并重建结果。
 - 本地执行 `gradlew.bat :phone:testDebugUnitTest :app:assembleDebug :phone:assembleDebug` 成功；进程终止故障注入保留为真机门禁。
 
+## 2026-07-26：0.19.0 手机—手表 BLE 主链路
+
+- 关联 `REQ-SYNC-008` 至 `REQ-SYNC-010`、`BUG-015`、`BUG-016`。
+- 先在 OWW221/Xiaomi 上确认手机 Central、手表 Peripheral 角色可用，再删除两端 exported debug POC，建立正式 GATT 服务与连接管理器。
+- 协议使用 16 字节帧头，默认 MTU 23 可传输；真机 MTU 517 测试后补充 512 字节属性值上限及 Android 13 原子写 API。
+- 手表新增共享 `WatchCommandRouter`；手机计划 outbox、定位中继和正常业务通过 `WatchConnectionManager` 选择 BLE/LAN，不再直接依赖固定 IP。
+- 真机日志确认广播、连接、MTU、四项 CCCD、过渡 AUTH、`/v1/sync/operations`、`/v1/plan/profile` 和 `/v1/location` 成功；手机 UI 已显示 BLE + LAN 加速状态。
+- 两端升级为 0.19.0 debug 候选并覆盖安装。测试仍使用网络 ADB；安全配对、控制取证、无 Wi-Fi、后台、重启、长时及功耗门禁保持开放。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
@@ -135,6 +144,7 @@
 | ADR-008 | 原始训练样本使用每会话追加文件，历史索引只存摘要 | 避免长训练反复序列化和整体重写大 JSON | 恢复、归档和删除必须处理目录级原子性 |
 | ADR-009 | 计划完成状态与训练会话状态正交 | 达标不代表用户已经结束户外运动 | UI、检查点和控制 API 均需同时表达两个状态 |
 | ADR-010 | BLE 必须先通过真机稳定性门禁再接入 SyncEngine | OWW221 后台和 GATT 角色能力尚无证据 | 未通过时继续发布可靠 LAN，不把 POC 宣称为功能 |
+| ADR-011 | BLE 使用手机 Central、手表 Peripheral，LAN 降为批量加速 | OWW221 与 Xiaomi 真机已证明该角色可广播、订阅和双向分片 | 控制/计划/定位优先 BLE，历史/睡眠可走已验证 LAN |
 
 ## 工作日志模板
 

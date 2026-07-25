@@ -22,8 +22,12 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_CLIENT_SERVICE" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_STORE_SERVICE" />
     <uses-permission android:name="heytap.wearable.permission.health.BIND_EXERCISE_SERVICE" />
@@ -81,7 +85,7 @@
             android:exported="false"
             android:foregroundServiceType="location" />
         <service android:name=".WatchBridgeService" android:exported="false" />
-        <service android:name=".BleProbeService" android:exported="true" tools:ignore="ExportedService" />
+        <service android:name=".WatchLinkService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
         </receiver>

@@ -15,8 +15,8 @@ android {
         applicationId 'com.poyi.watchintervals'
         minSdk 30
         targetSdk 30
-        versionCode 28
-        versionName '0.18.0'
+        versionCode 29
+        versionName '0.19.0'
         manifestPlaceholders = [BAIDU_MAP_AK: (project.findProperty('BAIDU_MAP_AK') ?: 'TOKEN')]
         buildConfigField 'String', 'BAIDU_MAP_AK', '"' + (project.findProperty('BAIDU_MAP_AK') ?: 'TOKEN') + '"'
     }

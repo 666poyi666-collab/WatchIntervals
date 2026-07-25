@@ -1,7 +1,7 @@
 # 架构与开发规范
 
 状态：维护中  
-基线：2026-07-25
+基线：2026-07-26
 
 ## 1. 总体架构
 
@@ -11,14 +11,18 @@
       -> WorkoutService（训练状态唯一运行时来源）
       -> PlanStore / PlanLibraryStore / HistoryStore
       -> SystemExerciseBridge / SystemSleepBridge / SystemGpsBridge / Android Sensors
-      -> WatchBridgeService :8765 + mDNS
+      -> WatchCommandRouter
+           -> WatchLinkService（BLE Peripheral/GATT Server）
+           -> WatchBridgeService :8765 + mDNS（LAN 加速）
                     ^
-                    | 局域网 HTTP + X-Pairing-Code
+                    | BLE 主链路 / LAN 加速
                     v
 手机 phone (Android API 29+)
   MainActivity / HistoryDetailActivity
       -> PhonePlanLibrary（多计划主库）
-      -> WatchClient
+      -> WatchConnectionManager
+           -> BleGattTransport（Central/GATT Client）
+           -> LanHttpTransport
       -> PhoneLocationRelayService
       -> PhonePlanBridgeService :8766
                     ^
@@ -38,8 +42,8 @@
 | 训练模型 | `Stage`、`WorkoutRecord` | 阶段和历史 JSON schema |
 | 本地存储 | `PlanStore`、`PlanLibraryStore`、`HistoryStore` | 当前计划、多计划库、最多 200 条历史 |
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
-| 手表 API | `WatchBridgeService` | 配对、mDNS、计划/历史/睡眠/控制/手机定位中继 |
-| 手机伴侣 | `phone/*` | 计划库、发现配对、同步、历史详情、定位中继 |
+| 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS |
+| 手机伴侣 | `WatchConnectionManager`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继 |
 | MCP | `mcp/*.py` | 将手表和手机 HTTP API 暴露为本地工具 |
 
 ## 3. 核心状态和不变量
@@ -65,7 +69,7 @@
 | 多计划库 | SharedPreferences `plan_library_v2` | schema 2 | 手机为主库，手表保留同步副本 |
 | 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入；恢复时按已确认 offset 截断尾部 |
 | 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
-| 配对码 | SharedPreferences `bridge` | 六位十进制字符串 | 当前持久保存，不自动轮换 |
+| BLE 身份 | SharedPreferences `watch_identity` / `bridge` | 稳定设备 ID + 过渡六位码 | 当前仅为 debug 认证；正式密钥与挑战响应关联 `BUG-015` |
 | MCP 配置 | `%USERPROFILE%/.watchintervals.json` | host/port/phoneHost/phonePort/pairingCode | 禁止提交真实配置 |
 | Tunnel 凭据 | `%LOCALAPPDATA%/WatchIntervals/tunnel` | DPAPI CurrentUser + 本地 profile | Runtime Key 不写入仓库、命令行和日志 |
 
@@ -173,8 +177,11 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - 本地健康端点仅监听环回地址；`check_persistent_chatgpt_tunnel.ps1` 检查任务、凭据、`healthz` 和 `readyz`。
 - 删除或轮换 Runtime Key 后必须重新执行安装脚本；仓库和发布包不得包含 profile、密钥、Tunnel ID 或运行日志。
 
-## 11. BLE POC 边界
+## 11. BLE 连接架构与边界
 
-- Debug APK 包含固定 UUID 的手表 Peripheral/GATT Server 与手机 Central/GATT Client ping/pong 探针。
-- POC 仅验证广播、连接和命令，不承载正式计划、历史、睡眠、轨迹或手机定位中继。
-- 只有完成 OWW221 息屏、后台、双端重启和 12 小时门禁后，才允许把 BLE 接入 SyncEngine；当前正式传输仍为 LAN。
+- 角色固定为手机 Central/GATT Client、OWW221 Peripheral/GATT Server；旧 `BleProbeService` 已删除，正式服务均 `exported=false`。
+- GATT 服务包含设备信息、配对、控制、事件、同步收发、定位、LAN endpoint 和心跳特征；手机顺序订阅 indication 后认证。
+- 消息使用 16 字节帧头，兼容默认 MTU 23；单帧同时受 `MTU-3` 与 512 字节属性值上限约束，消息上限 256 KB，不完整帧 30 秒清理。
+- `WatchConnectionManager` 负责 BLE 优先、LAN 加速、状态快照和退避。控制、计划、同步与定位优先 BLE；历史/睡眠等批量读取优先已验证 LAN，失败可回退 BLE。
+- 2026-07-26 真机已验证 OWW221 广播、Xiaomi 连接、MTU 517、四个 CCCD、AUTH、计划 outbox、计划回读和定位请求。
+- 当前认证仍复用长期六位码，不具备应用层加密与防重放；`BUG-015` 关闭前不能称为正式安全配对。无 Wi-Fi、后台、重启、12 小时和功耗门禁关联 `BUG-016`。

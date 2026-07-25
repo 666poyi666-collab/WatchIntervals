@@ -73,6 +73,10 @@ git diff --check
 | PT-008 | 睡眠页 | 授权后显示时长、评分、血氧、深睡、REM 和阶段数量；未授权时有明确提示 |
 | PT-009 | 手机服务发现 | 手机 IP 改变后 Gateway 通过 `_watchintervals-phone._tcp.` 找到相同 phoneDeviceId |
 | PT-010 | 计划 outbox | 手表离线修改计划，恢复 LAN 后自动 ACK | 操作不丢失、不重复，pending 归零 |
+| PT-011 | BLE 首次连接 | 手机授权附近设备后自动扫描、连接、发现服务、协商 MTU、订阅并认证 |
+| PT-012 | BLE 计划同步 | 无 LAN 时计划 outbox 经 BLE ACK，手表 profile 回读一致 |
+| PT-013 | BLE 定位中继 | 训练中每 2–5 秒发送带 sequence/TTL 的手机定位，断联不补发旧点 |
+| PT-014 | BLE 控制 | start/pause/resume/stop 经 BLE；重复 commandId 返回首次结果且不反转状态 |
 
 ## 5. MCP/API 回归
 
@@ -94,9 +98,28 @@ git diff --check
 | API-014 | 重复 operationId 返回 already_applied；旧 revision 返回 conflict；ACK 丢失重试不重复应用 |
 | API-015 | 手机 API v2 相同 requestId 返回首次结果；不同正文复用 ID 和旧 revision 返回 409；在计划库提交后终止进程，重试只恢复结果而不重复修改 |
 
-## 5.1 BLE POC 门禁
+## 5.1 BLE 集成门禁
 
-Debug POC 通过 ADB 显式启动，只验证 ping/pong。正式接入前必须完成：手表息屏 30 分钟仍可发现、手机后台恢复、双端重启无需重新配对、50 次连接循环、1000 次命令丢包率低于 1%、连续 12 小时无永久断联。未完成时不得把 BLE 描述为正式同步能力。
+| ID | 场景 | 验收 |
+| --- | --- | --- |
+| BLE-001 | 无共同 Wi-Fi、关闭无线 ADB | 60 秒内自动连接，不输入 IP，状态/计划/控制/定位可用 |
+| BLE-002 | 手机与手表各息屏 30 分钟 | 连接保持或可自动恢复，无需打开开发者设置 |
+| BLE-003 | 手机进程回收、手表 Activity 关闭 | 前台连接服务恢复，训练服务不受影响 |
+| BLE-004 | 手机、手表、双端重启 | 无需重新输入验证码，自动恢复已配对身份 |
+| BLE-005 | 双端蓝牙分别关闭再开启 | 退避后自动连接，pending 不丢失、不重复 |
+| BLE-006 | 50 次连接/断开 | 不永久卡在 CONNECTING，不需清数据 |
+| BLE-007 | 1000 status + 1000 ping + 100 次幂等控制 | 无 OOM，丢失率低于 1%，控制不反转 |
+| BLE-008 | 连续 12 小时 | 无永久断联，记录断联与恢复次数 |
+| BLE-009 | 计划、轨迹和心率分页中断续传 | cursor 续传无重复、无漏页、无 OOM |
+| BLE-010 | 功耗 | 分别记录待机、训练、定位中继、BLE+LAN 的双端电量变化 |
+
+### 0.19.0 BLE 基础真机证据（2026-07-26）
+
+- OWW221 作为 Peripheral/GATT Server 低功耗广播；Xiaomi xaga 作为 Central 扫描连接成功。
+- 双端协商 MTU 517，手机依次完成 EVENTS、SYNC_RX、PAIRING、HEARTBEAT 四个 CCCD indication 订阅，并完成过渡 AUTH。
+- 真机发现并修复三项 Xiaomi 栈兼容问题：认证后 GATT 操作竞态、Android 13 原子写 API、MTU 517 时属性值不得超过 512 字节。
+- 手表日志确认 `POST /v1/sync/operations`、`GET /v1/plan/profile`、`POST /v1/location` 均经 GATT 返回 200；手机 UI 显示“蓝牙连接 · LAN 加速”。
+- 本轮通过网络 ADB 安装和读取脱敏日志，因此不满足 BLE-001；控制按钮、后台、重启、长时间和功耗门禁仍未计为通过。
 
 ## 6. 建议优先补齐的自动测试
 

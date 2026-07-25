@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
 
 /** Local phone-authoritative plan API consumed by the desktop MCP server. */
 public class PhonePlanBridgeService extends Service {
@@ -128,9 +129,10 @@ public class PhonePlanBridgeService extends Service {
     private JSONObject syncToWatch() {
         try {
             String host=getSharedPreferences("connection",MODE_PRIVATE).getString("host","");String code=getSharedPreferences("connection",MODE_PRIVATE).getString("code","");
-            if(host.isEmpty()||code.isEmpty())return new JSONObject().put("state","pending").put("reason","watch_not_configured");
+            if(code.length()!=6)return new JSONObject().put("state","pending").put("reason","watch_not_configured");
             if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,PhonePlanLibrary.load(this),"upsert","library");
-            JSONObject result=PhoneSyncOutbox.drain(this,new WatchClient(host,code));return result.put("host",host);
+            WatchConnectionManager connection=WatchConnectionManager.get(this);connection.configurePairing(code);connection.configureLan(host,code);
+            return PhoneSyncOutbox.drain(this,connection);
         } catch(Exception error){try{return new JSONObject().put("state","pending").put("reason",error.getMessage());}catch(Exception ignored){return new JSONObject();}}
     }
     private String phoneDeviceId(){android.content.SharedPreferences p=getSharedPreferences("device_identity",MODE_PRIVATE);String id=p.getString("phone_device_id","");if(id.isEmpty()){id=java.util.UUID.randomUUID().toString();p.edit().putString("phone_device_id",id).apply();}return id;}

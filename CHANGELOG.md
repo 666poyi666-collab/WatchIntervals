@@ -2,6 +2,30 @@
 
 本文件记录用户可感知的版本变化，格式参考 Keep a Changelog。手表端和手机端版本独立，在标题中分别标明。
 
+## [Watch 0.19.0 / Phone 0.19.0] - 2026-07-26
+
+### Added
+
+- 手机 Central/GATT Client 与 OWW221 Peripheral/GATT Server 正式替代 debug ping/pong POC，支持分片 request/response、MTU、CCCD indication、自动重连和连接状态。
+- 计划 outbox、计划回读与手机定位中继接入 BLE；LAN 保留为历史/睡眠等批量数据的加速链路。
+- 手表 BLE 与 8765 LAN 使用共享 `WatchCommandRouter`；手机业务统一经 `WatchConnectionManager` 选择传输。
+
+### Changed
+
+- 手机主页面隐藏手工 IP，BLE 连上后自动同步；IP 仅作为后台 LAN 发现和加速端点。
+- 手表和手机版本统一为 0.19.0 debug 候选。
+
+### Fixed
+
+- 修复 checkpoint 写入 offset 前未无条件 flush 缓冲样本的问题。
+- 修复 Xiaomi 认证完成后 GATT 写入竞态、Android 13 旧写 API失败，以及 MTU 517 生成 514 字节属性值超过 512 字节上限的问题。
+- 修复 BLE 权限缺失且 LAN 可用时每秒重置退避并反复扫描的问题。
+
+### Known Issues
+
+- 当前 BLE AUTH 仍复用长期六位码，尚未完成一次性配对、公钥交换、会话加密和防重放；仅允许 debug 测试。
+- 无共同 Wi-Fi/无 ADB、息屏后台、双端重启、50 次重连、1000 次请求、12 小时与功耗门禁尚未完成。
+
 ## [Unreleased]
 
 ### Added
@@ -10,7 +34,7 @@
 - 活动训练采用追加式轨迹/心率文件、有界原子检查点；历史改为独立记录目录和摘要索引，并提供详情及 route/heart 分页 API。
 - 新增 10 秒平滑当前/最高速度、四类距离来源证据、计划内/自由记录距离及四页手表训练界面。
 - 新增 Windows 长期 HTTP Gateway、手机 mDNS 广播、设备 ID 校验和分层离线错误；Tunnel 改为连接本地 Gateway。
-- 新增计划持久 outbox、operationId、revision、ACK 和删除操作基础协议，以及 debug-only BLE GATT ping/pong POC。
+- 新增计划持久 outbox、operationId、revision、ACK 和删除操作基础协议。
 - 手机计划 API v2 新增 `requestId`、`expectedRevision`、首次结果持久重放与崩溃恢复契约，供 Personal MCP Gateway 安全重试写入。
 
 ### Changed
@@ -30,7 +54,7 @@
 ### Known Issues
 
 - `0.18.0/0.11.0` 为 debug 候选，尚未完成三次 30–60 分钟户外对比、进程终止矩阵、378×496 全页面截图和功耗测试。
-- BLE 仅为手动授权后的 debug POC，尚未通过后台、息屏、双端重启、连续重连和 12 小时门禁，未接入 SyncEngine。
+- BLE 已接入计划、控制选择和定位中继，但安全配对、后台、息屏、双端重启、连续重连和 12 小时门禁未完成。
 - Windows Gateway 与 Secure MCP Tunnel 尚未进行真实远程端到端绑定验证。
 
 ## [Phone 0.10.1 / MCP 0.5.1] - 2026-07-25

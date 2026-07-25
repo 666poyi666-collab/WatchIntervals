@@ -7,5 +7,6 @@ import android.content.Intent;
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         context.startForegroundService(new Intent(context, WatchBridgeService.class));
+        context.startForegroundService(new Intent(context, WatchLinkService.class));
     }
 }
