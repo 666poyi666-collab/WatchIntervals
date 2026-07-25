@@ -29,14 +29,14 @@ final class WorkoutRecord {
     JSONObject toSummaryJson() throws JSONException {
         JSONObject json = new JSONObject();
         json.put("schemaVersion", SCHEMA_VERSION).put("id", id).put("startedAt", startedAt).put("endedAt", endedAt)
-                .put("durationMs", durationMs).put("distanceMeters", distanceMeters).put("steps", steps)
+                .put("durationMs", durationMs).put("distanceMeters", finite(distanceMeters)).put("steps", steps)
                 .put("averageHeartRate", averageHeartRate).put("plan", plan == null ? "" : plan)
                 .put("planName", planName).put("planGroup", planGroup).put("planRequirement", planRequirement)
                 .put("pausedDurationMs", pausedDurationMs).put("elapsedDurationMs", Math.max(durationMs, endedAt - startedAt))
                 .put("planCompletedActiveMs", planCompletedActiveMs).put("planCompletedWallTime", planCompletedWallTime)
                 .put("freeRecordingActiveMs", planCompletedActiveMs > 0 ? Math.max(0, durationMs - planCompletedActiveMs) : 0)
-                .put("planDistanceMeters", planDistanceMeters).put("freeRecordingDistanceMeters", freeRecordingDistanceMeters)
-                .put("maxSmoothedSpeedMps", maxSmoothedSpeedMps).put("routePointCount", Math.max(routePointCount, route.size()))
+                .put("planDistanceMeters", finite(planDistanceMeters)).put("freeRecordingDistanceMeters", finite(freeRecordingDistanceMeters))
+                .put("maxSmoothedSpeedMps", finite(maxSmoothedSpeedMps)).put("routePointCount", Math.max(routePointCount, route.size()))
                 .put("distanceBySourceMeters", distanceBySourceMeters).put("routePointCountBySource", routePointCountBySource)
                 .put("sourceTransitions", sourceTransitions).put("locationAccuracySummary", locationAccuracySummary)
                 .put("stageResults", stageResults == null ? new JSONArray() : stageResults);
@@ -85,10 +85,10 @@ final class WorkoutRecord {
     static WorkoutRecord fromJson(JSONObject json) throws JSONException {
         WorkoutRecord record = new WorkoutRecord();
         record.id = json.getString("id"); record.startedAt = json.optLong("startedAt"); record.endedAt = json.optLong("endedAt");
-        record.durationMs = json.optLong("durationMs"); record.distanceMeters = json.optDouble("distanceMeters"); record.steps = json.optInt("steps");
+        record.durationMs = json.optLong("durationMs"); record.distanceMeters = finite(json.optDouble("distanceMeters", 0d)); record.steps = json.optInt("steps");
         record.averageHeartRate = json.optInt("averageHeartRate"); record.plan = json.optString("plan"); record.planName=json.optString("planName");record.planGroup=json.optString("planGroup");record.planRequirement=json.optString("planRequirement");
         record.pausedDurationMs=json.optLong("pausedDurationMs");record.planCompletedActiveMs=json.optLong("planCompletedActiveMs");record.planCompletedWallTime=json.optLong("planCompletedWallTime");
-        record.planDistanceMeters=json.optDouble("planDistanceMeters");record.freeRecordingDistanceMeters=json.optDouble("freeRecordingDistanceMeters");record.maxSmoothedSpeedMps=json.optDouble("maxSmoothedSpeedMps");
+        record.planDistanceMeters=finite(json.optDouble("planDistanceMeters",0d));record.freeRecordingDistanceMeters=finite(json.optDouble("freeRecordingDistanceMeters",0d));record.maxSmoothedSpeedMps=finite(json.optDouble("maxSmoothedSpeedMps",0d));
         record.routePointCount=json.optInt("routePointCount");record.routeTruncated=json.optBoolean("routeTruncated");
         if(json.optJSONObject("distanceBySourceMeters")!=null)record.distanceBySourceMeters=json.optJSONObject("distanceBySourceMeters");
         if(json.optJSONObject("routePointCountBySource")!=null)record.routePointCountBySource=json.optJSONObject("routePointCountBySource");
@@ -104,4 +104,6 @@ final class WorkoutRecord {
         record.stageResults=json.optJSONArray("stageResults");if(record.stageResults==null)record.stageResults=new JSONArray();
         if(record.routePointCount<=0)record.routePointCount=record.route.size();return record;
     }
+
+    private static double finite(double value) { return Double.isFinite(value) ? value : 0d; }
 }

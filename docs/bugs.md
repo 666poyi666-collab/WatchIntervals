@@ -160,6 +160,9 @@
 | BUG-H011 | 手机睡眠页只展示首个 session，且把缺失评分/血氧显示为 0 | 时长使用 record 总时长，深睡/REM/阶段聚合全部 session；缺失指标显示 `--`，MCP 汇总返回 `null` 及样本数 | Fixed；PT-008、API-010 |
 | BUG-H012 | pause/resume API 采用 toggle，重复调用会反转状态 | 增加显式 action、commandId、expectedState、expiresAt 和有限结果缓存 | Fixed；API-006，待真机重试验证 |
 | BUG-H013 | 仓库缺少 Gradle Wrapper | 加入并锁定 Gradle 8.14.3 Wrapper，CI 与本地统一入口 | Fixed；CI/本地构建验证 |
+| BUG-H014 | schema 2 缺少 schema 3 数值时迁移得到 NaN，整批历史迁移失败 | 旧字段使用有限默认值，输出边界再次归一化；新增缺字段和非有限值测试 | Verified；OWW221 旧版 3 条历史迁移后索引仍为 3 |
+| BUG-H015 | 活动进程重建后首页“继续”仍进入准备页，绑定服务后计时显示 00:00 | 恢复入口先显式启动服务读取 checkpoint，再打开现有 TrainingActivity | Verified；覆盖安装恢复后计时从 checkpoint 继续增长 |
+| BUG-H016 | 首页长训练要求挤压首屏，配对码和计划入口被底部裁切 | 首页移除重复要求正文并压缩固定尺寸，完整要求保留在计划页 | Verified；OWW221 378×496 截图和 UI bounds |
 
 ## 3. 新缺陷模板
 

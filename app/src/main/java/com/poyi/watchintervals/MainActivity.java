@@ -82,45 +82,43 @@ public class MainActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = Ui.bold(this, "步序", 27, Ui.WHITE);
-        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 42), 1));
+        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 38), 1));
         clock = Ui.text(this, "", 16, Ui.MUTED); clock.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        header.addView(clock, new LinearLayout.LayoutParams(Ui.dp(this, 74), Ui.dp(this, 42)));
+        header.addView(clock, new LinearLayout.LayoutParams(Ui.dp(this, 74), Ui.dp(this, 38)));
         root.addView(header);
 
         LinearLayout hero = Ui.card(this);
         ready = Ui.text(this, "训练安排已就绪", 12, Ui.MUTED);
         ready.setGravity(Gravity.CENTER); hero.addView(ready, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
         workout = Ui.bold(this, "1千米 + 200米", 25, Ui.WHITE);
-        workout.setGravity(Gravity.CENTER); hero.addView(workout, new LinearLayout.LayoutParams(-1, Ui.dp(this, 38)));
+        workout.setGravity(Gravity.CENTER); hero.addView(workout, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
 
         start = Ui.bold(this, "开始", 29, Ui.BLACK);
         start.setGravity(Gravity.CENTER);
         start.setBackground(Ui.ovalAction(this, Ui.YELLOW));
         start.setClickable(true);
         start.setFocusable(true);
-        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 112));
+        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(Ui.dp(this, 96), Ui.dp(this, 96));
         startParams.gravity = Gravity.CENTER_HORIZONTAL;
         startParams.topMargin = Ui.dp(this, 5); hero.addView(start, startParams);
 
         planLine = Ui.text(this, "", 15, Ui.WHITE); planLine.setGravity(Gravity.CENTER);
-        hero.addView(planLine, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
+        hero.addView(planLine, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
         planSummary = Ui.text(this, "", 12, Ui.LIME); planSummary.setGravity(Gravity.CENTER);
-        hero.addView(planSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
+        hero.addView(planSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 18)));
         planDetails = Ui.text(this, "", 12, Ui.MUTED);
-        planDetails.setGravity(Gravity.CENTER);
-        planDetails.setSingleLine(false); planDetails.setMaxLines(3);
-        planDetails.setPadding(Ui.dp(this, 8), Ui.dp(this, 5), Ui.dp(this, 8), Ui.dp(this, 5));
-        hero.addView(planDetails, new LinearLayout.LayoutParams(-1, -2));
+        planDetails.setVisibility(View.GONE);
+        hero.addView(planDetails, new LinearLayout.LayoutParams(0, 0));
         root.addView(hero, new LinearLayout.LayoutParams(-1, -2));
         sensorStatus = Ui.text(this, "", 11, Ui.MUTED); sensorStatus.setGravity(Gravity.CENTER);
         sensorStatus.setVisibility(View.GONE);
-        root.addView(sensorStatus, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
+        root.addView(sensorStatus, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
         TextView edit = Ui.action(this, "选择训练安排", 17, Ui.WHITE, Ui.PANEL);
-        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 50));
+        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 40));
         editParams.topMargin = Ui.dp(this, 4); root.addView(edit, editParams);
-        root.addView(Ui.pagerDots(this, 0, 3), new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
+        root.addView(Ui.pagerDots(this, 0, 3), new LinearLayout.LayoutParams(-1, Ui.dp(this, 15)));
         TextView pages = Ui.text(this, "向左滑查看历史与计划", 10, Ui.MUTED);
-        pages.setGravity(Gravity.CENTER); root.addView(pages, new LinearLayout.LayoutParams(-1, Ui.dp(this, 18)));
+        pages.setGravity(Gravity.CENTER); root.addView(pages, new LinearLayout.LayoutParams(-1, Ui.dp(this, 12)));
         start.setOnClickListener(v -> requestAndStart());
         edit.setOnClickListener(v -> startActivity(new Intent(this, PlanActivity.class)));
         scroll.addView(root);
@@ -244,6 +242,12 @@ public class MainActivity extends Activity {
     }
 
     private void startTraining() {
+        if (WorkoutService.hasRecoverableSession(this)) {
+            startForegroundService(new Intent(this, WorkoutService.class).setAction(WorkoutService.ACTION_START));
+            startActivity(new Intent(this, TrainingActivity.class)
+                    .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true));
+            return;
+        }
         Intent intent = new Intent(this, WarmupActivity.class);
         startActivity(intent.putExtra("plan", PlanStore.encode(stages)));
     }
