@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP `set_training_plan_profile` 现在持久写入手机主计划库并选择、同步、回读校验手表；同步 pending 或两端数据不一致时返回错误，不再产生短暂的手表-only 计划。
+
 ### Documentation
 
 - 建立长期项目文档索引、PRD、架构开发规范、测试门禁、缺陷台账和开发决策日志。

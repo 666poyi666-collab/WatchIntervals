@@ -4,6 +4,14 @@
 
 已提供状态、命名计划/分组/要求读写、阶段读写、训练聚合统计、历史列表、单条完整轨迹，以及开始、暂停、继续、结束、删除。`watch_status.backgroundLocation` 应为 `true`，以保证从手机或 MCP 后台启动后仍能连续定位。
 
+`set_training_plan_profile` 会以名称和分组生成稳定计划 ID，依次写入手机主计划库、选择该计划、同步到手表，并回读手机计划库、手表计划库和手表当前 profile。只有三处数据和阶段全部一致时才返回 `verified: true`；手机离线、手表同步 pending 或回读不一致都会返回 MCP 错误。
+
+同步逻辑单元测试：
+
+```powershell
+python -m unittest discover -s mcp\tests -v
+```
+
 配置文件默认为 `%USERPROFILE%/.watchintervals.json`：
 
 ```json

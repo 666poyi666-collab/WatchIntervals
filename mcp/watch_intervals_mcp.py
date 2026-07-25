@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Dependency-free local MCP server for 步序."""
-import json, os, sys, urllib.request, urllib.error, urllib.parse
+import json, os, sys, urllib.request, urllib.error, urllib.parse, uuid
 from pathlib import Path
 
 CONFIG = Path(os.environ.get("WATCH_INTERVALS_CONFIG", Path.home() / ".watchintervals.json"))
@@ -24,12 +24,62 @@ def phone_request(method, path, body=None):
     req = urllib.request.Request(url, data=payload, method=method, headers={"X-Pairing-Code": cfg.get("phonePairingCode",cfg["pairingCode"]), "Content-Type":"application/json"})
     with urllib.request.urlopen(req, timeout=15) as response: return json.loads(response.read().decode())
 
+def _profile_plan_id(profile):
+    """Keep repeated writes of the same named profile idempotent."""
+    identity = f"watchintervals:{profile['group'].strip()}:{profile['name'].strip()}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+
+def _normalized_stages(stages):
+    return [{"kind": item.get("kind"), "unit": item.get("unit"), "target": item.get("target")} for item in stages]
+
+def set_training_plan_profile(profile):
+    plan_id = _profile_plan_id(profile)
+    payload = dict(profile, id=plan_id)
+
+    saved = phone_request("POST", "/v1/plans", payload)
+    selected = phone_request("PUT", "/v1/plan-selection", {"planId": plan_id})
+    sync = selected.get("sync", {})
+    if sync.get("state") != "synced":
+        raise RuntimeError("plan_saved_on_phone_but_watch_sync_pending: " + json.dumps(sync, ensure_ascii=False))
+
+    phone_plans = phone_request("GET", "/v1/plans")
+    watch_library = request("GET", "/v1/plan-library")
+    watch_profile = request("GET", "/v1/plan/profile")
+    phone_ids = {item.get("id") for item in phone_plans.get("plans", [])}
+    watch_ids = {item.get("id") for item in watch_library.get("plans", [])}
+    expected_stages = _normalized_stages(profile["stages"])
+    actual_stages = _normalized_stages(watch_profile.get("stages", []))
+
+    verified = (
+        plan_id in phone_ids
+        and phone_plans.get("selectedPlanId") == plan_id
+        and plan_id in watch_ids
+        and watch_library.get("selectedPlanId") == plan_id
+        and watch_profile.get("name") == profile["name"]
+        and watch_profile.get("group") == profile["group"]
+        and watch_profile.get("requirement") == profile["requirement"]
+        and actual_stages == expected_stages
+    )
+    if not verified:
+        raise RuntimeError("plan_sync_verification_failed")
+
+    return {
+        "saved": True,
+        "verified": True,
+        "planId": plan_id,
+        "phoneSelectedPlanId": phone_plans.get("selectedPlanId"),
+        "watchSelectedPlanId": watch_library.get("selectedPlanId"),
+        "sync": sync,
+        "profile": watch_profile,
+        "phoneMutation": saved.get("sync", {}),
+    }
+
 TOOLS = [
     ("watch_status", "查询手表连接、版本和训练状态", {"type":"object","properties":{}}),
     ("get_training_plan", "读取当前训练计划", {"type":"object","properties":{}}),
     ("get_training_plan_profile", "读取当前计划名称、分组、具体要求和全部阶段", {"type":"object","properties":{}}),
     ("set_training_plan", "完整替换手表训练计划", {"type":"object","properties":{"stages":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["RUN","WALK","REST"]},"unit":{"enum":["DISTANCE","TIME"]},"target":{"type":"integer","minimum":1}},"required":["kind","unit","target"]}}},"required":["stages"]}),
-    ("set_training_plan_profile", "设置计划名称、分组、要求和全部阶段并同步到手表", {"type":"object","properties":{"name":{"type":"string"},"group":{"type":"string"},"requirement":{"type":"string"},"stages":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["RUN","WALK","REST"]},"unit":{"enum":["DISTANCE","TIME"]},"target":{"type":"integer","minimum":1}},"required":["kind","unit","target"]}}},"required":["name","group","requirement","stages"]}),
+    ("set_training_plan_profile", "持久写入手机主计划库、选择并同步到手表；两端回读一致才成功", {"type":"object","properties":{"name":{"type":"string"},"group":{"type":"string"},"requirement":{"type":"string"},"stages":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["RUN","WALK","REST"]},"unit":{"enum":["DISTANCE","TIME"]},"target":{"type":"integer","minimum":1}},"required":["kind","unit","target"]}}},"required":["name","group","requirement","stages"]}),
     ("list_plan_groups", "列出手机主计划库的全部分组", {"type":"object","properties":{}}),
     ("create_plan_group", "在手机主计划库创建分组并同步手表", {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}),
     ("rename_plan_group", "重命名计划分组并同步手表", {"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"}},"required":["id","name"]}),
@@ -55,7 +105,7 @@ def call(name, args):
     if name == "get_training_plan": return request("GET", "/v1/plan")
     if name == "get_training_plan_profile": return request("GET", "/v1/plan/profile")
     if name == "set_training_plan": return request("PUT", "/v1/plan", args["stages"])
-    if name == "set_training_plan_profile": return request("PUT", "/v1/plan/profile", args)
+    if name == "set_training_plan_profile": return set_training_plan_profile(args)
     if name == "list_plan_groups": return phone_request("GET", "/v1/plan-groups")
     if name == "create_plan_group": return phone_request("POST", "/v1/plan-groups", {"name":args["name"]})
     if name == "rename_plan_group": return phone_request("PUT", "/v1/plan-groups/" + urllib.parse.quote(args["id"]), {"name":args["name"]})
@@ -84,7 +134,7 @@ def main():
         try:
             msg = json.loads(line.lstrip("\ufeff")); ident = msg.get("id"); method = msg.get("method")
             if method == "notifications/initialized": continue
-            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.4.0"}}
+            elif method == "initialize": result = {"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"buxu-sports","title":"步序运动","version":"0.4.1"}}
             elif method == "tools/list":
                 result = {"tools":[{"name":n,"description":d,"inputSchema":s,"annotations":{"readOnlyHint":n in {"watch_status","get_training_plan","get_training_plan_profile","list_plan_groups","list_training_plans","list_workouts","summarize_workouts","get_workout"},"destructiveHint":n in {"delete_workout","delete_plan_group","delete_training_plan"}}} for n,d,s in TOOLS]}
             elif method == "tools/call":

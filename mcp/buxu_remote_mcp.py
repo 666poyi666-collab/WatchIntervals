@@ -30,7 +30,7 @@ def get_training_plan_profile() -> dict: return core.call("get_training_plan_pro
 def set_training_plan(stages: list[dict]) -> dict:
     return core.call("set_training_plan", {"stages": stages})
 
-@mcp.tool(description="设置计划名称、分组、要求和全部阶段并同步到手表")
+@mcp.tool(description="持久写入手机主计划库、选择并同步到手表；两端回读一致才成功")
 def set_training_plan_profile(name: str, group: str, requirement: str, stages: list[dict]) -> dict:
     return core.call("set_training_plan_profile", {"name": name, "group": group, "requirement": requirement, "stages": stages})
 
