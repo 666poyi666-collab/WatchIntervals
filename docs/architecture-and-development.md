@@ -111,11 +111,19 @@
 
 手机同时广播 `_watchintervals-phone._tcp.`。`/v1/status` 返回稳定 `phoneDeviceId` 与 `protocolVersion`；Windows Gateway 只把 IP 当运行时端点，旧地址失败后通过 mDNS 发现并校验身份。
 
+Gateway 使用手机 API v2 写入契约：`POST/PUT /v1/plans[/id]` 的正文为
+`{requestId, expectedRevision, plan}`，`PUT /v1/plan-selection` 为
+`{requestId, expectedRevision, planId}`。手机持久保存请求哈希、状态和首次结果；相同请求重放
+首次结果，ID 复用或 revision 冲突返回 409。执行前同步提交 `in_progress`，若进程在计划库提交后、
+结果缓存提交前终止，重试通过单调 library revision 恢复结果，不再次执行写入。旧的直接计划正文继续
+兼容本地旧客户端，但 Gateway 不使用旧格式。
+
 ### 协议规范
 
 - 请求/响应使用 UTF-8 JSON；请求体当前限制 256,000 字节。
 - 睡眠响应的 `state` 为 `ready`、`permission_required` 或 `error`，`source=system_healthkit`。duration 字段单位为分钟，时间戳单位为毫秒；stage 同时保留厂商 `type` 和不推断语义的 `system_N` 标签。
 - 2xx 表示处理成功；4xx 返回稳定错误码。控制接口使用 `commandId`、`expectedState` 与 `expiresAt`；重复命令返回缓存结果，过期命令不执行。
+- 手机计划写接口使用 UUID `requestId` 与 `expectedRevision`；409 响应区分 revision conflict 和 request ID reuse。幂等缓存最多保留 500 个最近请求。
 - 局域网 API 使用明文 HTTP，仅用于受信网络；安全改进见 `BUG-003`。
 
 ## 7. 开发环境和构建

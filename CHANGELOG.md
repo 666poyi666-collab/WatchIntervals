@@ -11,6 +11,7 @@
 - 新增 10 秒平滑当前/最高速度、四类距离来源证据、计划内/自由记录距离及四页手表训练界面。
 - 新增 Windows 长期 HTTP Gateway、手机 mDNS 广播、设备 ID 校验和分层离线错误；Tunnel 改为连接本地 Gateway。
 - 新增计划持久 outbox、operationId、revision、ACK 和删除操作基础协议，以及 debug-only BLE GATT ping/pong POC。
+- 手机计划 API v2 新增 `requestId`、`expectedRevision`、首次结果持久重放与崩溃恢复契约，供 Personal MCP Gateway 安全重试写入。
 
 ### Changed
 
@@ -24,6 +25,7 @@
 - 修复活动进程重建后首页“继续”进入准备页且训练核心页计时显示 00:00 的问题。
 - 修复 378×496 首页长要求文本挤压配对码、计划入口和底部安全区的问题。
 - 修复检查点后额外 NDJSON 行未进入累计统计却在恢复后继续保留的问题；恢复现在按已确认 offset 截断完整或损坏尾部，并忽略不可解析行计数。
+- 修复 Gateway 写计划响应丢失或手机进程在提交后终止时可能重复执行，以及旧 revision 未返回 409 的问题。
 
 ### Known Issues
 

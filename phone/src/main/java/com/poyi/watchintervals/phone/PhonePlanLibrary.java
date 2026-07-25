@@ -45,7 +45,7 @@ final class PhonePlanLibrary {
             else if (old != null) result.put(old);
         }
         if (!replaced) result.put(item);
-        library.put("plans", result).put("revision", System.currentTimeMillis());
+        library.put("plans", result).put("revision", nextRevision(library));
         return save(context, library);
     }
 
@@ -62,7 +62,7 @@ final class PhonePlanLibrary {
         JSONArray plans = library.getJSONArray("plans");
         for (int i = 0; i < plans.length(); i++) if (id.equals(plans.getJSONObject(i).optString("id"))) found = true;
         if (!found) throw new IllegalArgumentException("plan_not_found");
-        library.put("selectedPlanId", id).put("revision", System.currentTimeMillis()); return save(context, library);
+        library.put("selectedPlanId", id).put("revision", nextRevision(library)); return save(context, library);
     }
 
     static synchronized JSONObject createGroup(Context context, String name) throws Exception {
@@ -151,4 +151,5 @@ final class PhonePlanLibrary {
     }
     private static JSONObject stage(String kind, String unit, int target) throws Exception { return new JSONObject().put("kind", kind).put("unit", unit).put("target", target); }
     private static String stableId(String prefix, String value) { return UUID.nameUUIDFromBytes((prefix + ":" + value).getBytes(StandardCharsets.UTF_8)).toString(); }
+    private static long nextRevision(JSONObject library) { return Math.max(System.currentTimeMillis(), library.optLong("revision") + 1); }
 }

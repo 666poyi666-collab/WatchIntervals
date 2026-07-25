@@ -16,6 +16,7 @@ import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -87,14 +88,41 @@ public class PhonePlanBridgeService extends Service {
         else if (path.startsWith("/v1/plan-groups/") && "PUT".equals(method)) { result=PhonePlanLibrary.renameGroup(this,tail(path),new JSONObject(body).optString("name"));result=mutation("group",result); }
         else if (path.startsWith("/v1/plan-groups/") && "DELETE".equals(method)) { result=PhonePlanLibrary.deleteGroup(this,tail(path));result=mutation("library",result); }
         else if ("GET".equals(method) && "/v1/plans".equals(path)) { JSONObject library=PhonePlanLibrary.load(this);result=new JSONObject().put("plans",library.getJSONArray("plans")).put("selectedPlanId",library.optString("selectedPlanId")); }
-        else if ("POST".equals(method) && "/v1/plans".equals(path)) { result=PhonePlanLibrary.upsert(this,new JSONObject(body));result=mutation("library",result); }
-        else if (path.startsWith("/v1/plans/") && "PUT".equals(method)) { JSONObject item=new JSONObject(body).put("id",tail(path));result=PhonePlanLibrary.upsert(this,item);result=mutation("library",result); }
+        else if ("POST".equals(method) && "/v1/plans".equals(path)) {
+            JSONObject request=new JSONObject(body);JSONObject plan=request.optJSONObject("plan");if(plan==null)plan=request;
+            final JSONObject value=plan;result=guardedMutation(request,()->mutation("library",PhonePlanLibrary.upsert(this,value)));
+        }
+        else if (path.startsWith("/v1/plans/") && "PUT".equals(method)) {
+            JSONObject request=new JSONObject(body);JSONObject plan=request.optJSONObject("plan");if(plan==null)plan=request;
+            final JSONObject value=new JSONObject(plan.toString()).put("id",tail(path));result=guardedMutation(request,()->mutation("library",PhonePlanLibrary.upsert(this,value)));
+        }
         else if (path.startsWith("/v1/plans/") && "DELETE".equals(method)) { String id=tail(path);result=PhonePlanLibrary.deletePlan(this,id);PhoneSyncOutbox.enqueueLibrary(this,result,"delete",id);result=new JSONObject().put("library",result).put("sync",syncToWatch()); }
-        else if ("PUT".equals(method) && "/v1/plan-selection".equals(path)) { result=PhonePlanLibrary.select(this,new JSONObject(body).optString("planId"));result=mutation("library",result); }
+        else if ("PUT".equals(method) && "/v1/plan-selection".equals(path)) {
+            JSONObject request=new JSONObject(body);result=guardedMutation(request,()->mutation("library",PhonePlanLibrary.select(this,request.optString("planId"))));
+        }
         else if ("POST".equals(method) && "/v1/sync".equals(path)) result=syncToWatch();
         else { respond(socket,404,new JSONObject().put("error","not_found").toString());return; }
-        respond(socket,200,result.toString());
+        int status=result.optInt("_httpStatus",200);result.remove("_httpStatus");respond(socket,status,result.toString());
     }
+
+    private interface MutationAction { JSONObject run() throws Exception; }
+    private JSONObject guardedMutation(JSONObject request,MutationAction action)throws Exception{
+        String requestId=request.optString("requestId","");String hash=sha256(request.toString());JSONObject cached=mutationCache().optJSONObject(requestId);
+        String cachedHash=cached==null?null:cached.optString("hash",null);long actual=PhonePlanLibrary.load(this).optLong("revision");
+        if(cached!=null&&hash.equals(cachedHash)&&"in_progress".equals(cached.optString("status"))){
+            if(actual!=cached.optLong("initialRevision")){JSONObject recovered=new JSONObject().put("library",PhonePlanLibrary.load(this)).put("requestId",requestId).put("revision",actual).put("recovered",true);cacheMutation(requestId,hash,"completed",actual,recovered);return recovered.put("duplicate",true);}
+            cached=null;cachedHash=null;
+        }
+        MutationGuard.Decision decision=MutationGuard.decide(requestId,hash,cachedHash,request.has("expectedRevision"),request.optLong("expectedRevision"),actual);
+        if(decision==MutationGuard.Decision.DUPLICATE)return new JSONObject(cached.getJSONObject("result").toString()).put("duplicate",true);
+        if(decision==MutationGuard.Decision.REQUEST_ID_REUSED)return new JSONObject().put("error","conflict").put("reason","request_id_reused").put("_httpStatus",409);
+        if(decision==MutationGuard.Decision.REVISION_CONFLICT){JSONObject conflict=new JSONObject().put("error","conflict").put("expectedRevision",request.optLong("expectedRevision")).put("actualRevision",actual).put("_httpStatus",409);cacheMutation(requestId,hash,"completed",actual,conflict);return conflict;}
+        if(!requestId.isEmpty())cacheMutation(requestId,hash,"in_progress",actual,null);
+        JSONObject result=action.run();if(!requestId.isEmpty()){long revision=PhonePlanLibrary.load(this).optLong("revision");result.put("requestId",requestId).put("revision",revision);cacheMutation(requestId,hash,"completed",actual,result);}return result;
+    }
+    private JSONObject mutationCache(){try{return new JSONObject(getSharedPreferences("gateway_mutations",MODE_PRIVATE).getString("items","{}"));}catch(Exception ignored){return new JSONObject();}}
+    private void cacheMutation(String id,String hash,String status,long initialRevision,JSONObject result){if(id.isEmpty())return;try{JSONObject item=new JSONObject().put("hash",hash).put("status",status).put("initialRevision",initialRevision);if(result!=null)item.put("result",new JSONObject(result.toString()));JSONObject cache=mutationCache();cache.put(id,item);JSONArray names=cache.names();while(names!=null&&names.length()>500){cache.remove(names.optString(0));names=cache.names();}if(!getSharedPreferences("gateway_mutations",MODE_PRIVATE).edit().putString("items",cache.toString()).commit())throw new IllegalStateException("mutation_cache_commit_failed");}catch(org.json.JSONException error){throw new IllegalArgumentException(error);}}
+    private String sha256(String value)throws Exception{byte[] digest=MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));StringBuilder text=new StringBuilder();for(byte item:digest)text.append(String.format(Locale.ROOT,"%02x",item));return text.toString();}
 
     private JSONObject mutation(String key, JSONObject value) throws Exception { JSONObject library=PhonePlanLibrary.load(this);PhoneSyncOutbox.enqueueLibrary(this,library,"upsert",key);JSONObject sync=syncToWatch();return new JSONObject().put(key,value).put("sync",sync); }
     private JSONObject syncToWatch() {
@@ -108,7 +136,7 @@ public class PhonePlanBridgeService extends Service {
     private String phoneDeviceId(){android.content.SharedPreferences p=getSharedPreferences("device_identity",MODE_PRIVATE);String id=p.getString("phone_device_id","");if(id.isEmpty()){id=java.util.UUID.randomUUID().toString();p.edit().putString("phone_device_id",id).apply();}return id;}
     private void registerNsd(){NsdServiceInfo info=new NsdServiceInfo();info.setServiceName("WatchIntervals-Phone-"+phoneDeviceId().substring(0,8));info.setServiceType("_watchintervals-phone._tcp.");info.setPort(PORT);try{info.setAttribute("deviceId",phoneDeviceId());info.setAttribute("protocolVersion","2");}catch(Exception ignored){}registration=new NsdManager.RegistrationListener(){public void onRegistrationFailed(NsdServiceInfo i,int c){}public void onUnregistrationFailed(NsdServiceInfo i,int c){}public void onServiceRegistered(NsdServiceInfo i){}public void onServiceUnregistered(NsdServiceInfo i){}};try{getSystemService(NsdManager.class).registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);}catch(Exception error){android.util.Log.w("PhonePlanBridge","mDNS registration failed",error);}}
     private String tail(String path){return path.substring(path.lastIndexOf('/')+1);}
-    private void respond(Socket socket,int status,String body)throws Exception{byte[] data=body.getBytes(StandardCharsets.UTF_8);String reason=status==200?"OK":status==400?"Bad Request":status==401?"Unauthorized":"Not Found";String header="HTTP/1.1 "+status+" "+reason+"\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+data.length+"\r\nConnection: close\r\n\r\n";OutputStream out=socket.getOutputStream();out.write(header.getBytes(StandardCharsets.US_ASCII));out.write(data);out.flush();}
+    private void respond(Socket socket,int status,String body)throws Exception{byte[] data=body.getBytes(StandardCharsets.UTF_8);String reason=status==200?"OK":status==400?"Bad Request":status==401?"Unauthorized":status==409?"Conflict":"Not Found";String header="HTTP/1.1 "+status+" "+reason+"\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+data.length+"\r\nConnection: close\r\n\r\n";OutputStream out=socket.getOutputStream();out.write(header.getBytes(StandardCharsets.US_ASCII));out.write(data);out.flush();}
     @Override public void onDestroy(){try{if(server!=null)server.close();}catch(Exception ignored){}try{if(registration!=null)getSystemService(NsdManager.class).unregisterService(registration);}catch(Exception ignored){}workers.shutdownNow();super.onDestroy();}
     @Override public IBinder onBind(Intent intent){return null;}
 }

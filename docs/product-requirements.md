@@ -74,6 +74,7 @@
 | REQ-SYNC-004 | ChatGPT 使用固定的长效 MCP 通道 | Gateway 与 Tunnel 独立自启动；插件固定绑定 Tunnel ID；Runtime Key 不以明文落盘 | 实现完成，待绑定 Tunnel 实测 |
 | REQ-SYNC-005 | Windows 自动重新发现手机 | 手机广播稳定设备 ID；Gateway 在旧地址失败后通过 mDNS 验证并更新端点 | 已实现，待跨网络真机验证 |
 | REQ-SYNC-006 | 计划修改支持可靠 LAN 队列 | 手机先写持久 outbox，手表按 operationId 去重并 ACK，失败操作保留重试 | 已实现基础链路 |
+| REQ-SYNC-007 | Gateway 计划写入支持 revision 与请求幂等 | 手机 8766 写计划/选择计划接受 `requestId`、`expectedRevision`；重复请求返回首次结果，复用 ID 或旧 revision 返回 409，崩溃恢复不重复执行 | 已实现，待真机故障注入 |
 
 ### 3.5 手表交互和适配
 

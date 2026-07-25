@@ -92,6 +92,7 @@ git diff --check
 | API-012 | 历史列表不含完整样本；详情返回预览；route/heart 游标可无重无漏读完整数据 |
 | API-013 | Gateway 与 Tunnel 分别终止后自动恢复；设备离线时 Gateway 仍 ready 并返回分层错误 |
 | API-014 | 重复 operationId 返回 already_applied；旧 revision 返回 conflict；ACK 丢失重试不重复应用 |
+| API-015 | 手机 API v2 相同 requestId 返回首次结果；不同正文复用 ID 和旧 revision 返回 409；在计划库提交后终止进程，重试只恢复结果而不重复修改 |
 
 ## 5.1 BLE POC 门禁
 
@@ -105,6 +106,7 @@ Debug POC 通过 ADB 显式启动，只验证 ping/pong。正式接入前必须�
 4. 暂停/恢复/完成状态机和“历史只保存一次”。
 5. `PlanLibraryStore`/`PhonePlanLibrary` 迁移、revision、选择与删除。
 6. 手表 8765 与手机 8766 的协议契约测试。
+7. 手机 `MutationGuardTest` 覆盖重复、ID 复用、旧 revision 和旧客户端兼容；API-015 的进程终止场景仍需仪器/真机测试。
 
 ## 7. 发布门禁
 

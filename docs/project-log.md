@@ -113,6 +113,14 @@
 - `WorkoutFileStoreTest` 新增 2 项，`:app:testDebugUnitTest` 通过；GitHub Actions run `30164226710` 亦已完整通过此前冻结提交的测试、lint、双端构建和产物上传。
 - 完整执行 `gradlew.bat test lint :app:assembleDebug :phone:assembleDebug` 成功；手表 APK SHA-256 为 `8DA31F39A1172DB4C43CADE5ED2187C0BE49B7BD4487644ACF6882CD75CE4F44`，通过 USB 覆盖安装后网络 ADB 仍保持在线。
 
+## 2026-07-25：Personal MCP Gateway 手机写入契约
+
+- 关联 `REQ-SYNC-007`、`BUG-H017`、`API-015`。
+- 手机 8766 的计划新增/更新和选择接口接受 `requestId`、`expectedRevision` 封装，同时保留旧直接正文读取兼容。
+- 同一 requestId/正文返回首次结果，不同正文复用 ID 或旧 revision 返回 409；缓存使用同步持久提交。
+- 为消除计划库已提交但结果缓存未提交的重复执行窗口，执行前记录 `in_progress` 和初始 revision，恢复时用单调 library revision 判断已提交并重建结果。
+- 本地执行 `gradlew.bat :phone:testDebugUnitTest :app:assembleDebug :phone:assembleDebug` 成功；进程终止故障注入保留为真机门禁。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
