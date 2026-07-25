@@ -2,6 +2,19 @@
 
 为 OPPO Watch 4 Pro 实机（系统型号 `OWW221`，378×496，Android 11）设计的独立训练应用。
 
+## 项目文档
+
+长期维护文档统一从 [`docs/README.md`](docs/README.md) 进入：
+
+- [`product-requirements.md`](docs/product-requirements.md)：用户需求、范围、验收标准
+- [`architecture-and-development.md`](docs/architecture-and-development.md)：架构、数据、接口、开发和发布规范
+- [`testing.md`](docs/testing.md)：测试策略、真机回归清单和发布门禁
+- [`bugs.md`](docs/bugs.md)：已知问题、技术债与历史缺陷
+- [`project-log.md`](docs/project-log.md)：Vibe Coding 决策和开发日志
+- [`CHANGELOG.md`](CHANGELOG.md)：面向版本的变更记录
+
+功能、缺陷或架构发生变化时，代码提交必须同时更新对应文档；具体规则见文档索引。
+
 当前版本支持：
 
 - 自定义跑步、快走、休息阶段，目标可按距离或时间设置
