@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增固定 Tunnel ID 的 ChatGPT 长效 MCP 连接、DPAPI 凭据存储、登录自启动、自动重连和健康检查脚本。
+
 ## [Phone 0.10.1 / MCP 0.5.1] - 2026-07-25
 
 ### Fixed

@@ -25,6 +25,7 @@ Thumbs.db
 
 # Local MCP runtime state and downloaded tunnel client
 mcp/tunnel-client/
+mcp/tunnel-profiles/
 mcp/chatgpt-mcp-config.json
 mcp/ChatGPT*.txt
 mcp/*URL*.txt
@@ -40,4 +41,3 @@ dist/
 /*.png
 /*.xml
 /*.apk
-

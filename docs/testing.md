@@ -18,6 +18,7 @@ git diff --check
 - 修改训练引擎：验证开始、暂停、继续、停止、自动阶段推进、完成只保存一次。
 - 修改传感器：验证 GPS、步数、心率各自单独可用和切换恢复。
 - 修改 API/MCP：验证 401、错误 JSON、超时、手机不在线、手表不在线和正常路径。
+- 修改 Tunnel：执行 `powershell -File mcp/tests/test_persistent_tunnel.ps1`，再执行 API-011 真机/重启验证。
 - 修改 UI：至少检查 378×496 截图和点击区域。
 
 ## 3. 手表真机回归
@@ -67,6 +68,7 @@ git diff --check
 | API-008 | 手机或手表离线时 MCP 返回可诊断错误且不改本地数据 |
 | API-009 | `list_sleep_records` 保留系统来源、全部 session 和 stage 原始类型/时间线 |
 | API-010 | `get_latest_sleep` 对无记录返回空；`summarize_sleep` 只对有效值求平均且单位为分钟 |
+| API-011 | 长效 Tunnel 首次绑定后在线；结束 tunnel-client、重新登录和重启电脑后均自动恢复，ChatGPT 连接配置不变 |
 
 ## 6. 建议优先补齐的自动测试
 

@@ -26,6 +26,7 @@
                     v
 电脑 mcp (Python)
   watch_intervals_mcp.py / buxu_remote_mcp.py
+      -> OpenAI Secure MCP Tunnel（固定 Tunnel ID、出站长轮询）
 ```
 
 ## 2. 模块职责
@@ -65,6 +66,7 @@
 | 训练历史 | `files/workout_history.json` | `WorkoutRecord` schema 2，200 条 | 临时文件写入后替换 |
 | 配对码 | SharedPreferences `bridge` | 六位十进制字符串 | 当前持久保存，不自动轮换 |
 | MCP 配置 | `%USERPROFILE%/.watchintervals.json` | host/port/phoneHost/phonePort/pairingCode | 禁止提交真实配置 |
+| Tunnel 凭据 | `%LOCALAPPDATA%/WatchIntervals/tunnel` | DPAPI CurrentUser + 本地 profile | Runtime Key 不写入仓库、命令行和日志 |
 
 任何 schema 变更都要：提升 schema 版本、保留向后读取、增加迁移/损坏数据测试、更新本表与 CHANGELOG。
 
@@ -147,3 +149,11 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - APK：不提交 Git，上传 GitHub Release；文件名含模块、版本和构建类型。
 - Release 记录：提交 SHA、构建命令、测试结果、APK SHA-256、已知问题。
 - 正式发布应使用受控 release keystore；当前 debug 预发布不得描述为正式生产包。
+
+## 10. ChatGPT 长效通道
+
+- ChatGPT 插件绑定 OpenAI Tunnel ID，不再依赖会变化的 Quick Tunnel URL。
+- `install_persistent_chatgpt_tunnel.ps1` 只在首次安装时读取 Runtime Key，并用 Windows DPAPI CurrentUser 加密保存。
+- `run_persistent_chatgpt_tunnel.ps1` 由用户登录计划任务启动，使用互斥锁避免重复实例，tunnel-client 退出后等待 5 秒重连。
+- 本地健康端点仅监听环回地址；`check_persistent_chatgpt_tunnel.ps1` 检查任务、凭据、`healthz` 和 `readyz`。
+- 删除或轮换 Runtime Key 后必须重新执行安装脚本；仓库和发布包不得包含 profile、密钥、Tunnel ID 或运行日志。

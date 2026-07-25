@@ -67,6 +67,7 @@
 | REQ-SYNC-001 | 手机自动发现同网手表 | 通过 `_watchintervals._tcp.` mDNS 发现 8765 端口 | 已实现 |
 | REQ-SYNC-002 | 使用六位码配对本地 API | 未提供正确 `X-Pairing-Code` 时返回 401 | 已实现 |
 | REQ-SYNC-003 | MCP 支持计划、统计、历史和训练控制 | 工具清单与 `mcp/README.md` 一致 | 已实现 |
+| REQ-SYNC-004 | ChatGPT 使用固定的长效 MCP 通道 | 插件绑定一次 Tunnel ID；电脑登录后自动启动，进程退出后自动重连，Runtime Key 不以明文落盘 | 实现完成，待绑定 Tunnel 实测 |
 
 ### 3.5 手表交互和适配
 

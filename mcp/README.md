@@ -28,22 +28,31 @@ python C:\开发\手表开发\mcp\watch_intervals_mcp.py
 
 可直接复制 `chatgpt-mcp-config.json` 中的 `buxu-sports` 配置到支持本地 stdio MCP 的 ChatGPT/Codex 客户端。Windows 也可以直接运行 `start_buxu_mcp.cmd`。
 
-## ChatGPT 网页远程连接
+## ChatGPT 长效远程连接
 
-ChatGPT 网页使用 OpenAI Secure MCP Tunnel 连接本机服务。项目已包含官方
-`tunnel-client` Windows x64 客户端和配置脚本：
+ChatGPT 使用 OpenAI Secure MCP Tunnel 连接本机服务。固定 Tunnel ID 不随电脑或
+进程重启改变，插件只需绑定一次。项目已包含 `tunnel-client` Windows x64 客户端：
 
 1. 运行 `打开ChatGPT远程连接设置.cmd`。
 2. 在 Platform 创建 Tunnel，复制 `tunnel_id`，再创建 Tunnel Runtime API Key。
 3. 执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\setup_chatgpt_tunnel.ps1 -TunnelId tunnel_xxx
+powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\install_persistent_chatgpt_tunnel.ps1 -TunnelId tunnel_xxx
 ```
 
-脚本会安全提示输入 Runtime API Key，完成 MCP 启动、Tunnel 检查和连接。
-以后只需运行 `run_chatgpt_tunnel.ps1`。ChatGPT 中创建开发者模式 App 时，
-Connection 选择 **Tunnel**，再选择同一个 `tunnel_id`。
+脚本安全提示输入 Runtime API Key，使用 Windows DPAPI CurrentUser 加密保存，建立
+登录自启动任务并立即启动守护进程。守护进程退出后自动重连。ChatGPT 中创建开发者
+模式 App 时，Connection 选择 **Tunnel**，再选择同一个 Tunnel ID；以后不再填写 URL。
+
+状态检查：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\check_persistent_chatgpt_tunnel.ps1
+```
+
+`setup_chatgpt_tunnel.ps1` 和 `run_chatgpt_tunnel.ps1` 保留为兼容入口。Quick Tunnel
+脚本只用于临时排障，不作为长期连接。
 
 所有数据默认停留在手表、手机和本机；MCP 只响应已配对的本地请求。
 

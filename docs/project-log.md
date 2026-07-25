@@ -79,6 +79,7 @@
 - MCP 0.5.0 增加 `get_latest_sleep`、`list_sleep_records`、`summarize_sleep`，单元测试由 4 项增至 7 项。
 - 发布构建：手表 `0.17.0`（27）、手机 `0.10.0`（10），均为 debug prerelease。
 - 睡眠精度复核发现系统记录存在指标缺失，且手机页只显示首个 session；手机 `0.10.1` 改为聚合全部 session，MCP `0.5.1` 用 `null` 和样本计数表达缺失值。
+- 新增长效 ChatGPT Tunnel 安装、守护和检查脚本：固定 Tunnel ID，Runtime Key 经 DPAPI 加密，登录后自动启动并在退出后重连；关联 `REQ-SYNC-004`、`BUG-009`。
 - APK SHA-256：watch `3FC388C682E0AFD393AD4CD916C9152B3B8E8C3992447840AC636D2E4D0F70DA`；phone `A44B5212E9F847C1B29013A2AD60B01C4C2954C7A027EE125DD94F393D7907D7`。
 
 ## 决策记录
