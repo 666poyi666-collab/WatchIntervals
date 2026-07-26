@@ -19,6 +19,9 @@ jobs:
           java-version: '17'
           cache: gradle
       - uses: android-actions/setup-android@v3
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.28'
       - name: Verify changed files
         shell: bash
         run: |
@@ -27,8 +30,15 @@ jobs:
           else
             git diff --check
           fi
-      - name: Test MCP
-        run: python -m unittest discover -s mcp/tests -v
+      - name: Verify independent Watch MCP
+        working-directory: mcp
+        run: |
+          uv sync --locked --extra dev
+          uv run ruff check src tests/unit tests/integration tests/contract tests/e2e
+          uv run ruff format --check src tests/unit tests/integration tests/contract tests/e2e
+          uv run pyright src tests
+          uv run pytest --cov=watch_mcp --cov-report=xml --cov-report=term-missing
+          uv build --wheel
       - name: Test, lint, and build Android apps
         run: ./gradlew test lint :app:assembleDebug :phone:assembleDebug --stacktrace
       - name: Prepare artifacts
@@ -49,3 +59,5 @@ jobs:
             phone/build/reports/tests/
             app/build/reports/lint-results-debug.html
             phone/build/reports/lint-results-debug.html
+            mcp/coverage.xml
+            mcp/dist/*.whl

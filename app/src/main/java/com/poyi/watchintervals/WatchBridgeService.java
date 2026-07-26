@@ -46,6 +46,8 @@ public class WatchBridgeService extends Service {
         return code;
     }
 
+    static synchronized String rotatePairingCode(Context context){String code=String.format(Locale.US,"%06d",new SecureRandom().nextInt(1_000_000));if(!context.getSharedPreferences("bridge",MODE_PRIVATE).edit().putString("pairing_code",code).commit())throw new IllegalStateException("pairing_code_rotation_failed");return code;}
+
     @Override public void onCreate() {
         super.onCreate();
         commandRouter = new WatchCommandRouter(this);
@@ -96,7 +98,7 @@ public class WatchBridgeService extends Service {
             }
             String body = bodyBuilder.toString();
 
-            if (!pairingCode(this).equals(headers.get("x-pairing-code"))) { respond(socket, 401, error("pairing_required")); return; }
+            String credential=headers.get("x-pairing-code");if (!pairingCode(this).equals(credential)&&!WatchPairingStore.matchesLanCredential(this,credential)) { respond(socket, 401, error("pairing_required")); return; }
             if (commandRouter != null) {
                 WatchCommandRouter.Result routed = commandRouter.route(method, path, body);
                 respond(socket, routed.status, routed.body);

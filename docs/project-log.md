@@ -131,6 +131,28 @@
 - 无活动训练时点击手机“暂停”收到手表 `409 state_mismatch`，验证控制请求和 expectedState 前置条件且未修改训练数据。
 - 两端升级为 0.19.0 debug 候选并覆盖安装。测试仍使用网络 ADB；安全配对、真实训练控制/重复 commandId、无 Wi-Fi、后台、重启、长时及功耗门禁保持开放。
 
+## 2026-07-26：0.19.0 安全 BLE 与缩短门禁验收
+
+- 关联 `REQ-SYNC-010`、`BUG-015`、`BUG-016`、`PT-014`、`BLE-001/002/006/007/008/010`。
+- 首次配对改为 P-256 ECDH、公钥与随机数交换、六位码派生确认及 AES-GCM 下发长期密钥；重连使用双向 HMAC 挑战，业务消息使用会话密钥、严格序号、时间窗和 AES-GCM。
+- OWW221/Xiaomi 首次交换及覆盖安装后的持久密钥重连成功；10 次重连、102 次加密 status 200 和 1 次精确旧密文重放拒绝通过，拒绝后新请求仍成功。
+- 真机发现 Xiaomi 对短时间连续 BLE 扫描触发 scan throttling；手机首次发现后缓存已验证 `BluetoothDevice` 并直接 GATT 重连，避免把设备重连错误实现为反复扫描。
+- BLE 真实会话控制完成 start、重复 pause、重复 resume 和 stop；重复 commandId 返回 duplicate，状态不反转，历史只新增 1 条。
+- 两端关闭 Wi-Fi、无线 ADB 离线并息屏，继续运行约 15 分钟；完成 94 次加密请求和 4 轮重复暂停/继续，训练落盘活动时间 951,996 ms、暂停 8,343 ms，最终正常停止。
+- 手表在 USB 取证期间持续充电，电量从 72% 升至 81%；该数据只证明测试期间供电状态，不作为 BLE-010 功耗结果。非充电双端电量测试、双端重启、蓝牙开关恢复和分页续传继续开放。
+- 最终执行 MCP 10 项测试、两端 JVM 测试、lint、debug APK 构建、手机 androidTest APK 构建和 `git diff --check`，均通过；Temurin 21 C2 在一次 R8 优化中崩溃后，以 `-XX:TieredStopAtLevel=1` 重跑通过。
+- debug 产物：`dist/0.19.0-debug/`；使用既有 debug 证书保持升级签名连续性，watch SHA-256 `2C6FD6FEAA58BB7F30A89A15D28742EF1895DDF542123E17701BB1AC86152943`，phone SHA-256 `A737FD6CE0213FAEC0130BED75E1A9E4EC1245B8F598C694C5511AD2174D7E6C`。两端 `install -r` 成功，配对数据保留并自动恢复安全 BLE 会话。
+
+## 2026-07-26：Watch MCP 从统一 Gateway 收回为独立服务
+
+- 关联 `REQ-SYNC-003` 至 `REQ-SYNC-007`、`BUG-017`、`API-016` 至 `API-018`。
+- 保留手机 8766 的版本化业务 API，并补充独立随机 Bearer Token、健康/能力端点、严格 UUID/revision/命令过期校验和持久结果重放。
+- 在 `mcp/src/watch_mcp` 建立可打 Wheel 的独立服务；桌面只通过 mDNS 和稳定 `phoneDeviceId` 访问手机，由手机内部安全 BLE/LAN 连接手表，不再直连手表或使用固定 IP/ADB。
+- 工具统一为 24 个 `watch_*`；轨迹、心率和完整睡眠明细使用 8 类 `watch://` Resource。新增独立 WinSW `PoyiWatchMcp`、`PoyiWatchTunnel`、DPAPI 数据目录和安装/诊断脚本。
+- 自动验证：Ruff 通过、Pyright 0 错误、独立 MCP pytest 9 项通过且覆盖率 83.28%、`pip-audit` 无已知漏洞、PowerShell 全脚本解析通过；Android `test lint :app:assembleDebug :phone:assembleDebug` 通过。
+- 当前本地候选产物：watch APK SHA-256 `2C6FD6FEAA58BB7F30A89A15D28742EF1895DDF542123E17701BB1AC86152943`，phone APK SHA-256 `3A8C12D61BC9A5744B79B862618033F075CB8A61717912E9CF023FAF95DF63B4`，MCP Wheel SHA-256 `A56E6FB0B6726268EC439A187B687EA1D0BF86878FA9643B112C064C61668464`。
+- OWW221 已通过有线 ADB 覆盖安装 0.19.0 (29) 并保留数据。小米手机当时不在线，无法推送新版手机 APK、签发 Token 或执行真实 BLE/API；浏览器未登录 ChatGPT，无法创建独立 Tunnel/应用，这两项不得写成已验收。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
@@ -146,6 +168,7 @@
 | ADR-009 | 计划完成状态与训练会话状态正交 | 达标不代表用户已经结束户外运动 | UI、检查点和控制 API 均需同时表达两个状态 |
 | ADR-010 | BLE 必须先通过真机稳定性门禁再接入 SyncEngine | OWW221 后台和 GATT 角色能力尚无证据 | 未通过时继续发布可靠 LAN，不把 POC 宣称为功能 |
 | ADR-011 | BLE 使用手机 Central、手表 Peripheral，LAN 降为批量加速 | OWW221 与 Xiaomi 真机已证明该角色可广播、订阅和双向分片 | 控制/计划/定位优先 BLE，历史/睡眠可走已验证 LAN |
+| ADR-012 | WatchIntervals 使用独立 MCP Server 和独立 Tunnel | 业务、凭据、日志和故障域必须与其他项目隔离 | PersonalMcpGateway 不再是 Watch 运行依赖；手机 8766 成为唯一桌面业务门面 |
 
 ## 工作日志模板
 

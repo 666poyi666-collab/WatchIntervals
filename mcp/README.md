@@ -1,65 +1,77 @@
-# 步序运动 MCP
+# WatchIntervals 独立 MCP
 
-本地 MCP 通过手机和手表配对 API 查询训练摘要、分页轨迹、实际步数、心率、训练计划，并控制开始、暂停、继续和结束。
-
-已提供状态、命名计划/分组/要求读写、阶段读写、训练聚合统计、历史列表、单条完整轨迹、系统睡眠列表/最近记录/汇总，以及开始、暂停、继续、结束、删除。`watch_status.backgroundLocation` 应为 `true`，以保证从手机或 MCP 后台启动后仍能连续定位。
-
-睡眠工具直接读取手表系统 HealthKit，首次使用需在手表打开步序并确认“读取睡眠数据”。duration 单位为分钟，时间戳为 Unix 毫秒；阶段保留厂商原始 `type`，`system_N` 标签不额外推断医学语义。
-
-`set_training_plan_profile` 会以名称和分组生成稳定计划 ID，依次写入手机主计划库、选择该计划、同步到手表，并回读手机计划库、手表计划库和手表当前 profile。只有三处数据和阶段全部一致时才返回 `verified: true`；手机离线、手表同步 pending 或回读不一致都会返回 MCP 错误。
-
-同步逻辑单元测试：
-
-```powershell
-python -m unittest discover -s mcp\tests -v
-```
-
-配置文件默认为 `%USERPROFILE%/.watchintervals.json`。设备 ID 是身份，host 仅作为可更新的最后地址缓存：
-
-```json
-{"watchDeviceId":"WATCH_DEVICE_ID","phoneDeviceId":"PHONE_DEVICE_ID","host":"WATCH_LAST_HOST","port":8765,"phoneHost":"PHONE_LAST_HOST","phonePort":8766,"pairingCode":"手表首页显示的六位码"}
-```
-
-Codex/ChatGPT MCP 启动命令：
+本目录提供步序（WatchIntervals）自己的 MCP Server。最终运行链路是：
 
 ```text
-python C:\开发\手表开发\mcp\watch_intervals_mcp.py
+ChatGPT -> Watch 专属 Secure MCP Tunnel -> PoyiWatchMcp -> 手机 8766 API -> BLE/LAN -> 手表
 ```
 
-可直接复制 `chatgpt-mcp-config.json` 中的 `buxu-sports` 配置到支持本地 stdio MCP 的 ChatGPT/Codex 客户端。Windows 也可以直接运行 `start_buxu_mcp.cmd`。
+它不加载 `PersonalMcpGateway`，不注册其他项目工具，不读取其他项目数据库，也不直接连接手表。手机是唯一业务门面，手机内部的 `WatchConnectionManager` 优先使用安全 BLE；ADB 只允许用于开发期安装和取证，不属于运行链路。
 
-## ChatGPT 长效远程连接
-
-ChatGPT 使用 OpenAI Secure MCP Tunnel 连接本机 Gateway。Gateway 固定监听
-`http://127.0.0.1:8767/mcp`，同时提供 `/healthz` 和 `/readyz`；Tunnel 通过
-`--mcp-server-url` 连接它。固定 Tunnel ID 不随电脑或进程重启改变，插件只需绑定一次。
-项目已包含 `tunnel-client` Windows x64 客户端：
-
-1. 运行 `打开ChatGPT远程连接设置.cmd`。
-2. 在 Platform 创建 Tunnel，复制 `tunnel_id`，再创建 Tunnel Runtime API Key。
-3. 执行：
+## 本地开发
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\install_persistent_chatgpt_tunnel.ps1 -TunnelId tunnel_xxx
+cd mcp
+uv sync --extra dev
+$env:WATCH_MCP_PHONE_TOKEN = '<独立 API 令牌>'
+uv run poyi-watch-mcp serve
 ```
 
-脚本安全提示输入 Runtime API Key，使用 Windows DPAPI CurrentUser 加密保存，分别建立
-Gateway 与 Tunnel 登录自启动任务并立即启动。进程退出后由任务重新拉起。ChatGPT 中创建开发者
-模式 App 时，Connection 选择 **Tunnel**，再选择同一个 Tunnel ID；以后不再填写 URL。
+监听地址固定为 `127.0.0.1:8768`，避免与现有 PersonalMcpGateway 的 8760/8761 冲突：
 
-状态检查：
+- MCP：`/mcp`
+- 存活：`/healthz`
+- 就绪：`/readyz`
+- 指标：`/metrics`
 
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\开发\手表开发\mcp\check_persistent_chatgpt_tunnel.ps1
-```
+服务使用 `_watchintervals-phone._tcp.local.` 发现手机，以首次验证的 `phoneDeviceId` 固定身份；`phone-endpoint.json` 只缓存运行时地址，不把 IP 当身份。认证使用手机生成的 256 位 Bearer Token，Windows 端仅以 LocalMachine DPAPI 密文保存。
 
-状态脚本分别报告 Gateway、Tunnel、手机和手表层级；`TUNNEL_OFFLINE` 只用于本机检查，
-远程工具仅返回 `PHONE_OFFLINE`、`WATCH_OFFLINE`、`WATCH_TIMEOUT`、`WATCH_AUTH_FAILED`
-等调用链内可判断的错误。`setup_chatgpt_tunnel.ps1` 和 `run_chatgpt_tunnel.ps1` 保留为兼容入口。Quick Tunnel
-脚本只用于临时排障，不作为长期连接。
+## 工具
 
-所有数据默认停留在手表、手机和本机；MCP 只响应已配对的本地请求。
+- `watch_get_status`
+- `watch_get_capabilities`
+- `watch_get_current_plan`
+- `watch_list_plans`
+- `watch_get_plan`
+- `watch_set_plan`
+- `watch_delete_plan`
+- `watch_select_plan`
+- `watch_list_plan_groups`
+- `watch_create_plan_group`
+- `watch_rename_plan_group`
+- `watch_delete_plan_group`
+- `watch_list_workouts`
+- `watch_get_workout`
+- `watch_summarize_workouts`
+- `watch_delete_workout`
+- `watch_get_latest_sleep`
+- `watch_summarize_sleep`
+- `watch_start_workout`
+- `watch_pause_workout`
+- `watch_resume_workout`
+- `watch_stop_workout`
+- `watch_get_sync_status`
+- `watch_sync_plans`
 
-计划与分组以手机计划库为准。MCP 可创建、重命名、删除分组，增删改选计划，并通过 `sync_plan_library` 立即把完整计划库推送到手表；训练状态与历史仍直接读取手表。
+所有写工具要求 `request_id` 和 `expected_revision`；控制工具还要求 `command_id`、`expected_state` 和 `expires_at`。手机业务 API 持久保存幂等结果，所以 MCP 服务重启或网络重试不会重复执行。
 
-当前 Gateway、发现和重试逻辑已具备本地测试基础，但尚未在真实 Secure MCP Tunnel 上完成端到端绑定验证。手机离开家庭 LAN、Windows 未登录/未联网或进入睡眠时，本轮不保证远程可用。
+## Resources
+
+- `watch://status`
+- `watch://capabilities`
+- `watch://plans`
+- `watch://workouts/recent`
+- `watch://workouts/{workout_id}`
+- `watch://workouts/{workout_id}/route/{cursor}`
+- `watch://workouts/{workout_id}/heart/{cursor}`
+- `watch://sleep/{days}`
+
+轨迹、心率和完整睡眠明细不通过普通工具整批返回。
+
+## Windows 服务与 Tunnel
+
+管理员 PowerShell 中运行 `service/install.ps1` 安装 `PoyiWatchMcp`。提供独立 Tunnel ID 和 Runtime Key 时同时安装 `PoyiWatchTunnel`。两项服务均自动启动、失败重启，数据写入 `%ProgramData%\Poyi\WatchMcp`，程序写入 `%ProgramFiles%\Poyi\WatchMcp`。
+
+该安装过程不会停止、替换或修改 `PoyiPersonalMcpGateway`、`OpenAISecureMcpTunnel` 或其他项目服务。Tunnel 只把独立 Watch MCP 的 `127.0.0.1:8768/mcp` 连接到 Watch 专属 tunnel ID。
+
+旧的统一 `personal_gateway.py`、Quick Tunnel、固定 IP/六位码配置和直接连接手表入口已在迁移完成后删除，避免误启动第二套架构。

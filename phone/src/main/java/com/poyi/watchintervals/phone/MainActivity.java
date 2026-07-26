@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
     private boolean resolving;
     private WatchConnectionManager watchConnection;
     private boolean autoSynced;
-    private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
+    private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));if(watchConnection!=null&&watchConnection.identity().isPaired()&&code!=null){code.setText("");code.setHint("已完成安全配对");}if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -53,7 +53,7 @@ public class MainActivity extends Activity {
         watchConnection.observe(connectionObserver);
         android.content.SharedPreferences preferences = getSharedPreferences("connection", MODE_PRIVATE);
         host.setText(preferences.getString("host", ""));
-        code.setText(preferences.getString("code", ""));
+        if(watchConnection.identity().isPaired()){code.setText("");code.setHint("已完成安全配对");}else code.setText(preferences.getString("code", ""));
         watchConnection.configurePairing(code.getText().toString().trim());
         watchConnection.configureLan(host.getText().toString().trim(),code.getText().toString().trim());
         ensureBluetoothConnection();
@@ -189,7 +189,7 @@ public class MainActivity extends Activity {
                     public void onResolveFailed(NsdServiceInfo service, int code) { resolving=false; }
                     public void onServiceResolved(NsdServiceInfo service) {
                         String address = service.getHost() == null ? "" : service.getHost().getHostAddress();
-                        String pairing = code.getText().toString().trim();
+                        String credential = watchConnection.identity().lanCredential();if(credential.isEmpty())credential=code.getText().toString().trim();final String pairing=credential;
                         if (address.isEmpty()) { resolving=false; return; }
                         if (pairing.length() != 6) {
                             resolving=false;
@@ -234,7 +234,7 @@ public class MainActivity extends Activity {
     private void syncAll() {
         getSharedPreferences("connection", MODE_PRIVATE).edit().putString("host", host.getText().toString().trim()).putString("code", code.getText().toString().trim()).apply();
         runIo(() -> {
-            String pairing=code.getText().toString().trim();if(pairing.length()!=6)throw new IllegalArgumentException("请输入手表上的 6 位配对码");
+            String pairing=code.getText().toString().trim();if(!watchConnection.identity().isPaired()&&pairing.length()!=6)throw new IllegalArgumentException("请输入手表上的 6 位配对码");
             watchConnection.configurePairing(pairing);watchConnection.configureLan(host.getText().toString().trim(),pairing);
             watchConnection.connect().get(25,java.util.concurrent.TimeUnit.SECONDS);
             JSONObject status = new JSONObject(watchConnection.requestBlocking("GET","/v1/status","",20_000L));

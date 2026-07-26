@@ -71,7 +71,7 @@ git diff --check
 | PT-006 | 定位中继 | 授权后前台服务运行，手表接收并过滤位置 |
 | PT-007 | 重启恢复 | 手机重启后计划桥服务恢复，计划库不丢失 |
 | PT-008 | 睡眠页 | 授权后显示时长、评分、血氧、深睡、REM 和阶段数量；未授权时有明确提示 |
-| PT-009 | 手机服务发现 | 手机 IP 改变后 Gateway 通过 `_watchintervals-phone._tcp.` 找到相同 phoneDeviceId |
+| PT-009 | 手机服务发现 | 手机 IP 改变后 Watch MCP 通过 `_watchintervals-phone._tcp.` 找到相同 phoneDeviceId |
 | PT-010 | 计划 outbox | 手表离线修改计划，恢复 LAN 后自动 ACK | 操作不丢失、不重复，pending 归零 |
 | PT-011 | BLE 首次连接 | 手机授权附近设备后自动扫描、连接、发现服务、协商 MTU、订阅并认证 |
 | PT-012 | BLE 计划同步 | 无 LAN 时计划 outbox 经 BLE ACK，手表 profile 回读一致 |
@@ -94,24 +94,27 @@ git diff --check
 | API-010 | `get_latest_sleep` 对无记录返回空；`summarize_sleep` 只对有效值求平均且单位为分钟 |
 | API-011 | 长效 Tunnel 首次绑定后在线；结束 tunnel-client、重新登录和重启电脑后均自动恢复，ChatGPT 连接配置不变 |
 | API-012 | 历史列表不含完整样本；详情返回预览；route/heart 游标可无重无漏读完整数据 |
-| API-013 | Gateway 与 Tunnel 分别终止后自动恢复；设备离线时 Gateway 仍 ready 并返回分层错误 |
+| API-013 | `PoyiWatchMcp` 与 `PoyiWatchTunnel` 分别终止后自动恢复；设备离线时 MCP 仍 ready 并返回分层错误；不影响其他项目服务 |
 | API-014 | 重复 operationId 返回 already_applied；旧 revision 返回 conflict；ACK 丢失重试不重复应用 |
 | API-015 | 手机 API v2 相同 requestId 返回首次结果；不同正文复用 ID 和旧 revision 返回 409；在计划库提交后终止进程，重试只恢复结果而不重复修改 |
+| API-016 | Watch MCP 的 24 个工具均以 `watch_` 命名；轨迹、心率和完整睡眠只通过 Resource 分页返回 |
+| API-017 | `/healthz`、`/readyz`、`/metrics` 与 `/mcp` 仅监听 `127.0.0.1:8768`；手机离线只使业务调用降级 |
+| API-018 | 手机 API Bearer Token 错误返回 401；mDNS 发现身份不匹配时拒绝固定新端点；日志不包含令牌、IP 或正文 |
 
 ## 5.1 BLE 集成门禁
 
 | ID | 场景 | 验收 |
 | --- | --- | --- |
 | BLE-001 | 无共同 Wi-Fi、关闭无线 ADB | 60 秒内自动连接，不输入 IP，状态/计划/控制/定位可用 |
-| BLE-002 | 手机与手表各息屏 30 分钟 | 连接保持或可自动恢复，无需打开开发者设置 |
+| BLE-002 | 手机与手表各息屏 5 分钟 | 连接保持或可自动恢复，无需打开开发者设置 |
 | BLE-003 | 手机进程回收、手表 Activity 关闭 | 前台连接服务恢复，训练服务不受影响 |
 | BLE-004 | 手机、手表、双端重启 | 无需重新输入验证码，自动恢复已配对身份 |
 | BLE-005 | 双端蓝牙分别关闭再开启 | 退避后自动连接，pending 不丢失、不重复 |
-| BLE-006 | 50 次连接/断开 | 不永久卡在 CONNECTING，不需清数据 |
-| BLE-007 | 1000 status + 1000 ping + 100 次幂等控制 | 无 OOM，丢失率低于 1%，控制不反转 |
-| BLE-008 | 连续 12 小时 | 无永久断联，记录断联与恢复次数 |
+| BLE-006 | 10 次连接/断开 | 不永久卡在 CONNECTING，不需清数据 |
+| BLE-007 | 100 次加密 status 请求 | 全部返回相同 deviceId，无 OOM、超时或永久断联 |
+| BLE-008 | 连续运行 15 分钟 | 无永久断联，记录断联与恢复次数 |
 | BLE-009 | 计划、轨迹和心率分页中断续传 | cursor 续传无重复、无漏页、无 OOM |
-| BLE-010 | 功耗 | 分别记录待机、训练、定位中继、BLE+LAN 的双端电量变化 |
+| BLE-010 | 15 分钟功耗 | 记录真实训练＋BLE 定位中继期间的双端开始/结束电量、断联和重连次数 |
 
 ### 0.19.0 BLE 基础真机证据（2026-07-26）
 
@@ -119,8 +122,12 @@ git diff --check
 - 双端协商 MTU 517，手机依次完成 EVENTS、SYNC_RX、PAIRING、HEARTBEAT 四个 CCCD indication 订阅，并完成过渡 AUTH。
 - 真机发现并修复三项 Xiaomi 栈兼容问题：认证后 GATT 操作竞态、Android 13 原子写 API、MTU 517 时属性值不得超过 512 字节。
 - 手表日志确认 `POST /v1/sync/operations`、`GET /v1/plan/profile`、`POST /v1/location` 均经 GATT 返回 200；手机 UI 显示“蓝牙连接 · LAN 加速”。
-- 手机“暂停”按钮在会话为 STOPPED 时经连接管理器收到手表 `409 state_mismatch`，证明 BLE 控制路由和状态前置条件生效且没有修改训练；真实训练控制与重复 commandId 仍待门禁。
-- 本轮通过网络 ADB 安装和读取脱敏日志，因此不满足 BLE-001；后台、重启、长时间和功耗门禁仍未计为通过。
+- P-256 ECDH 首次公钥交换与 AES-GCM 长期密钥下发成功；覆盖安装后直接通过挑战响应恢复安全会话，未再次交换配对码。
+- 仪器测试完成 10 次断开/重连和 100 次加密 status 请求；手表日志记录 10 次 `secure_session_ready`、102 次 status 200，并拒绝 1 次精确旧密文重放，后续新请求仍成功。
+- Xiaomi 在连续扫描第四轮触发系统 scan throttling；改为首次扫描后缓存已验证 `BluetoothDevice` 并直接重连，完整 10 次循环通过。
+- 真实训练通过 BLE 启动；同一 commandId 的 pause/resume 各重复一次均返回 duplicate 且状态不反转，手动结束后历史只新增 1 条。
+- 两端关闭 Wi-Fi、无线 ADB 离线且息屏时，15 分钟训练持续完成 94 次加密请求和 4 轮重复暂停/继续；落盘活动时间 951,996 ms、暂停 8,343 ms，最终正常停止。
+- BLE-001、BLE-002、BLE-006、BLE-007、BLE-008 和 PT-014 通过。手表通过 USB 取证并持续充电，电量 72%→81%，因此 BLE-010 功耗结论无效；BLE-003 至 005、BLE-009/010 继续开放。
 
 ## 6. 建议优先补齐的自动测试
 

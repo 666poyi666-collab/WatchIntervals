@@ -70,14 +70,14 @@
 | REQ-HISTORY-003 | 支持查看详情、轨迹和删除记录 | 删除后列表与 API 都不再返回该记录 | 已实现 |
 | REQ-SYNC-001 | 手机自动发现同网手表 | 通过 `_watchintervals._tcp.` mDNS 发现 8765 端口 | 已实现 |
 | REQ-SYNC-002 | 使用六位码配对本地 API | 未提供正确 `X-Pairing-Code` 时返回 401 | 已实现 |
-| REQ-SYNC-003 | MCP 支持计划、统计、历史和训练控制 | 工具清单与 `mcp/README.md` 一致 | 已实现 |
-| REQ-SYNC-004 | ChatGPT 使用固定的长效 MCP 通道 | Gateway 与 Tunnel 独立自启动；插件固定绑定 Tunnel ID；Runtime Key 不以明文落盘 | 实现完成，待绑定 Tunnel 实测 |
-| REQ-SYNC-005 | Windows 自动重新发现手机 | 手机广播稳定设备 ID；Gateway 在旧地址失败后通过 mDNS 验证并更新端点 | 已实现，待跨网络真机验证 |
+| REQ-SYNC-003 | 独立 Watch MCP 支持计划、统计、历史和训练控制 | 仅注册 `watch_*` 工具；长轨迹、心率和睡眠明细使用 `watch://` Resource | 已实现，待 ChatGPT 实测 |
+| REQ-SYNC-004 | ChatGPT 使用 Watch 专属长效 MCP 通道 | `PoyiWatchMcp` 与 `PoyiWatchTunnel` 独立自启动；应用固定绑定 Watch Tunnel ID；Runtime Key 不明文落盘 | 服务实现完成，待账号绑定 |
+| REQ-SYNC-005 | Windows 自动重新发现手机 | 手机广播稳定设备 ID；Watch MCP 在旧地址失败后通过 mDNS 验证并更新运行时端点 | 已实现，待跨网络真机验证 |
 | REQ-SYNC-006 | 计划修改支持可靠 LAN 队列 | 手机先写持久 outbox，手表按 operationId 去重并 ACK，失败操作保留重试 | 已实现基础链路 |
-| REQ-SYNC-007 | Gateway 计划写入支持 revision 与请求幂等 | 手机 8766 写计划/选择计划接受 `requestId`、`expectedRevision`；重复请求返回首次结果，复用 ID 或旧 revision 返回 409，崩溃恢复不重复执行 | 已实现，待真机故障注入 |
+| REQ-SYNC-007 | MCP 计划写入支持 revision 与请求幂等 | 手机 8766 写计划/选择计划接受 `requestId`、`expectedRevision`；重复请求返回首次结果，复用 ID 或旧 revision 返回 409，崩溃恢复不重复执行 | 已实现，待真机故障注入 |
 | REQ-SYNC-008 | 手机与手表以 BLE 作为主控制链路 | 手机 Central/GATT Client 自动连接手表 Peripheral/GATT Server；状态、控制、计划小增量和定位不依赖共同 Wi-Fi | 基础链路已实现，待完整门禁 |
 | REQ-SYNC-009 | BLE 与 LAN 共享业务路由并自动选择传输 | 控制、计划和定位优先 BLE；历史/睡眠可使用已验证 LAN 加速；LAN 失败回退 BLE | 已实现基础选择与路由 |
-| REQ-SYNC-010 | 蓝牙配对和会话具备应用层安全 | 首次一次性验证码、公钥交换和长期密钥；重连挑战响应；消息认证加密和防重放 | 未实现，阻塞正式发布 |
+| REQ-SYNC-010 | 蓝牙配对和会话具备应用层安全 | 首次一次性验证码、公钥交换和长期密钥；重连挑战响应；消息认证加密和防重放 | 已实现并通过真机重放验证 |
 
 ### 3.5 手表交互和适配
 
@@ -102,7 +102,7 @@
 ## 5. 明确边界
 
 - 当前目标设备为 OWW221，不承诺其他 Wear OS/Android 手表的布局和厂商健康接口兼容性。
-- BLE 已接入计划 outbox、训练控制和手机定位中继，但当前认证仍复用长期六位码，且未通过无 Wi-Fi、后台、重启、12 小时及功耗门禁，因此仅为 debug 候选。
+- BLE 已接入计划 outbox、训练控制和手机定位中继；安全配对、防重放、无共同 Wi-Fi/无线 ADB、5 分钟息屏、10 次重连、100 次请求和 15 分钟连续运行已通过真机验证。双端重启、蓝牙开关恢复、分页续传及非充电状态功耗仍待验证。
 - 厂商 HealthKit 能力由运行时探测决定；当前实机固件能力映射为空时走 GPS/步数链路。
 - 当前 APK 是 debug 签名构建，不等同于正式生产发布。
 - 应用是训练记录工具，不提供医疗判断。

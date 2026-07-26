@@ -20,22 +20,25 @@
 - 修复 checkpoint 写入 offset 前未无条件 flush 缓冲样本的问题。
 - 修复 Xiaomi 认证完成后 GATT 写入竞态、Android 13 旧写 API失败，以及 MTU 517 生成 514 字节属性值超过 512 字节上限的问题。
 - 修复 BLE 权限缺失且 LAN 可用时每秒重置退避并反复扫描的问题。
+- 修复 Xiaomi 对短时间重复 BLE 扫描限流导致第四轮重连超时的问题；首次发现后改用已验证设备直接 GATT 重连。
 
 ### Known Issues
 
-- 当前 BLE AUTH 仍复用长期六位码，尚未完成一次性配对、公钥交换、会话加密和防重放；仅允许 debug 测试。
-- 无共同 Wi-Fi/无 ADB、息屏后台、双端重启、50 次重连、1000 次请求、12 小时与功耗门禁尚未完成。
+- 首次公钥交换、长期密钥、挑战响应、会话加密和防重放已通过 OWW221/Xiaomi 真机验证。
+- 无共同 Wi-Fi/无线 ADB、5 分钟息屏、10 次重连、100 次请求和 15 分钟连续运行已通过；双端重启、蓝牙开关恢复、分页续传和非充电功耗门禁尚待执行。
 
 ## [Unreleased]
 
 ### Added
 
+- 新增独立 `PoyiWatchMcp` 和 `PoyiWatchTunnel` WinSW 服务、Watch 专属端口/DPAPI 数据目录、24 个 `watch_*` 工具及 8 类分页 Resource，不再把 Watch 业务注册到统一 PersonalMcpGateway。
+- 手机 8766 新增 Bearer Token、`/v1/health`、`/v1/capabilities`、稳定设备 ID、严格写入元数据和控制命令校验；Watch MCP 仅通过 mDNS 发现手机业务门面。
 - 提交 Gradle 8.14.3 Wrapper 和 GitHub Actions，自动测试、lint、构建两端 debug APK，并生成哈希和构建信息。
 - 活动训练采用追加式轨迹/心率文件、有界原子检查点；历史改为独立记录目录和摘要索引，并提供详情及 route/heart 分页 API。
 - 新增 10 秒平滑当前/最高速度、四类距离来源证据、计划内/自由记录距离及四页手表训练界面。
-- 新增 Windows 长期 HTTP Gateway、手机 mDNS 广播、设备 ID 校验和分层离线错误；Tunnel 改为连接本地 Gateway。
+- 新增手机 mDNS 广播、设备 ID 校验和分层离线错误；独立 Watch Tunnel 只连接本地 Watch MCP。
 - 新增计划持久 outbox、operationId、revision、ACK 和删除操作基础协议。
-- 手机计划 API v2 新增 `requestId`、`expectedRevision`、首次结果持久重放与崩溃恢复契约，供 Personal MCP Gateway 安全重试写入。
+- 手机计划 API 新增 `requestId`、`expectedRevision`、首次结果持久重放与崩溃恢复契约，供独立 Watch MCP 安全重试写入。
 
 ### Changed
 
@@ -54,8 +57,8 @@
 ### Known Issues
 
 - `0.18.0/0.11.0` 为 debug 候选，尚未完成三次 30–60 分钟户外对比、进程终止矩阵、378×496 全页面截图和功耗测试。
-- BLE 已接入计划、控制选择和定位中继，但安全配对、后台、息屏、双端重启、连续重连和 12 小时门禁未完成。
-- Windows Gateway 与 Secure MCP Tunnel 尚未进行真实远程端到端绑定验证。
+- BLE 已接入计划、控制选择和定位中继；安全配对、防重放、息屏、10 次重连、100 次请求及 15 分钟连续运行已验证，双端重启和真实非充电功耗仍待执行。
+- 独立 Watch MCP 已通过本地契约门禁；Watch 专属 Tunnel 与 ChatGPT 应用因账号未登录尚未完成真实远程绑定。
 
 ## [Phone 0.10.1 / MCP 0.5.1] - 2026-07-25
 

@@ -44,7 +44,7 @@
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
 | 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS |
 | 手机伴侣 | `WatchConnectionManager`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继 |
-| MCP | `mcp/*.py` | 将手表和手机 HTTP API 暴露为本地工具 |
+| MCP | `mcp/src/watch_mcp` | 独立 Watch MCP；只通过手机 8766 业务门面访问本项目 |
 
 ## 3. 核心状态和不变量
 
@@ -70,8 +70,8 @@
 | 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入；恢复时按已确认 offset 截断尾部 |
 | 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
 | BLE 身份 | SharedPreferences `watch_identity` / `bridge` | 稳定设备 ID + 过渡六位码 | 当前仅为 debug 认证；正式密钥与挑战响应关联 `BUG-015` |
-| MCP 配置 | `%USERPROFILE%/.watchintervals.json` | host/port/phoneHost/phonePort/pairingCode | 禁止提交真实配置 |
-| Tunnel 凭据 | `%LOCALAPPDATA%/WatchIntervals/tunnel` | DPAPI CurrentUser + 本地 profile | Runtime Key 不写入仓库、命令行和日志 |
+| Watch MCP 数据 | `%ProgramData%/Poyi/WatchMcp` | 已验证手机身份、DPAPI 密文、独立服务日志 | 不保存固定 IP、明文令牌或其他项目数据 |
+| Watch Tunnel 凭据 | `%ProgramData%/Poyi/WatchMcp` | DPAPI LocalMachine + Watch 专属 Tunnel ID | Runtime Key 不写入仓库、命令行和日志 |
 
 任何 schema 变更都要：提升 schema 版本、保留向后读取、增加迁移/损坏数据测试、更新本表与 CHANGELOG。
 
@@ -111,16 +111,16 @@
 
 ### 手机 `:8766`
 
-手机计划库为计划分组和多计划的主数据源，MCP 通过该端口读写后同步至手表。协议细节以 `PhonePlanBridgeService` 和 `mcp/watch_intervals_mcp.py` 为准；新增端点时必须补充独立契约测试。
+手机计划库为计划分组和多计划的主数据源，独立 Watch MCP 通过该端口读写后同步至手表。协议细节以 `PhonePlanBridgeService` 和 `mcp/src/watch_mcp` 为准；新增端点时必须补充独立契约测试。
 
-手机同时广播 `_watchintervals-phone._tcp.`。`/v1/status` 返回稳定 `phoneDeviceId` 与 `protocolVersion`；Windows Gateway 只把 IP 当运行时端点，旧地址失败后通过 mDNS 发现并校验身份。
+手机同时广播 `_watchintervals-phone._tcp.`。`/v1/status` 返回稳定 `phoneDeviceId` 与 `protocolVersion`；Windows Watch MCP 只把 IP 当运行时端点，旧地址失败后通过 mDNS 发现并校验身份。
 
-Gateway 使用手机 API v2 写入契约：`POST/PUT /v1/plans[/id]` 的正文为
+Watch MCP 使用手机 API v1 写入契约：`POST/PUT /v1/plans[/id]` 的正文为
 `{requestId, expectedRevision, plan}`，`PUT /v1/plan-selection` 为
 `{requestId, expectedRevision, planId}`。手机持久保存请求哈希、状态和首次结果；相同请求重放
 首次结果，ID 复用或 revision 冲突返回 409。执行前同步提交 `in_progress`，若进程在计划库提交后、
 结果缓存提交前终止，重试通过单调 library revision 恢复结果，不再次执行写入。旧的直接计划正文继续
-兼容本地旧客户端，但 Gateway 不使用旧格式。
+旧客户端仅保留迁移参考，正式 Watch MCP 不使用旧格式。
 
 ### 协议规范
 
@@ -168,14 +168,15 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - Release 记录：提交 SHA、构建命令、测试结果、APK SHA-256、已知问题。
 - 正式发布应使用受控 release keystore；当前 debug 预发布不得描述为正式生产包。
 
-## 10. ChatGPT 长效通道
+## 10. 独立 Watch MCP 与 ChatGPT 通道
 
-- ChatGPT 插件绑定 OpenAI Tunnel ID，不再依赖会变化的 Quick Tunnel URL。
-- `install_persistent_chatgpt_tunnel.ps1` 只在首次安装时读取 Runtime Key，并用 Windows DPAPI CurrentUser 加密保存。
-- Personal Gateway 独立监听 `127.0.0.1:8767/mcp`，复用 stdio MCP 的工具核心；Tunnel profile 使用 `mcp-server-url` 连接它。
-- Gateway 与 Tunnel 使用两个登录计划任务及独立互斥锁；任一进程退出后等待 5 秒重启。
-- 本地健康端点仅监听环回地址；`check_persistent_chatgpt_tunnel.ps1` 检查任务、凭据、`healthz` 和 `readyz`。
-- 删除或轮换 Runtime Key 后必须重新执行安装脚本；仓库和发布包不得包含 profile、密钥、Tunnel ID 或运行日志。
+- 正式链路固定为 `ChatGPT -> Watch 专属 Tunnel -> PoyiWatchMcp -> 手机 8766 -> BLE/LAN -> 手表`。
+- `PoyiWatchMcp` 只监听 `127.0.0.1:8768`，同端口提供 `/mcp`、`/healthz`、`/readyz`、`/metrics`；避开 PersonalMcpGateway 的 8760/8761，且不加载其模块。
+- MCP 只发现手机 `_watchintervals-phone._tcp.local.`，以 Bearer Token 认证并固定首次验证的 `phoneDeviceId`。它不直接连接手表、不读取 Android 数据库、不使用 ADB 或固定 IP。
+- `PoyiWatchTunnel` 使用独立 Tunnel ID、独立 Runtime Key 和 `127.0.0.1:8880` 健康端口，仅连接 Watch MCP。两个 WinSW 服务均自动启动和失败重启。
+- 手机 API Token 与 Tunnel Runtime Key 分别用 DPAPI LocalMachine 和不同 entropy 保存，日志过滤令牌、精确位置和正文。
+- `watch_*` 工具只返回摘要；轨迹、心率和完整睡眠使用 `watch://` Resource 分页读取。
+- 旧 `personal_gateway.py`、Quick Tunnel、固定 IP/六位码配置和直接连接手表脚本已删除；有效工具、Schema、错误映射和发现逻辑已迁入独立包。
 
 ## 11. BLE 连接架构与边界
 
@@ -184,4 +185,4 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - 消息使用 16 字节帧头，兼容默认 MTU 23；单帧同时受 `MTU-3` 与 512 字节属性值上限约束，消息上限 256 KB，不完整帧 30 秒清理。
 - `WatchConnectionManager` 负责 BLE 优先、LAN 加速、状态快照和退避。控制、计划、同步与定位优先 BLE；历史/睡眠等批量读取优先已验证 LAN，失败可回退 BLE。
 - 2026-07-26 真机已验证 OWW221 广播、Xiaomi 连接、MTU 517、四个 CCCD、AUTH、计划 outbox、计划回读和定位请求。
-- 当前认证仍复用长期六位码，不具备应用层加密与防重放；`BUG-015` 关闭前不能称为正式安全配对。无 Wi-Fi、后台、重启、12 小时和功耗门禁关联 `BUG-016`。
+- 安全版使用 P-256 ECDH、一次性验证码 HMAC 确认、长期配对密钥、challenge-response、AES-GCM、随机 sequence 和持久认证 challenge 防重放；真机门禁通过前仍关联 `BUG-015`。无 Wi-Fi、后台、重启、5 分钟息屏、10 次重连、100 次请求和 15 分钟功耗关联 `BUG-016`。

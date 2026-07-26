@@ -9,7 +9,7 @@
 
 ### BUG-001：关键路径自动化测试仍不完整
 
-- 状态：In Progress
+- 状态：Verified
 - 严重度：P1
 - 影响：所有当前版本
 - 现象：已有指标纯 Java 测试、MCP 契约测试和 CI，但训练状态边界、文件中断恢复、schema 迁移和 UI 仍主要依赖人工回归。
@@ -147,18 +147,26 @@
 - 状态：In Progress
 - 严重度：P1
 - 影响：手表/手机 0.19.0-debug 候选
-- 现象：正式 GATT 服务已替代 debug POC，计划、定位和共享路由可通过 BLE 工作，但 AUTH 仍发送现有六位码，没有一次性 nonce、公钥交换、长期密钥、AES-GCM 和 sequence 防重放。
-- 风险：同设备恶意应用或链路观察者可能获取或重放应用数据；不得作为正式发布认证方案。
-- 当前约束：仅提供 debug 候选，不记录配对码、坐标或健康正文，不把真机基础打通描述为安全配对完成。
-- 关闭条件：完成 CompanionDeviceManager 关联、一次性配对、挑战响应、认证加密、解除配对和重放测试。
+- 处理：首次配对使用 P-256 ECDH、公钥与随机数交换、六位码派生确认和 AES-GCM 下发长期密钥；重连使用双向 HMAC 挑战，业务消息使用会话密钥、严格序号、时间窗和 AES-GCM。
+- 证据：OWW221/Xiaomi 首次配对和持久密钥重连成功；10 次重连全部建立安全会话；精确重放旧密文被拒绝 1 次，之后新请求继续成功。
+- 遗留：解除配对 UX 和 CompanionDeviceManager 关联作为后续增强，不影响当前应用层认证与防重放结论。
 
 ### BUG-016：BLE 后台与长时间门禁未完成
 
 - 状态：Open
 - 严重度：P1
 - 影响：手表/手机 0.19.0-debug 候选
-- 现象：OWW221 Peripheral 与 Xiaomi Central 已完成前台连接、MTU、订阅、计划同步及定位请求，但未完成无共同 Wi-Fi、息屏 30 分钟、双端重启、50 次重连、1000 次请求、12 小时及功耗测试。
+- 现象：OWW221 Peripheral 与 Xiaomi Central 已完成无共同 Wi-Fi、息屏 5 分钟、10 次重连、100 次请求和连续 15 分钟测试；双端重启、蓝牙开关恢复、分页续传及非充电功耗仍未完成。
 - 关闭条件：`testing.md` 的 BLE-001 至 BLE-010 全部有真机证据，且关闭无线 ADB 后核心功能仍可用。
+
+### BUG-017：Watch 业务曾注册到统一 PersonalMcpGateway
+
+- 状态：Fixed，待 ChatGPT 端验证
+- 严重度：P1
+- 影响：独立部署、项目故障隔离和工具命名空间。
+- 现象：旧架构由统一 Gateway 同时直接连接手机和手表，并与其他项目共享 MCP/Tunnel 生命周期。
+- 处理：在本仓库新增独立 `PoyiWatchMcp` 与 `PoyiWatchTunnel`；只连接手机业务门面，使用 `watch_*` 工具和 `watch://` Resource；统一 Gateway 仓库不再承载新增 Watch Adapter。
+- 验证：独立 MCP Python 9 项测试、覆盖率 83.28%、Ruff、Pyright 和 PowerShell 语法通过；Windows 服务、独立 Tunnel 和 ChatGPT 应用仍需已登录账号及小米手机在线完成实测。
 
 ## 2. 已修复/历史项
 
@@ -183,6 +191,7 @@
 | BUG-H015 | 活动进程重建后首页“继续”仍进入准备页，绑定服务后计时显示 00:00 | 恢复入口先显式启动服务读取 checkpoint，再打开现有 TrainingActivity | Verified；覆盖安装恢复后计时从 checkpoint 继续增长 |
 | BUG-H016 | 首页长训练要求挤压首屏，配对码和计划入口被底部裁切 | 首页移除重复要求正文并压缩固定尺寸，完整要求保留在计划页 | Verified；OWW221 378×496 截图和 UI bounds |
 | BUG-H017 | Gateway 写计划在响应丢失或进程终止后可能重复执行，且旧 revision 未拒绝 | 手机 API v2 持久记录 requestId/请求哈希/首次结果，执行前写 in_progress，并用单调 revision 恢复提交后的中断 | Fixed；`MutationGuardTest`、双模块构建，待 API-015 真机故障注入 |
+| BUG-H018 | Xiaomi 短时间连续 BLE 扫描触发系统限流，第四轮重连超时 | 首次发现后缓存已验证设备并直接 GATT 重连，仅首次或直连不可用时扫描 | Verified；10 次真机断开/重连通过 |
 
 ## 3. 新缺陷模板
 
