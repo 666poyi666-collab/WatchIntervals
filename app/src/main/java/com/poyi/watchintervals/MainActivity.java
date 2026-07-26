@@ -12,8 +12,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -21,17 +23,30 @@ import android.widget.Toast;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.Locale;
 import java.util.List;
+import java.util.Locale;
 
+/**
+ * Single vertical home screen.
+ *
+ * <p>The previous home was a three-page horizontal pager whose second and third pages were
+ * shrunken previews of {@link HistoryActivity} and {@link PlanActivity} — two navigation models
+ * for the same destinations, and the previews always lagged the real screens. The restructure
+ * keeps one canonical surface per concern and gives the home what it lacked: this week's volume,
+ * the figure a runner actually opens the app to check. Horizontal gestures now do exactly one
+ * thing each — right exits to the watch face, left opens history.
+ */
 public class MainActivity extends Activity {
     private static final int REQUEST_PERMISSIONS = 10;
     private static final int REQUEST_BACKGROUND_LOCATION = 11;
     private static final int REQUEST_SLEEP_PERMISSION = 12;
     private ArrayList<Stage> stages;
-    private TextView ready, workout, start, planLine, planSummary, planDetails, sensorStatus, clock;
-    private LinearLayout pagerHistoryList, pagerPlanList;
-    private TextView pagerHistorySummary, pagerPlanTitle;
+    private TextView ready, start, clock, weeklyFigures;
+    private TextView planName, planLine, planSummary;
+    private TextView latestDistance, latestMeta, sensorStatus;
+    private LinearLayout latestBlock;
+    private SwipeTracker swipeTracker;
+    private String latestRecordId = "";
     private final Handler clockHandler = new Handler(Looper.getMainLooper());
     private final Runnable clockUpdater = new Runnable() { @Override public void run() {
         updateClock();
@@ -46,6 +61,10 @@ public class MainActivity extends Activity {
                 | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
         startForegroundService(new Intent(this, WatchBridgeService.class));
         startForegroundService(new Intent(this, WatchLinkService.class));
+        swipeTracker = new SwipeTracker(this, new SwipeTracker.Listener() {
+            @Override public void onSwipeRight() { finish(); }
+            @Override public void onSwipeLeft() { startActivity(new Intent(MainActivity.this, HistoryActivity.class)); }
+        });
         buildUi();
         if (!getPreferences(MODE_PRIVATE).getBoolean("sleep_permission_prompted", false)) {
             getPreferences(MODE_PRIVATE).edit().putBoolean("sleep_permission_prompted", true).apply();
@@ -58,10 +77,8 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         stages = PlanStore.load(this);
-        updatePlanPreview();
-        updateSessionCallToAction();
+        renderHome();
         updateSensorStatus();
-        renderPagerPages();
         clockHandler.removeCallbacks(clockUpdater);
         clockHandler.post(clockUpdater);
     }
@@ -71,75 +88,161 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        if (swipeTracker != null) swipeTracker.observe(event);
+        return super.dispatchTouchEvent(event);
+    }
+
     private void buildUi() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 8), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 6));
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 8), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 10));
         root.setBackgroundColor(Ui.BLACK);
 
-        // Stock-sports top bar: bold app title left, white clock right.
         TextView title = Ui.bold(this, "步序", 22, Ui.WHITE);
         clock = Ui.topBar(this, root, title);
 
-        // Editorial block on plain black. The old version boxed everything into one giant card
-        // with five competing centred text styles — the main "home-made" tell of the app.
-        ready = Ui.text(this, "训练安排已就绪", Ui.LABEL, Ui.MUTED);
-        LinearLayout.LayoutParams readyParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 20));
-        readyParams.topMargin = Ui.dp(this, 4);
-        root.addView(ready, readyParams);
-        workout = Ui.bold(this, "1千米 + 200米", 27, Ui.WHITE);
-        root.addView(workout, new LinearLayout.LayoutParams(-1, Ui.dp(this, 38)));
-        planLine = Ui.text(this, "", Ui.BODY, Ui.MUTED);
-        root.addView(planLine, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
-        planSummary = Ui.text(this, "", Ui.CAPTION, Ui.MUTED);
-        root.addView(planSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 17)));
-        planDetails = Ui.text(this, "", 12, Ui.MUTED);
-        planDetails.setVisibility(View.GONE);
-        root.addView(planDetails, new LinearLayout.LayoutParams(0, 0));
+        // This week's volume right under the top bar: the between-workouts reading.
+        LinearLayout weekly = new LinearLayout(this);
+        weekly.setGravity(Gravity.CENTER_VERTICAL);
+        TextView weeklyLabel = Ui.text(this, "本周", Ui.LABEL, Ui.MUTED);
+        LinearLayout.LayoutParams weeklyLabelParams = new LinearLayout.LayoutParams(-2, -1);
+        weeklyLabelParams.rightMargin = Ui.dp(this, 10);
+        weekly.addView(weeklyLabel, weeklyLabelParams);
+        weeklyFigures = Ui.numeral(this, "", 15, Ui.WHITE);
+        weekly.addView(weeklyFigures, new LinearLayout.LayoutParams(0, -1, 1));
+        root.addView(weekly, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
 
-        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        // Glowing primary disc, as on the stock prepare screen.
-        android.widget.FrameLayout startBox = new android.widget.FrameLayout(this);
-        startBox.addView(Ui.glow(this, Ui.YELLOW, 82),
-                new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 152), Ui.dp(this, 152), Gravity.CENTER));
-        start = Ui.bold(this, "开始", 26, Ui.BLACK);
+        ready = Ui.text(this, "", Ui.LABEL, Ui.MUTED);
+        ready.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams readyParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 20));
+        readyParams.topMargin = Ui.dp(this, 2);
+        root.addView(ready, readyParams);
+
+        FrameLayout startBox = new FrameLayout(this);
+        startBox.addView(Ui.glow(this, Ui.YELLOW, 78),
+                new FrameLayout.LayoutParams(Ui.dp(this, 142), Ui.dp(this, 142), Gravity.CENTER));
+        start = Ui.bold(this, "开始", 25, Ui.BLACK);
         start.setGravity(Gravity.CENTER);
         start.setBackground(Ui.ovalAction(this, Ui.YELLOW));
         start.setClickable(true);
         start.setFocusable(true);
-        startBox.addView(start, new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 112), Gravity.CENTER));
-        root.addView(startBox, new LinearLayout.LayoutParams(-1, Ui.dp(this, 156)));
-        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+        startBox.addView(start, new FrameLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 104), Gravity.CENTER));
+        root.addView(startBox, new LinearLayout.LayoutParams(-1, Ui.dp(this, 146)));
+        start.setOnClickListener(v -> requestAndStart());
 
-        sensorStatus = Ui.text(this, "", Ui.LABEL, Ui.MUTED); sensorStatus.setGravity(Gravity.CENTER);
+        // Current arrangement block — the whole block opens the plan selector.
+        LinearLayout planBlock = new LinearLayout(this);
+        planBlock.setOrientation(LinearLayout.VERTICAL);
+        planBlock.setClickable(true);
+        planBlock.setFocusable(true);
+        LinearLayout planHeader = new LinearLayout(this);
+        planHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView planLabel = Ui.text(this, "当前安排", Ui.LABEL, Ui.MUTED);
+        planHeader.addView(planLabel, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView planChevron = Ui.text(this, "›", 16, Ui.MUTED);
+        planHeader.addView(planChevron, new LinearLayout.LayoutParams(-2, -1));
+        planBlock.addView(planHeader, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
+        planName = Ui.bold(this, "", 24, Ui.WHITE);
+        planBlock.addView(planName, new LinearLayout.LayoutParams(-1, Ui.dp(this, 33)));
+        planLine = Ui.text(this, "", Ui.BODY, Ui.MUTED);
+        planBlock.addView(planLine, new LinearLayout.LayoutParams(-1, Ui.dp(this, 21)));
+        planSummary = Ui.text(this, "", Ui.CAPTION, Ui.MUTED);
+        planBlock.addView(planSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 17)));
+        planBlock.setOnClickListener(v -> startActivity(new Intent(this, PlanActivity.class)));
+        LinearLayout.LayoutParams planParams = new LinearLayout.LayoutParams(-1, -2);
+        planParams.topMargin = Ui.dp(this, 4);
+        root.addView(planBlock, planParams);
+
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 1));
+        dividerParams.topMargin = Ui.dp(this, 9);
+        dividerParams.bottomMargin = Ui.dp(this, 7);
+        View divider = new View(this);
+        divider.setBackgroundColor(Ui.LINE);
+        root.addView(divider, dividerParams);
+
+        // Latest workout block — opens that record's detail directly.
+        latestBlock = new LinearLayout(this);
+        latestBlock.setOrientation(LinearLayout.VERTICAL);
+        latestBlock.setClickable(true);
+        latestBlock.setFocusable(true);
+        TextView latestLabel = Ui.text(this, "最近训练", Ui.LABEL, Ui.MUTED);
+        latestBlock.addView(latestLabel, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
+        latestDistance = Ui.numeral(this, "", 22, Ui.WHITE);
+        latestBlock.addView(latestDistance, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
+        latestMeta = Ui.text(this, "", Ui.LABEL, Ui.MUTED);
+        latestBlock.addView(latestMeta, new LinearLayout.LayoutParams(-1, Ui.dp(this, 19)));
+        latestBlock.setOnClickListener(v -> {
+            if (!latestRecordId.isEmpty()) {
+                startActivity(new Intent(this, HistoryActivity.class).putExtra("record_id", latestRecordId));
+            }
+        });
+        root.addView(latestBlock, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout allHistory = new LinearLayout(this);
+        allHistory.setGravity(Gravity.CENTER_VERTICAL);
+        allHistory.setClickable(true);
+        allHistory.setFocusable(true);
+        TextView allLabel = Ui.text(this, "全部历史", Ui.BODY, Ui.WHITE);
+        allHistory.addView(allLabel, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView allChevron = Ui.text(this, "›", 16, Ui.MUTED);
+        allHistory.addView(allChevron, new LinearLayout.LayoutParams(-2, -1));
+        allHistory.setOnClickListener(v -> startActivity(new Intent(this, HistoryActivity.class)));
+        LinearLayout.LayoutParams allParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 34));
+        allParams.topMargin = Ui.dp(this, 2);
+        root.addView(allHistory, allParams);
+
+        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+        sensorStatus = Ui.text(this, "", Ui.LABEL, Ui.MUTED);
+        sensorStatus.setGravity(Gravity.CENTER);
         sensorStatus.setVisibility(View.GONE);
         root.addView(sensorStatus, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
-        TextView edit = Ui.action(this, "选择训练安排", 15, Ui.WHITE, Ui.PANEL);
-        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 42));
-        editParams.topMargin = Ui.dp(this, 4); root.addView(edit, editParams);
-        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 16));
-        dotParams.topMargin = Ui.dp(this, 4);
-        root.addView(Ui.pagerDots(this, 0, 3), dotParams);
-        start.setOnClickListener(v -> requestAndStart());
-        edit.setOnClickListener(v -> startActivity(new Intent(this, PlanActivity.class)));
-        scroll.addView(root);
-        ArrayList<View> pagesList = new ArrayList<>();
-        // Same order as the system pager: the next destination is physically on
-        // the right, so a leftward finger drag reveals it pixel-for-pixel.
-        pagesList.add(scroll); pagesList.add(buildHistoryPagerPage()); pagesList.add(buildPlanPagerPage());
-        WatchPagerLayout pager = new WatchPagerLayout(this); for(View page:pagesList)pager.addView(page); pager.setCurrentItem(0, false);
-        // Watch-wide convention: dragging right past the first page leaves the app (back to the
-        // dial). The workout pager deliberately does not register this.
-        pager.setOnExitListener(this::finish);
-        setContentView(pager);
+
+        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
+        setContentView(scroll);
+    }
+
+    /** One pass over the history feeds the weekly strip and the latest-workout block. */
+    private void renderHome() {
+        updateClock();
+        List<WorkoutRecord> records = HistoryStore.load(this);
+
+        WeeklyStats week = WeeklyStats.of(records, System.currentTimeMillis());
+        if (week.sessions == 0) {
+            weeklyFigures.setText("还没有训练");
+            weeklyFigures.setTextColor(Ui.MUTED);
+        } else {
+            weeklyFigures.setText(Format.distance(week.meters) + " · " + week.sessions + " 次 · "
+                    + Format.duration(week.activeMillis));
+            weeklyFigures.setTextColor(Ui.WHITE);
+        }
+
+        WorkoutRecord latest = records.isEmpty() ? null : records.get(0);
+        if (latest == null) {
+            latestRecordId = "";
+            latestDistance.setText("还没有训练记录");
+            latestDistance.setTextColor(Ui.MUTED);
+            latestMeta.setText("完成第一次训练后在这里查看");
+        } else {
+            latestRecordId = latest.id;
+            latestDistance.setText(Format.distance(latest.distanceMeters));
+            latestDistance.setTextColor(Ui.WHITE);
+            String when = new SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(new Date(latest.startedAt));
+            String pace = latest.distanceMeters > 0
+                    ? SpeedFusion.formatPace(latest.durationMs / latest.distanceMeters)
+                    : latest.steps + " 步";
+            latestMeta.setText(when + " · " + Format.duration(latest.durationMs) + " · " + pace);
+        }
+
+        updatePlanPreview();
+        updateSessionCallToAction();
     }
 
     private void updatePlanPreview() {
         if (planLine == null || stages == null || stages.isEmpty()) return;
-        updateClock();
         Stage first = stages.get(0);
         String line = first.name() + " " + first.targetText();
         if (stages.size() > 1) {
@@ -153,9 +256,7 @@ public class MainActivity extends Activity {
         if (meters > 0) summary += String.format(Locale.CHINA, " · %.2f km", meters / 1000d);
         if (seconds > 0) summary += String.format(Locale.CHINA, " · %d 分钟", Math.max(1, seconds / 60));
         planSummary.setText(summary);
-        workout.setText(PlanStore.name(this));
-        planDetails.setText(PlanStore.requirement(this));
-        ready.setText(PlanStore.group(this) + " · 当前安排");
+        planName.setText(PlanStore.name(this));
     }
 
     private void updateClock() {
@@ -165,7 +266,6 @@ public class MainActivity extends Activity {
     private void updateSessionCallToAction() {
         boolean recoverable = WorkoutService.hasRecoverableSession(this);
         ready.setText(recoverable ? "上次训练可继续" : PlanStore.group(this) + " · 已就绪");
-        workout.setText(recoverable ? "继续上次训练" : PlanStore.name(this));
         start.setText(recoverable ? "继续" : "开始");
         start.setContentDescription(recoverable ? "继续上次训练" : "开始训练");
     }
@@ -264,43 +364,4 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(this, WarmupActivity.class);
         startActivity(intent.putExtra("plan", PlanStore.encode(stages)));
     }
-
-    private View buildHistoryPagerPage() {
-        LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setBackgroundColor(Ui.BLACK);
-        page.setPadding(Ui.dp(this,16),Ui.dp(this,8),Ui.dp(this,16),Ui.dp(this,42));
-        TextView title=Ui.bold(this,"训练历史",23,Ui.WHITE); page.addView(title,new LinearLayout.LayoutParams(-1,Ui.dp(this,42)));
-        page.addView(Ui.pagerDots(this,1,3),new LinearLayout.LayoutParams(-1,Ui.dp(this,24)));
-        pagerHistorySummary=Ui.text(this,"",12,Ui.MUTED);pagerHistorySummary.setGravity(Gravity.CENTER);page.addView(pagerHistorySummary,new LinearLayout.LayoutParams(-1,Ui.dp(this,28)));
-        ScrollView scroll=new ScrollView(this);pagerHistoryList=new LinearLayout(this);pagerHistoryList.setOrientation(LinearLayout.VERTICAL);scroll.addView(pagerHistoryList);page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        TextView all=Ui.action(this,"查看完整历史",15,Ui.WHITE,Ui.PANEL);all.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class)));page.addView(all,new LinearLayout.LayoutParams(-1,Ui.dp(this,52)));
-        return page;
-    }
-
-    private View buildPlanPagerPage() {
-        LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setBackgroundColor(Ui.BLACK);page.setPadding(Ui.dp(this,16),Ui.dp(this,8),Ui.dp(this,16),Ui.dp(this,42));
-        pagerPlanTitle=Ui.bold(this,"训练安排",23,Ui.WHITE);page.addView(pagerPlanTitle,new LinearLayout.LayoutParams(-1,Ui.dp(this,42)));
-        page.addView(Ui.pagerDots(this,2,3),new LinearLayout.LayoutParams(-1,Ui.dp(this,24)));
-        ScrollView scroll=new ScrollView(this);pagerPlanList=new LinearLayout(this);pagerPlanList.setOrientation(LinearLayout.VERTICAL);scroll.addView(pagerPlanList);page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        TextView edit=Ui.action(this,"选择训练安排",16,Ui.BLACK,Ui.LIME);edit.setOnClickListener(v->startActivity(new Intent(this,PlanActivity.class)));page.addView(edit,new LinearLayout.LayoutParams(-1,Ui.dp(this,56)));
-        return page;
-    }
-
-    private void renderPagerPages() {
-        if(pagerHistoryList!=null){pagerHistoryList.removeAllViews();List<WorkoutRecord> records=HistoryStore.load(this);pagerHistorySummary.setText(records.isEmpty()?"还没有训练记录":records.size()+" 次训练");
-            // Distance-first rows, matching HistoryActivity: the figure a runner scans by leads,
-            // the timestamp becomes quiet metadata on the right.
-            for(WorkoutRecord record:records){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(Ui.dp(this,14),Ui.dp(this,8),Ui.dp(this,14),Ui.dp(this,8));row.setBackground(Ui.background(this,Ui.PANEL,18));
-                LinearLayout headline=new LinearLayout(this);headline.setGravity(Gravity.CENTER_VERTICAL);
-                TextView value=Ui.numeral(this,Format.distance(record.distanceMeters),21,Ui.WHITE);headline.addView(value,new LinearLayout.LayoutParams(0,-2,1));
-                TextView when=Ui.text(this,new SimpleDateFormat("MM/dd HH:mm",Locale.CHINA).format(new Date(record.startedAt)),Ui.CAPTION,Ui.MUTED);headline.addView(when,new LinearLayout.LayoutParams(-2,-2));
-                row.addView(headline,new LinearLayout.LayoutParams(-1,Ui.dp(this,26)));
-                TextView data=Ui.text(this,Format.duration(record.durationMs)+" · "+(record.distanceMeters>0
-                        ?SpeedFusion.formatPace(record.durationMs/record.distanceMeters):record.steps+" 步"),Ui.LABEL,Ui.MUTED);
-                row.addView(data,new LinearLayout.LayoutParams(-1,Ui.dp(this,20)));
-                row.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class).putExtra("record_id",record.id)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,62));p.bottomMargin=Ui.dp(this,7);pagerHistoryList.addView(row,p);}}
-        if(pagerPlanList!=null){pagerPlanList.removeAllViews();ArrayList<Stage> current=PlanStore.load(this);pagerPlanTitle.setText(PlanStore.name(this));TextView group=Ui.text(this,PlanStore.group(this)+" · "+current.size()+" 项内容",13,Ui.MUTED);pagerPlanList.addView(group,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));TextView req=Ui.text(this,PlanStore.requirement(this),12,Ui.MUTED);pagerPlanList.addView(req,new LinearLayout.LayoutParams(-1,-2));
-            for(int i=0;i<current.size();i++){LinearLayout row=Ui.stageRow(this,i+1,current.get(i),Ui.PANEL);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,52));p.topMargin=Ui.dp(this,7);pagerPlanList.addView(row,p);}}
-    }
-
-
 }
