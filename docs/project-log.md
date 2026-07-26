@@ -322,3 +322,11 @@
 - 预备页倒计时 3-2-1-GO 由普通粗体换成 `Ui.numeral` 窄体等宽字形，训练相关数字全部同一字面。
 - `:app:assembleDebug`、`:app:testDebugUnitTest` 通过。
 - 未覆盖：手表当前 ADB 离线（USB/TCP/mDNS 均不可达），stageRow 竖条高度、序号列宽与目标值混排（如"1分30秒"）的真机渲染待手表上线后截图核对。
+
+## 2026-07-26：历史页按跑者日志口径重排信息
+
+- 列表行（HistoryActivity 完整页 + 首页历史速览）的灰阶次要行由「用时 · 步数 · 心率」改为「用时 · 平均配速 · 心率」：跑步产品的历史按配速扫读（Garmin/Apple 跑步列表均不放步数）；无距离场次回退显示步数，步数完整数据仍在详情页。
+- 平均配速直接以 `durationMs / distanceMeters`（毫秒/米在数值上等于秒/公里）喂 `SpeedFusion.formatPace`，与训练页同记法同口径（durationMs 为活动时间）。
+- 详情分段卡两遍渲染：先找最快段（paceSecondsPerKm 最小且 >0），渲染时对该行值文字用 LIME 高亮；仅一段时不高亮（没有比较意义）。`detailLine` 增加值颜色重载。
+- `:app:assembleDebug`、`:app:testDebugUnitTest` 通过（class 时间戳核对确认增量编译包含改动）。
+- 未覆盖：真机渲染核对随手表上线一并补做。

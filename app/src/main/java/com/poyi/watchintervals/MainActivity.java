@@ -294,7 +294,8 @@ public class MainActivity extends Activity {
                 TextView value=Ui.numeral(this,Format.distance(record.distanceMeters),21,Ui.WHITE);headline.addView(value,new LinearLayout.LayoutParams(0,-2,1));
                 TextView when=Ui.text(this,new SimpleDateFormat("MM/dd HH:mm",Locale.CHINA).format(new Date(record.startedAt)),Ui.CAPTION,Ui.MUTED);headline.addView(when,new LinearLayout.LayoutParams(-2,-2));
                 row.addView(headline,new LinearLayout.LayoutParams(-1,Ui.dp(this,26)));
-                TextView data=Ui.text(this,Format.duration(record.durationMs)+" · "+record.steps+" 步",Ui.LABEL,Ui.MUTED);
+                TextView data=Ui.text(this,Format.duration(record.durationMs)+" · "+(record.distanceMeters>0
+                        ?SpeedFusion.formatPace(record.durationMs/record.distanceMeters):record.steps+" 步"),Ui.LABEL,Ui.MUTED);
                 row.addView(data,new LinearLayout.LayoutParams(-1,Ui.dp(this,20)));
                 row.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class).putExtra("record_id",record.id)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,62));p.bottomMargin=Ui.dp(this,7);pagerHistoryList.addView(row,p);}}
         if(pagerPlanList!=null){pagerPlanList.removeAllViews();ArrayList<Stage> current=PlanStore.load(this);pagerPlanTitle.setText(PlanStore.name(this));TextView group=Ui.text(this,PlanStore.group(this)+" · "+current.size()+" 项内容",13,Ui.MUTED);pagerPlanList.addView(group,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));TextView req=Ui.text(this,PlanStore.requirement(this),12,Ui.MUTED);pagerPlanList.addView(req,new LinearLayout.LayoutParams(-1,-2));

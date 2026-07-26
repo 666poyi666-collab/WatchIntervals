@@ -70,8 +70,7 @@ public class HistoryActivity extends Activity {
         TextView when = Ui.text(this, new SimpleDateFormat("HH:mm", Locale.CHINA).format(new Date(record.startedAt)), Ui.LABEL, Ui.MUTED);
         headline.addView(when, new LinearLayout.LayoutParams(-2, -2));
         row.addView(headline, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
-        TextView data = Ui.text(this, Format.duration(record.durationMs) + " · " + record.steps + " 步"
-                + (record.averageHeartRate > 0 ? " · " + record.averageHeartRate + " bpm" : ""), Ui.LABEL, Ui.MUTED);
+        TextView data = Ui.text(this, runnerMeta(record), Ui.LABEL, Ui.MUTED);
         row.addView(data, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
         row.setClickable(true); row.setFocusable(true); row.setOnClickListener(v -> showDetail(record));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, Ui.dp(this, 66));
@@ -118,7 +117,10 @@ public class HistoryActivity extends Activity {
         try {
             org.json.JSONObject json=record.toJson();
             if(json.has("bestPaceSecondsPerKm")){LinearLayout card=detailCard("配速表现");card.addView(detailLine("最佳瞬时配速",SpeedFusion.formatPace(json.optLong("bestPaceSecondsPerKm"))));page.addView(card,sectionParams());}
-            org.json.JSONArray splits=json.optJSONArray("splits");if(splits!=null&&splits.length()>0){LinearLayout card=detailCard("分段");for(int i=0;i<splits.length();i++){org.json.JSONObject split=splits.getJSONObject(i);card.addView(detailLine(split.optInt("index")+" 公里",Format.duration(split.optLong("durationMs"))+"  ·  "+SpeedFusion.formatPace(split.optLong("paceSecondsPerKm"))));}page.addView(card,sectionParams());}
+            org.json.JSONArray splits=json.optJSONArray("splits");if(splits!=null&&splits.length()>0){LinearLayout card=detailCard("分段");
+                // The fastest kilometre gets the lime accent, the way every running log marks it.
+                int fastest=-1;long best=Long.MAX_VALUE;for(int i=0;i<splits.length();i++){long paceSeconds=splits.getJSONObject(i).optLong("paceSecondsPerKm");if(paceSeconds>0&&paceSeconds<best){best=paceSeconds;fastest=i;}}
+                for(int i=0;i<splits.length();i++){org.json.JSONObject split=splits.getJSONObject(i);card.addView(detailLine(split.optInt("index")+" 公里",Format.duration(split.optLong("durationMs"))+"  ·  "+SpeedFusion.formatPace(split.optLong("paceSecondsPerKm")),i==fastest&&splits.length()>1?Ui.LIME:Ui.WHITE));}page.addView(card,sectionParams());}
             if(json.has("heartRateRange")){org.json.JSONObject range=json.getJSONObject("heartRateRange");LinearLayout card=detailCard("心率");card.addView(detailLine("平均心率",record.averageHeartRate+" bpm"));card.addView(detailLine("实测范围",range.optInt("min")+"–"+range.optInt("max")+" bpm"));page.addView(card,sectionParams());}
             if(json.has("elevationGainMeters")){LinearLayout card=detailCard("海拔");card.addView(detailLine("累计爬升",Math.round(json.optDouble("elevationGainMeters"))+" m"));page.addView(card,sectionParams());}
             org.json.JSONArray stages=json.optJSONArray("stageResults");if(stages!=null&&stages.length()>0){LinearLayout card=detailCard("训练阶段");for(int i=0;i<stages.length();i++){org.json.JSONObject stage=stages.getJSONObject(i);card.addView(detailLine(stage.optInt("index")+"  "+stage.optString("name"),Format.duration(stage.optLong("completedAtMs"))));}page.addView(card,sectionParams());}
@@ -130,8 +132,19 @@ public class HistoryActivity extends Activity {
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);scroll.addView(page,new ScrollView.LayoutParams(-1,-2));setContentView(scroll);
     }
 
+    /** Duration, pace and heart rate — the line a runner scans a log by. Steps only stand in
+     *  when a session has no distance to pace against. */
+    private String runnerMeta(WorkoutRecord record) {
+        StringBuilder meta = new StringBuilder(Format.duration(record.durationMs));
+        if (record.distanceMeters > 0) meta.append(" · ").append(SpeedFusion.formatPace(record.durationMs / record.distanceMeters));
+        else meta.append(" · ").append(record.steps).append(" 步");
+        if (record.averageHeartRate > 0) meta.append(" · ").append(record.averageHeartRate).append(" bpm");
+        return meta.toString();
+    }
+
     private LinearLayout detailCard(String title){LinearLayout card=Ui.card(this);card.addView(Ui.bold(this,title,16,Ui.WHITE),new LinearLayout.LayoutParams(-1,Ui.dp(this,30)));return card;}
-    private View detailLine(String label,String value){LinearLayout row=new LinearLayout(this);TextView left=Ui.text(this,label,13,Ui.MUTED);TextView right=Ui.bold(this,value,14,Ui.WHITE);right.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);row.addView(left,new LinearLayout.LayoutParams(0,Ui.dp(this,34),1));row.addView(right,new LinearLayout.LayoutParams(Ui.dp(this,180),Ui.dp(this,34)));return row;}
+    private View detailLine(String label,String value){return detailLine(label,value,Ui.WHITE);}
+    private View detailLine(String label,String value,int valueColor){LinearLayout row=new LinearLayout(this);TextView left=Ui.text(this,label,13,Ui.MUTED);TextView right=Ui.bold(this,value,14,valueColor);right.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);row.addView(left,new LinearLayout.LayoutParams(0,Ui.dp(this,34),1));row.addView(right,new LinearLayout.LayoutParams(Ui.dp(this,180),Ui.dp(this,34)));return row;}
     private LinearLayout.LayoutParams sectionParams(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=Ui.dp(this,8);return p;}
 
     private LinearLayout base() {
