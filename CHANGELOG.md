@@ -48,6 +48,8 @@
 
 ### Fixed
 
+- 修复安全 BLE 配对后旧 6 位码被清除，手机 `/v1/auth/token` 无法为独立 Watch MCP 签发 token 的问题；现在可使用已配对长期 LAN 凭据完成一次性 bootstrap。
+- 修复独立 Watch MCP 在 streamable HTTP stateless 生命周期中关闭全局 HTTP 客户端后，第二次及后续工具调用报 client closed 的问题。
 - 修复旧 schema 2 记录缺少新速度/自由记录字段时产生 NaN、阻断整批历史迁移的问题。
 - 修复活动进程重建后首页“继续”进入准备页且训练核心页计时显示 00:00 的问题。
 - 修复 378×496 首页长要求文本挤压配对码、计划入口和底部安全区的问题。

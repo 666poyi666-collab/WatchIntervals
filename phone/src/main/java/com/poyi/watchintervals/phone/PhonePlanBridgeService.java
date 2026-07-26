@@ -441,10 +441,10 @@ public class PhonePlanBridgeService extends Service {
     }
 
     private boolean validPairingCode(String presented) {
-        String expected = getSharedPreferences("connection", MODE_PRIVATE).getString("code", "");
-        if (expected.isEmpty() || presented == null) return false;
-        return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
-                presented.getBytes(StandardCharsets.UTF_8));
+        String legacyCode = getSharedPreferences("connection", MODE_PRIVATE).getString("code", "");
+        String pairedLanCredential = getSharedPreferences("watch_identity", MODE_PRIVATE)
+                .getString("lan_credential", "");
+        return BootstrapCredentialValidator.matches(presented, legacyCode, pairedLanCredential);
     }
 
     private String phoneDeviceId() {

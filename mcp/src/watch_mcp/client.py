@@ -43,19 +43,27 @@ class PhoneApiClient:
         self.settings = settings
         self.metrics = metrics
         self._runtime_url = ""
-        self._client = httpx.AsyncClient(
+        self._client = self._new_client()
+
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             timeout=httpx.Timeout(
-                connect=settings.connect_timeout,
-                read=settings.read_timeout,
-                write=settings.read_timeout,
-                pool=settings.connect_timeout,
+                connect=self.settings.connect_timeout,
+                read=self.settings.read_timeout,
+                write=self.settings.read_timeout,
+                pool=self.settings.connect_timeout,
             ),
             headers={
-                "Authorization": f"Bearer {settings.phone_token}",
+                "Authorization": f"Bearer {self.settings.phone_token}",
                 "Content-Type": "application/json",
                 "User-Agent": "PoyiWatchMcp/0.20",
             },
         )
+
+    def _ensure_client(self) -> httpx.AsyncClient:
+        if self._client.is_closed:
+            self._client = self._new_client()
+        return self._client
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -64,7 +72,7 @@ class PhoneApiClient:
         last_error: WatchMcpError | None = None
         for base_url in await self._candidate_urls():
             try:
-                response = await self._client.request(
+                response = await self._ensure_client().request(
                     method, base_url.rstrip("/") + path, json=body
                 )
                 result = self._decode(response)

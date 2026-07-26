@@ -129,6 +129,13 @@ git diff --check
 - 两端关闭 Wi-Fi、无线 ADB 离线且息屏时，15 分钟训练持续完成 94 次加密请求和 4 轮重复暂停/继续；落盘活动时间 951,996 ms、暂停 8,343 ms，最终正常停止。
 - BLE-001、BLE-002、BLE-006、BLE-007、BLE-008 和 PT-014 通过。手表通过 USB 取证并持续充电，电量 72%→81%，因此 BLE-010 功耗结论无效；BLE-003 至 005、BLE-009/010 继续开放。
 
+### 0.19.0 小米手机 API 与独立 MCP 补测（2026-07-26）
+
+- 小米 `xaga` 覆盖安装手机 debug APK 成功，`PhonePlanBridgeService`、`PhoneCompanionService`、`PhoneLocationRelayService` 均以前台服务运行。
+- 手机 8766：无 token 为 401；已配对凭据签发独立 Bearer Token 成功；重复签发返回 duplicate；旧 revision 返回 409；过期控制命令返回 `command_expired`。
+- `PoyiWatchMcp` 开发模式监听 `127.0.0.1:8768`，`/healthz`、`/readyz`、`/metrics` 通过；MCP initialize、24 个 `watch_*` 工具、4 个静态 Resource、4 个模板 Resource、`watch_get_status` 和 `watch://status` 均通过真实调用。
+- 当前状态显示手机 API healthy、手表 online、训练会话 `RUNNING + COMPLETED`；BLE 当前快照曾出现 `DISCONNECTED/gatt_147` 后由 LAN 保持在线，需继续做断网/关闭无线 ADB后的 BLE-only 回归。
+
 ## 6. 建议优先补齐的自动测试
 
 1. `Stage`/`PlanStore` 编解码、默认计划和法特莱克识别。

@@ -56,3 +56,19 @@ async def test_revision_conflict_is_structured(tmp_path: Path) -> None:
         "expectedRevision": 1,
         "actualRevision": 2,
     }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_client_reopens_after_stateless_http_lifespan_close(tmp_path: Path) -> None:
+    client = PhoneApiClient(settings(tmp_path), Metrics())
+    client._runtime_url = "http://phone.test"
+    respx.get("http://phone.test/v1/status").mock(
+        return_value=httpx.Response(200, json={"phoneDeviceId": "phone-one"})
+    )
+    await client.close()
+    try:
+        result = await client.verify()
+    finally:
+        await client.close()
+    assert result["phoneDeviceId"] == "phone-one"

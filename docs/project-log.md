@@ -153,6 +153,19 @@
 - 当前本地候选产物：watch APK SHA-256 `2C6FD6FEAA58BB7F30A89A15D28742EF1895DDF542123E17701BB1AC86152943`，phone APK SHA-256 `3A8C12D61BC9A5744B79B862618033F075CB8A61717912E9CF023FAF95DF63B4`，MCP Wheel SHA-256 `A56E6FB0B6726268EC439A187B687EA1D0BF86878FA9643B112C064C61668464`。
 - OWW221 已通过有线 ADB 覆盖安装 0.19.0 (29) 并保留数据。小米手机当时不在线，无法推送新版手机 APK、签发 Token 或执行真实 BLE/API；浏览器未登录 ChatGPT，无法创建独立 Tunnel/应用，这两项不得写成已验收。
 
+## 2026-07-26：小米手机补齐安装、手机 API 与独立 MCP 实测
+
+- 关联 `REQ-SYNC-003` 至 `REQ-SYNC-010`、`BUG-016`、`BUG-017`、`API-013`、`API-015` 至 `API-018`。
+- 小米 `xaga` 手机上线后，仅向该设备覆盖安装 `phone-debug.apk`，授予定位、附近设备和通知权限，启动后确认 `PhonePlanBridgeService`、`PhoneCompanionService` 和定位中继前台服务运行。
+- 发现安全 BLE 配对完成后手机会清除旧 6 位码，导致 `/v1/auth/token` 仍只接受旧码而无法签发独立 Watch MCP token；新增 `BootstrapCredentialValidator`，token bootstrap 同时接受未迁移旧 6 位码和已配对长期 LAN 凭据，空值或错误值仍拒绝。
+- 发现独立 MCP 在 stateless HTTP 下每个请求 lifespan 结束会关闭全局 `PhoneApiClient`，后续真实工具调用报 client closed；`PhoneApiClient` 现在每次请求前检查并重建已关闭的 `httpx.AsyncClient`。
+- 手机 8766 实测：未带 token 返回 401；用已配对凭据签发 256-bit Bearer Token 成功；相同签发请求返回 duplicate；不同 requestId 携带旧 revision 返回 409；过期控制命令 `/v1/control/pause` 返回 `409 {"error":"command_expired"}` 且不转发。
+- 独立 Watch MCP dev 服务使用真实手机 token 与稳定 `phoneDeviceId` 启动在 `127.0.0.1:8768`；`/healthz` 返回 `alive`，`/readyz` 返回 `ready`，`/metrics` 返回 `watch_mcp_ready 1`。
+- MCP 协议实测：initialize 成功，24 个工具全部为 `watch_*`；静态 Resource 4 个、模板 Resource 4 个；真实 `watch_get_status` 调用成功，`watch://status` Resource 与工具读取同一手机状态。手机 API healthy，手表在线，当前训练为 `RUNNING + COMPLETED`。
+- 当前候选产物：watch APK SHA-256 `2C6FD6FEAA58BB7F30A89A15D28742EF1895DDF542123E17701BB1AC86152943`，phone APK SHA-256 `F1FD58C2F5A641E476B805B3EE5B0D3920D4B806973CD61864562A343F172461`，MCP Wheel SHA-256 `766FD22E3E1D9A1396A529F79B8B783A2BFED56790ADEA2F5307E93F98F3EC27`。
+- 当前 shell 非管理员，WinSW `PoyiWatchMcp`/`PoyiWatchTunnel` 服务安装、Windows 重启恢复和独立 ChatGPT Tunnel 绑定需在管理员 PowerShell 与已登录 ChatGPT 环境继续执行；本轮未把这些写成完成。
+- 验证命令：`gradlew.bat :phone:testDebugUnitTest`、`gradlew.bat test lint :app:assembleDebug :phone:assembleDebug`、`uv run pyright`、`python -m pytest -q`、`ruff check src tests`、`git diff --check` 均通过。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
