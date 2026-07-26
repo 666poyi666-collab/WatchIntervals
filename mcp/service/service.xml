@@ -21,8 +21,4 @@
     <sizeThreshold>10485760</sizeThreshold>
     <keepFiles>5</keepFiles>
   </log>
-  <serviceaccount>
-    <domain>NT SERVICE</domain>
-    <user>PoyiWatchMcp</user>
-  </serviceaccount>
 </service>

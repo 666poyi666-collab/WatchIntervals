@@ -166,7 +166,7 @@
 - 影响：独立部署、项目故障隔离和工具命名空间。
 - 现象：旧架构由统一 Gateway 同时直接连接手机和手表，并与其他项目共享 MCP/Tunnel 生命周期。
 - 处理：在本仓库新增独立 `PoyiWatchMcp` 与 `PoyiWatchTunnel`；只连接手机业务门面，使用 `watch_*` 工具和 `watch://` Resource；统一 Gateway 仓库不再承载新增 Watch Adapter。
-- 验证：独立 MCP Python 10 项测试、Ruff、Pyright、PowerShell 语法和真实本地 streamable HTTP 调用通过；小米手机 8766 已签发独立 token，`watch_get_status` 与 `watch://status` 读取真实手机/手表状态成功。WinSW 服务、独立 Tunnel 和 ChatGPT 应用仍需管理员 PowerShell 与已登录账号继续验收。
+- 验证：独立 MCP Python 10 项测试、Ruff、Pyright、PowerShell 语法和真实本地 streamable HTTP 调用通过；小米手机 8766 已签发独立 token，`PoyiWatchMcp` WinSW 服务已安装并通过 `watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep`、`watch://status` 及写入幂等验收。独立 Tunnel 和 ChatGPT 现有“步序运动”连接仍需 Watch 专属 Tunnel ID/Runtime Key 后继续验收。
 
 ## 2. 已修复/历史项
 

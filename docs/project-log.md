@@ -166,6 +166,16 @@
 - 当前 shell 非管理员，WinSW `PoyiWatchMcp`/`PoyiWatchTunnel` 服务安装、Windows 重启恢复和独立 ChatGPT Tunnel 绑定需在管理员 PowerShell 与已登录 ChatGPT 环境继续执行；本轮未把这些写成完成。
 - 验证命令：`gradlew.bat :phone:testDebugUnitTest`、`gradlew.bat test lint :app:assembleDebug :phone:assembleDebug`、`uv run pyright`、`python -m pytest -q`、`ruff check src tests`、`git diff --check` 均通过。
 
+## 2026-07-26：PoyiWatchMcp WinSW 服务安装与本机 MCP 读写验收
+
+- 关联 `REQ-SYNC-003`、`REQ-SYNC-004`、`BUG-017`、`API-013`、`API-016` 至 `API-018`。
+- 管理员安装脚本已安装 `PoyiWatchMcp` 与 `PoyiWatchTunnel`；统一 `PoyiPersonalMcpGateway` / `OpenAISecureMcpTunnel` 保持运行且未被复用。
+- 现场发现 WinSW 旧安装保留 `NT SERVICE\PoyiWatchMcp` 服务账户，切换服务 XML 后 Windows 服务配置仍未更新；安装脚本新增升级兼容：安装后强制 `sc.exe config ... obj= LocalSystem`，并给 `SYSTEM` 授予数据目录与 token/tunnel 单文件读取权限。
+- `PoyiWatchMcp` 已以 LocalSystem 运行，`GET /healthz` 为 `alive`，`GET /readyz` 为 `ready`。LocalSystem 下 mDNS 未首次发现小米手机，已写入经 `phoneDeviceId` 校验的运行时 endpoint 缓存；后续仍按身份校验，不把 IP 当设备身份。
+- 通过 `127.0.0.1:8768/mcp` 完成本机 MCP 协议验收：`watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep`、`watch://status` 均成功；手机 API healthy，手表 online，训练最终保持 `RUNNING + COMPLETED`。
+- 写入与幂等验收：`watch_sync_plans` 使用同一 `requestId` 重放返回 duplicate；`watch_pause_workout` 首次执行成功，同一 `commandId` 第二次返回 duplicate；随后 `watch_resume_workout` 恢复训练，最终状态 `RUNNING`。
+- `PoyiWatchTunnel` 服务已安装但未 provision。当前本机未发现 Watch 专属 `tunnel-id`、`runtime-key.dpapi`、tunnel-client profile、admin profile 实密钥或 `OPENAI_ADMIN_KEY`/`CONTROL_PLANE_API_KEY` 环境变量；ChatGPT 现有“步序运动”连接的固定 Tunnel 绑定仍需在连接设置里取得/更新 Watch 专属 Tunnel ID 与 Runtime Key 后继续，未创建第二个 ChatGPT 应用。
+
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |

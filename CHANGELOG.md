@@ -48,6 +48,7 @@
 
 ### Fixed
 
+- 修复独立 Watch MCP WinSW 旧安装保留虚拟服务账户导致 LocalMachine DPAPI/token 文件 ACL 不一致、服务 1067 退出的问题；安装脚本现在强制使用 LocalSystem 并授予 SYSTEM 读取敏感配置。
 - 修复安全 BLE 配对后旧 6 位码被清除，手机 `/v1/auth/token` 无法为独立 Watch MCP 签发 token 的问题；现在可使用已配对长期 LAN 凭据完成一次性 bootstrap。
 - 修复独立 Watch MCP 在 streamable HTTP stateless 生命周期中关闭全局 HTTP 客户端后，第二次及后续工具调用报 client closed 的问题。
 - 修复旧 schema 2 记录缺少新速度/自由记录字段时产生 NaN、阻断整批历史迁移的问题。

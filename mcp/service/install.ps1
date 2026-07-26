@@ -133,6 +133,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'PoyiWatchMcp service installation failed.' }
     & (Join-Path $InstallDir 'PoyiWatchTunnel.exe') install
     if ($LASTEXITCODE -ne 0) { throw 'PoyiWatchTunnel service installation failed.' }
+    & sc.exe config PoyiWatchMcp obj= LocalSystem | Out-Null
+    & sc.exe config PoyiWatchTunnel obj= LocalSystem | Out-Null
 } finally { Pop-Location }
 
 $mcpSid = 'NT SERVICE\PoyiWatchMcp'
@@ -141,7 +143,13 @@ New-Item -ItemType Directory -Path (Join-Path $DataDir 'service-logs\mcp'), `
     (Join-Path $DataDir 'service-logs\tunnel'), (Join-Path $DataDir 'tunnel-logs') -Force | Out-Null
 & icacls $InstallDir /grant:r "$mcpSid`:(OI)(CI)RX" "$tunnelSid`:(OI)(CI)RX" /T /C | Out-Null
 & icacls $DataDir /inheritance:r /grant:r 'BUILTIN\Administrators:(OI)(CI)F' `
-    "$mcpSid`:(OI)(CI)M" "$tunnelSid`:(OI)(CI)M" /T /C | Out-Null
+    'NT AUTHORITY\SYSTEM:(OI)(CI)F' "$mcpSid`:(OI)(CI)M" "$tunnelSid`:(OI)(CI)M" /T /C | Out-Null
+foreach ($secretFile in @('phone-token.dpapi', 'phone-device-id', 'runtime-key.dpapi', 'tunnel-id')) {
+    $secretPath = Join-Path $DataDir $secretFile
+    if (Test-Path -LiteralPath $secretPath) {
+        & icacls $secretPath /grant:r 'NT AUTHORITY\SYSTEM:R' /C | Out-Null
+    }
+}
 
 Start-Service PoyiWatchMcp
 Wait-Ready

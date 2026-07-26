@@ -136,6 +136,13 @@ git diff --check
 - `PoyiWatchMcp` 开发模式监听 `127.0.0.1:8768`，`/healthz`、`/readyz`、`/metrics` 通过；MCP initialize、24 个 `watch_*` 工具、4 个静态 Resource、4 个模板 Resource、`watch_get_status` 和 `watch://status` 均通过真实调用。
 - 当前状态显示手机 API healthy、手表 online、训练会话 `RUNNING + COMPLETED`；BLE 当前快照曾出现 `DISCONNECTED/gatt_147` 后由 LAN 保持在线，需继续做断网/关闭无线 ADB后的 BLE-only 回归。
 
+### 0.19.0 WinSW 服务与本机 MCP 端到端补测（2026-07-26）
+
+- `PoyiWatchMcp` / `PoyiWatchTunnel` 已安装为自动启动服务；`PoyiWatchMcp` 以 LocalSystem 运行并通过 `127.0.0.1:8768/healthz`、`/readyz`。
+- MCP 服务端口真实调用通过：`watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep`、`watch://status`。
+- 安全写验收通过：`watch_sync_plans` 同一 `requestId` 重放返回 duplicate；`watch_pause_workout` 同一 `commandId` 重放返回 duplicate；随后恢复训练，最终 `sessionState=RUNNING`、`planState=COMPLETED`。
+- `PoyiWatchTunnel` 因缺 Watch 专属固定 Tunnel ID 与 Runtime Key 尚未启动，`127.0.0.1:8880/readyz` 和 ChatGPT 远程端到端仍开放。
+
 ## 6. 建议优先补齐的自动测试
 
 1. `Stage`/`PlanStore` 编解码、默认计划和法特莱克识别。
