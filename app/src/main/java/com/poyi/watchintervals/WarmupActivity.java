@@ -167,15 +167,15 @@ public class WarmupActivity extends Activity {
     private void updateSystemExercise(WorkoutService.Snapshot s) {
         if (s.usingSystemExerciseDistance) {
             systemValue.setText("记录中");
-            systemValue.setTextColor(Ui.LIME);
+            systemValue.setTextColor(Ui.WHITE);
             sourceSummary.setText("原生运动正在记录距离");
         } else if (s.systemExerciseConnected) {
             systemValue.setText("已连接");
-            systemValue.setTextColor(Ui.CYAN);
+            systemValue.setTextColor(Ui.WHITE);
             sourceSummary.setText("原生运动已连接 · 等待数据");
         } else if (s.systemExerciseState == SystemExerciseBridge.State.UNAVAILABLE) {
             systemValue.setText("已就绪");
-            systemValue.setTextColor(Ui.CYAN);
+            systemValue.setTextColor(Ui.WHITE);
             sourceSummary.setText(s.systemGpsAvailable && !s.systemGpsLocated
                     ? "系统定位搜星中 · 可开始，移动后步数估距"
                     : "轨迹定位优先 · 弱信号时步数估距");
@@ -193,7 +193,7 @@ public class WarmupActivity extends Activity {
     private void updateGps(WorkoutService.Snapshot s) {
         if (s.systemGpsLocated) {
             String signal = s.systemGpsSnr > 0 ? " " + Ui.systemGpsSignal(s.systemGpsSnr) : "";
-            gpsStatus.setText("● 系统定位完成" + signal); gpsStatus.setTextColor(Ui.LIME); gpsValue.setText("系统已定位"); gpsValue.setTextColor(Ui.LIME);
+            gpsStatus.setText("● 系统定位完成" + signal); gpsStatus.setTextColor(Ui.LIME); gpsValue.setText("已定位"); gpsValue.setTextColor(Ui.WHITE);
         } else if (s.systemGpsAvailable && s.systemGpsSnr > 0) {
             gpsStatus.setText("● 系统定位 " + Ui.systemGpsSignal(s.systemGpsSnr)); gpsStatus.setTextColor(Ui.AMBER); gpsValue.setText("搜星 " + Ui.systemGpsSignal(s.systemGpsSnr)); gpsValue.setTextColor(Ui.AMBER);
         } else if (!s.gpsPermissionGranted) {
@@ -203,19 +203,19 @@ public class WarmupActivity extends Activity {
         } else if (s.hasGpsFix && s.gpsFixFromCache) {
             gpsStatus.setText("● GPS 缓存 ±" + Math.round(s.gpsAccuracyMeters) + "m"); gpsStatus.setTextColor(Ui.AMBER); gpsValue.setText("等待实时"); gpsValue.setTextColor(Ui.AMBER);
         } else if (s.hasGpsFix) {
-            gpsStatus.setText("● GPS ±" + Math.round(s.gpsAccuracyMeters) + "m"); gpsStatus.setTextColor(Ui.LIME); gpsValue.setText("已定位"); gpsValue.setTextColor(Ui.LIME);
+            gpsStatus.setText("● GPS ±" + Math.round(s.gpsAccuracyMeters) + "m"); gpsStatus.setTextColor(Ui.LIME); gpsValue.setText("已定位"); gpsValue.setTextColor(Ui.WHITE);
         } else if (s.gpsAccuracyMeters > 0) {
             gpsStatus.setText("● GPS ±" + Math.round(s.gpsAccuracyMeters) + "m"); gpsStatus.setTextColor(Ui.AMBER); gpsValue.setText("校准中"); gpsValue.setTextColor(Ui.AMBER);
         } else if (s.gpsSatelliteCount > 0) {
             String count = s.gpsSatellitesUsed > 0 ? s.gpsSatellitesUsed + "/" + s.gpsSatelliteCount : "搜星 " + s.gpsSatelliteCount;
             gpsStatus.setText("● GPS " + count); gpsStatus.setTextColor(Ui.AMBER); gpsValue.setText("搜星中"); gpsValue.setTextColor(Ui.AMBER);
         } else {
-            gpsStatus.setText(s.systemGpsAvailable ? "● 系统定位搜星中" : "● 轨迹定位中"); gpsStatus.setTextColor(Ui.AMBER); gpsValue.setText("可开始"); gpsValue.setTextColor(Ui.CYAN);
+            gpsStatus.setText(s.systemGpsAvailable ? "● 系统定位搜星中" : "● 轨迹定位中"); gpsStatus.setTextColor(Ui.AMBER); gpsValue.setText("可开始"); gpsValue.setTextColor(Ui.WHITE);
         }
     }
 
     private void updateHeart(WorkoutService.Snapshot s) {
-        if (s.heartRate > 0) { heartValue.setText(s.heartRate + " bpm"); heartValue.setTextColor(Ui.LIME); }
+        if (s.heartRate > 0) { heartValue.setText(s.heartRate + " bpm"); heartValue.setTextColor(Ui.WHITE); }
         else if (!s.heartSensorAvailable) { heartValue.setText("不可用"); heartValue.setTextColor(Ui.MUTED); }
         else if (!s.heartPermissionGranted) { heartValue.setText("未授权"); heartValue.setTextColor(Ui.RED); }
         else if (!s.heartSensorActive) { heartValue.setText("未连接"); heartValue.setTextColor(Ui.RED); }
@@ -228,7 +228,7 @@ public class WarmupActivity extends Activity {
         else if (!s.activityRecognitionPermissionGranted) { stepsValue.setText("未授权"); stepsValue.setTextColor(Ui.RED); }
         else if (!s.stepSensorActive) { stepsValue.setText("未连接"); stepsValue.setTextColor(Ui.RED); }
         else if (s.usingStepDistance) { stepsValue.setText("估距中"); stepsValue.setTextColor(Ui.AMBER); }
-        else { stepsValue.setText("已连接"); stepsValue.setTextColor(Ui.CYAN); }
+        else { stepsValue.setText("已连接"); stepsValue.setTextColor(Ui.WHITE); }
     }
 
     private boolean canStart() {

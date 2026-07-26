@@ -74,6 +74,21 @@ final class Ui {
         return view;
     }
 
+    // Roboto Condensed ships with AOSP; on watch dials it is the difference between "settings
+    // screen" and "sports instrument". Falls back to default sans if the vendor stripped it.
+    private static final Typeface NUMERAL_FACE = Typeface.create("sans-serif-condensed", Typeface.BOLD);
+
+    /**
+     * Big-figure text: condensed bold with tabular digits so a ticking value keeps a fixed width
+     * instead of wobbling every second.
+     */
+    static TextView numeral(Context context, String value, float sizeDp, int color) {
+        TextView view = text(context, value, sizeDp, color);
+        view.setTypeface(NUMERAL_FACE);
+        view.setFontFeatureSettings("tnum");
+        return view;
+    }
+
     static GradientDrawable background(Context context, int color, float radiusDp) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(color);
@@ -200,21 +215,41 @@ final class Ui {
     }
 
     /**
-     * Label-over-value tile used by the training metric grid. Returns the value view so callers
-     * keep a handle for updates without re-walking the hierarchy.
+     * Circular stage-progress ring — the signature sports-watch visual. Track in {@link #LINE},
+     * progress arc with round caps in the stage colour, starting at 12 o'clock.
      */
-    static TextView metricTile(Context context, LinearLayout row, String label, String initialValue, int valueColor) {
-        LinearLayout cell = new LinearLayout(context);
-        cell.setOrientation(LinearLayout.VERTICAL);
-        cell.setGravity(Gravity.CENTER);
-        TextView caption = text(context, label, CAPTION, MUTED);
-        caption.setGravity(Gravity.CENTER);
-        TextView value = bold(context, initialValue, HEADLINE, valueColor);
-        value.setGravity(Gravity.CENTER);
-        cell.addView(caption, new LinearLayout.LayoutParams(-1, -2));
-        cell.addView(value, new LinearLayout.LayoutParams(-1, -2));
-        row.addView(cell, new LinearLayout.LayoutParams(0, -2, 1));
-        return value;
+    static final class Ring extends View {
+        private final android.graphics.Paint track = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint arc = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF bounds = new android.graphics.RectF();
+        private float fraction;
+
+        Ring(Context context) {
+            super(context);
+            float stroke = dp(context, 9);
+            track.setStyle(android.graphics.Paint.Style.STROKE);
+            track.setStrokeWidth(stroke);
+            track.setColor(LINE);
+            arc.setStyle(android.graphics.Paint.Style.STROKE);
+            arc.setStrokeWidth(stroke);
+            arc.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            arc.setColor(LIME);
+        }
+
+        void set(float value, int color) {
+            float clamped = Math.max(0f, Math.min(1f, value));
+            if (clamped == fraction && color == arc.getColor()) return;
+            fraction = clamped;
+            arc.setColor(color);
+            invalidate();
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            float inset = track.getStrokeWidth() / 2f + dp(getContext(), 1);
+            bounds.set(inset, inset, getWidth() - inset, getHeight() - inset);
+            canvas.drawArc(bounds, 0f, 360f, false, track);
+            if (fraction > 0f) canvas.drawArc(bounds, -90f, fraction * 360f, false, arc);
+        }
     }
 
     /** Skips the relayout that {@link TextView#setText} forces even when the string is unchanged. */

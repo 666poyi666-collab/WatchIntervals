@@ -82,44 +82,48 @@ public class MainActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = Ui.bold(this, "步序", 27, Ui.WHITE);
-        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 38), 1));
-        clock = Ui.text(this, "", 16, Ui.MUTED); clock.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        header.addView(clock, new LinearLayout.LayoutParams(Ui.dp(this, 74), Ui.dp(this, 38)));
+        TextView title = Ui.bold(this, "步序", 24, Ui.WHITE);
+        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 36), 1));
+        clock = Ui.numeral(this, "", 16, Ui.MUTED); clock.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        header.addView(clock, new LinearLayout.LayoutParams(Ui.dp(this, 74), Ui.dp(this, 36)));
         root.addView(header);
 
-        LinearLayout hero = Ui.card(this);
-        ready = Ui.text(this, "训练安排已就绪", 12, Ui.MUTED);
-        ready.setGravity(Gravity.CENTER); hero.addView(ready, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
-        workout = Ui.bold(this, "1千米 + 200米", 25, Ui.WHITE);
-        workout.setGravity(Gravity.CENTER); hero.addView(workout, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
+        // Editorial block on plain black. The old version boxed everything into one giant card
+        // with five competing centred text styles — the main "home-made" tell of the app.
+        ready = Ui.text(this, "训练安排已就绪", Ui.LABEL, Ui.MUTED);
+        LinearLayout.LayoutParams readyParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 20));
+        readyParams.topMargin = Ui.dp(this, 4);
+        root.addView(ready, readyParams);
+        workout = Ui.bold(this, "1千米 + 200米", 27, Ui.WHITE);
+        root.addView(workout, new LinearLayout.LayoutParams(-1, Ui.dp(this, 38)));
+        planLine = Ui.text(this, "", Ui.BODY, Ui.MUTED);
+        root.addView(planLine, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
+        planSummary = Ui.text(this, "", Ui.CAPTION, Ui.MUTED);
+        root.addView(planSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 17)));
+        planDetails = Ui.text(this, "", 12, Ui.MUTED);
+        planDetails.setVisibility(View.GONE);
+        root.addView(planDetails, new LinearLayout.LayoutParams(0, 0));
 
-        start = Ui.bold(this, "开始", 29, Ui.BLACK);
+        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+        start = Ui.bold(this, "开始", 26, Ui.BLACK);
         start.setGravity(Gravity.CENTER);
         start.setBackground(Ui.ovalAction(this, Ui.YELLOW));
         start.setClickable(true);
         start.setFocusable(true);
-        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(Ui.dp(this, 96), Ui.dp(this, 96));
+        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(Ui.dp(this, 108), Ui.dp(this, 108));
         startParams.gravity = Gravity.CENTER_HORIZONTAL;
-        startParams.topMargin = Ui.dp(this, 5); hero.addView(start, startParams);
+        root.addView(start, startParams);
+        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
 
-        planLine = Ui.text(this, "", 15, Ui.WHITE); planLine.setGravity(Gravity.CENTER);
-        hero.addView(planLine, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
-        planSummary = Ui.text(this, "", 12, Ui.LIME); planSummary.setGravity(Gravity.CENTER);
-        hero.addView(planSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 18)));
-        planDetails = Ui.text(this, "", 12, Ui.MUTED);
-        planDetails.setVisibility(View.GONE);
-        hero.addView(planDetails, new LinearLayout.LayoutParams(0, 0));
-        root.addView(hero, new LinearLayout.LayoutParams(-1, -2));
-        sensorStatus = Ui.text(this, "", 11, Ui.MUTED); sensorStatus.setGravity(Gravity.CENTER);
+        sensorStatus = Ui.text(this, "", Ui.LABEL, Ui.MUTED); sensorStatus.setGravity(Gravity.CENTER);
         sensorStatus.setVisibility(View.GONE);
         root.addView(sensorStatus, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
-        TextView edit = Ui.action(this, "选择训练安排", 17, Ui.WHITE, Ui.PANEL);
-        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 40));
+        TextView edit = Ui.action(this, "选择训练安排", 15, Ui.WHITE, Ui.PANEL);
+        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 42));
         editParams.topMargin = Ui.dp(this, 4); root.addView(edit, editParams);
-        root.addView(Ui.pagerDots(this, 0, 3), new LinearLayout.LayoutParams(-1, Ui.dp(this, 15)));
-        TextView pages = Ui.text(this, "向左滑查看历史与计划", 10, Ui.MUTED);
-        pages.setGravity(Gravity.CENTER); root.addView(pages, new LinearLayout.LayoutParams(-1, Ui.dp(this, 12)));
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 16));
+        dotParams.topMargin = Ui.dp(this, 4);
+        root.addView(Ui.pagerDots(this, 0, 3), dotParams);
         start.setOnClickListener(v -> requestAndStart());
         edit.setOnClickListener(v -> startActivity(new Intent(this, PlanActivity.class)));
         scroll.addView(root);
@@ -283,7 +287,7 @@ public class MainActivity extends Activity {
         if(pagerHistoryList!=null){pagerHistoryList.removeAllViews();List<WorkoutRecord> records=HistoryStore.load(this);pagerHistorySummary.setText(records.isEmpty()?"还没有训练记录":records.size()+" 次训练");
             for(WorkoutRecord record:records){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(Ui.dp(this,14),Ui.dp(this,9),Ui.dp(this,14),Ui.dp(this,9));row.setBackground(Ui.background(this,Ui.PANEL,18));
                 TextView date=Ui.bold(this,new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.startedAt)),15,Ui.WHITE);TextView data=Ui.text(this,formatDistance(record.distanceMeters)+" · "+formatDuration(record.durationMs)+" · "+record.steps+" 步",12,Ui.MUTED);row.addView(date);row.addView(data);row.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class).putExtra("record_id",record.id)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,64));p.bottomMargin=Ui.dp(this,7);pagerHistoryList.addView(row,p);}}
-        if(pagerPlanList!=null){pagerPlanList.removeAllViews();ArrayList<Stage> current=PlanStore.load(this);pagerPlanTitle.setText(PlanStore.name(this));TextView group=Ui.text(this,PlanStore.group(this)+" · "+current.size()+" 项内容",13,Ui.LIME);pagerPlanList.addView(group,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));TextView req=Ui.text(this,PlanStore.requirement(this),12,Ui.MUTED);pagerPlanList.addView(req,new LinearLayout.LayoutParams(-1,-2));
+        if(pagerPlanList!=null){pagerPlanList.removeAllViews();ArrayList<Stage> current=PlanStore.load(this);pagerPlanTitle.setText(PlanStore.name(this));TextView group=Ui.text(this,PlanStore.group(this)+" · "+current.size()+" 项内容",13,Ui.MUTED);pagerPlanList.addView(group,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));TextView req=Ui.text(this,PlanStore.requirement(this),12,Ui.MUTED);pagerPlanList.addView(req,new LinearLayout.LayoutParams(-1,-2));
             for(int i=0;i<current.size();i++){Stage item=current.get(i);TextView row=Ui.text(this,(i+1)+"   "+item.name()+"   "+item.targetText(),15,Ui.WHITE);row.setBackground(Ui.background(this,Ui.PANEL,18));row.setPadding(Ui.dp(this,14),0,Ui.dp(this,14),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,52));p.topMargin=Ui.dp(this,7);pagerPlanList.addView(row,p);}}
     }
 
