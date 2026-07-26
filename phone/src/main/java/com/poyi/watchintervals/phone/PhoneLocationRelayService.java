@@ -30,7 +30,14 @@ public final class PhoneLocationRelayService extends Service implements Location
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
         Notification notification = new Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setContentTitle("正在辅助记录手表轨迹").setContentText("手表无有效定位时使用手机 GPS").setOngoing(true).build();
-        startForeground(91, notification);
+        try {
+            startForeground(91, notification);
+        } catch (RuntimeException notEligible) {
+            // Android 14+ refuses a location-type FGS from a background caller. Dying here took
+            // the whole process with it; stand down instead — the next foreground sync retries.
+            stopSelf();
+            return;
+        }
         connection = WatchConnectionManager.get(this);
         locations = getSystemService(LocationManager.class);
         if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && locations != null) {

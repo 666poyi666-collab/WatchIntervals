@@ -263,6 +263,16 @@
 - 处理：`dataLine` 改为真两列（标签弹性宽度、值加粗右对齐）；新增纯 Java `PhoneFormat`（duration/distance/pace/paceSeconds/minutesHuman），两个 Activity 的私有格式化副本删除；配速统一 `5:32 /公里` 记法；爬升取整米；睡眠总长/深睡/REM 改为「7小时12分」人读格式。
 - 验证：新增 `PhoneFormatTest` 5 组用例；`:phone:assembleDebug`、`:phone:testDebugUnitTest` 通过；真机渲染核对待设备恢复连接。
 
+### BUG-028：手机同步回调迟到时启动定位前台服务导致进程崩溃
+
+- 状态：Fixed，小米真机验证
+- 严重度：P1
+- 影响：手机 0.20.0 及更早，Android 14+
+- 环境：Redmi 22041216C（xaga）、Android targetSDK 35、应用 0.20.0-debug
+- 现象：`ensureLocationRelay()` 由异步同步成功回调触发，只校验了定位权限；当回调在 Activity 退到后台后到达（本例：启动后被其他应用抢占前台），`startForegroundService` 照常执行，`PhoneLocationRelayService.onCreate` 的 `startForeground` 因 location 类型 FGS 不允许后台启动抛 `SecurityException`，整个进程 FATAL 崩溃。
+- 处理：MainActivity 增加 `foreground` 生命周期标记，`ensureLocationRelay` 非前台直接跳过并对 `startForegroundService` 兜底捕获；服务侧 `startForeground` 包 try/catch，不合规时 `stopSelf()` 静默退场，下次前台同步自动重试。
+- 验证：修复前小米启动即崩（logcat FATAL 栈）；修复后启动稳定驻留前台，`logcat AndroidRuntime:E` 清零，蓝牙+LAN 链路、历史 13 条与睡眠 8 条读回正常。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。

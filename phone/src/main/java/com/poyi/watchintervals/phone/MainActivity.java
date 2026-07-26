@@ -41,6 +41,7 @@ public class MainActivity extends Activity {
     private NsdManager.DiscoveryListener discoveryListener;
     private WifiManager.MulticastLock multicastLock;
     private boolean resolving;
+    private boolean foreground;
     private WatchConnectionManager watchConnection;
     private boolean autoSynced;
     private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));if(watchConnection!=null&&watchConnection.identity().isPaired()&&code!=null){code.setText("");code.setHint("已完成安全配对");}if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
@@ -59,6 +60,9 @@ public class MainActivity extends Activity {
         ensureBluetoothConnection();
         discoverWatch();
     }
+
+    @Override protected void onResume() { super.onResume(); foreground = true; }
+    @Override protected void onPause() { foreground = false; super.onPause(); }
 
     private void buildUi() {
         ScrollView scroll = new ScrollView(this);
@@ -269,11 +273,15 @@ public class MainActivity extends Activity {
     private String transportLabel(WatchConnectionManager.Snapshot value){return value.primaryTransport==null?"连接可用":value.primaryTransport==com.poyi.watchintervals.phone.connection.TransportType.BLE?(value.lanAvailable?"蓝牙 · LAN 加速":"蓝牙"):"LAN";}
 
     private void ensureLocationRelay() {
+        // Reached from async sync callbacks. A location-type FGS may only start while the app is
+        // foreground (Android 14+); a late callback after onPause used to crash the process.
+        if (!foreground) return;
         if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION}, REQUEST_LOCATION_RELAY);
             return;
         }
-        startForegroundService(new android.content.Intent(this, PhoneLocationRelayService.class));
+        try { startForegroundService(new android.content.Intent(this, PhoneLocationRelayService.class)); }
+        catch (RuntimeException ignored) { /* Next successful sync retries. */ }
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {

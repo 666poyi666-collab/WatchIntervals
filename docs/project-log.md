@@ -338,3 +338,11 @@
 - 记法口径明确：手机说中文单位（`公里`、`5:32 /公里`），手表说仪表语言（`km`、`5'32"`）——伴侣文本与表盘读数是两种表面，各自内部一致。
 - `:phone:assembleDebug`、`:phone:testDebugUnitTest` 通过。
 - 未覆盖：平板与手表当前均 ADB 离线，真机渲染核对（尤其 dataLine 两列在窄屏的换行表现）待设备恢复。
+
+## 2026-07-26：小米真机验证与定位中继启动崩溃修复（BUG-028）
+
+- 设备恢复：OWW221 经 USB 重新武装网络 ADB（watch-link 脚本，192.168.1.44:5555）；伴侣端换用小米 22041216C（xaga、targetSDK 35 门禁更严），替代此前的华为平板。
+- 首装即抓到 P1：应用启动后前台被其他应用抢占，同步成功回调迟到触发 `ensureLocationRelay` → location 类型 FGS 后台启动被系统拒绝 → `PhoneLocationRelayService.onCreate` 的 `startForeground` 抛 SecurityException，进程 FATAL。华为平板此前未复现（权限已授予且回调到达时仍在前台）。
+- 修复：Activity `foreground` 标记门禁 + `startForegroundService` 兜底；服务侧 `startForeground` try/catch 后 `stopSelf()`。下次前台同步自动重试，不再带崩进程。
+- 小米真机核对（截图 verify-0200-phone-*.png，临时文件不入库）：启动稳定驻留前台、`AndroidRuntime:E` 清零；「已完成安全配对 · 蓝牙连接 · LAN 加速」；历史 13 条读回，列表行与详情「时间与速度」卡两列排版正确（标签左、加粗值右）；睡眠 8 条，人读时长「5小时15分/深睡 1小时8分/30分/24分」各形态正确（BUG-027 视觉确认）。
+- 手表侧界面核对受阻：插线充电时 heytap SysUI 充电覆盖层（DISPLAY_OVERLAY）常驻抢占输入，注入手势/按键均无法退出，待拔线后继续。
