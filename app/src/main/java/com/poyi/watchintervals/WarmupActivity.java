@@ -96,7 +96,7 @@ public class WarmupActivity extends Activity {
                 new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 146), Ui.dp(this, 146), Gravity.CENTER));
         startButton = Ui.bold(this, "开始", 26, Ui.BLACK);
         startButton.setGravity(Gravity.CENTER);
-        startButton.setBackground(Ui.ovalAction(this, Ui.YELLOW));
+        startButton.setBackground(Ui.gradientOvalAction(this, Ui.rgb(255, 224, 66), Ui.rgb(255, 158, 34)));
         startBox.addView(startButton,
                 new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 110), Ui.dp(this, 110), Gravity.CENTER));
         root.addView(startBox, new LinearLayout.LayoutParams(-1, Ui.dp(this, 148)));

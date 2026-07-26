@@ -52,6 +52,8 @@ final class Ui {
 
     private Ui() {}
 
+    static int rgb(int red, int green, int blue) { return Color.rgb(red, green, blue); }
+
     private static float scale(Context context) {
         android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
         float widthScale = metrics.widthPixels / 378f;
@@ -117,6 +119,15 @@ final class Ui {
                 ColorStateList.valueOf(Color.argb(55, 255, 255, 255)),
                 oval(color),
                 oval(Color.WHITE));
+    }
+
+    /** Two-tone disc for the primary start action — the fitness-ring style of fill. */
+    static RippleDrawable gradientOvalAction(Context context, int topColor, int bottomColor) {
+        GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{topColor, bottomColor});
+        base.setShape(GradientDrawable.OVAL);
+        return new RippleDrawable(
+                ColorStateList.valueOf(Color.argb(55, 255, 255, 255)), base, oval(Color.WHITE));
     }
 
     /**

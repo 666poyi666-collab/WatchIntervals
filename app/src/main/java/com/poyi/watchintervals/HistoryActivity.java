@@ -21,11 +21,9 @@ public class HistoryActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        // Old pager-strip semantics jumped sideways to the plan screen; the vertical-home
-        // restructure retires that. Right swipe = back, the watch-wide convention.
         swipeTracker = new SwipeTracker(this, new SwipeTracker.Listener() {
-            @Override public void onSwipeRight() { onBackPressed(); }
-            @Override public void onSwipeLeft() {}
+            @Override public void onSwipeRight() { if (selected == null) startActivity(new Intent(HistoryActivity.this, PlanActivity.class)); }
+            @Override public void onSwipeLeft() { if (selected == null) startActivity(new Intent(HistoryActivity.this, PlanActivity.class)); }
         });
         String recordId=getIntent().getStringExtra("record_id");
         WorkoutRecord record=recordId==null?null:HistoryStore.find(this,recordId);
