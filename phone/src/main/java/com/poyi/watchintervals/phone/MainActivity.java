@@ -13,6 +13,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -44,7 +45,22 @@ public class MainActivity extends Activity {
     private boolean foreground;
     private WatchConnectionManager watchConnection;
     private boolean autoSynced;
-    private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));if(watchConnection!=null&&watchConnection.identity().isPaired()&&code!=null){code.setText("");code.setHint("已完成安全配对");}if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
+    private View statusDot;
+    private TextView setupChevron;
+    private LinearLayout setupPanel;
+    private ScrollView planScroll, controlScroll, historyScroll, sleepScroll;
+    private Button[] navItems;
+    private int currentSection;
+    private TextView liveState, liveTime, liveMeta;
+    private LinearLayout liveActions;
+    private String liveActionsState = "";
+    private volatile boolean livePollInFlight;
+    private final android.os.Handler liveHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable livePoller = new Runnable() { @Override public void run() {
+        pollLiveStatus();
+        liveHandler.postDelayed(this, 5_000L);
+    }};
+    private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));updateStatusDot(snapshot);if(watchConnection!=null&&watchConnection.identity().isPaired()&&code!=null){code.setText("");code.setHint("已完成安全配对");}if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -57,35 +73,48 @@ public class MainActivity extends Activity {
         if(watchConnection.identity().isPaired()){code.setText("");code.setHint("已完成安全配对");}else code.setText(preferences.getString("code", ""));
         watchConnection.configurePairing(code.getText().toString().trim());
         watchConnection.configureLan(host.getText().toString().trim(),code.getText().toString().trim());
+        toggleSetup(!watchConnection.identity().isPaired());
         ensureBluetoothConnection();
         discoverWatch();
     }
 
-    @Override protected void onResume() { super.onResume(); foreground = true; }
-    @Override protected void onPause() { foreground = false; super.onPause(); }
+    @Override protected void onResume() {
+        super.onResume(); foreground = true;
+        if (currentSection == 1) { liveHandler.removeCallbacks(livePoller); liveHandler.post(livePoller); }
+    }
+    @Override protected void onPause() { foreground = false; liveHandler.removeCallbacks(livePoller); super.onPause(); }
 
     private void buildUi() {
-        ScrollView scroll = new ScrollView(this);
         int statusBarResource=getResources().getIdentifier("status_bar_height","dimen","android");
         int topInset=(statusBarResource>0?getResources().getDimensionPixelSize(statusBarResource):0)+dp(10);
-        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(20), topInset, dp(20), dp(28)); root.setBackgroundColor(Color.rgb(244,245,241));
-        root.addView(text("步序", 30, true, Color.rgb(22,24,22)));
-        root.addView(text("把长期目标拆成每天都能完成的安排", 14, false, Color.DKGRAY));
+        int navBarResource=getResources().getIdentifier("navigation_bar_height","dimen","android");
+        int bottomInset=navBarResource>0?getResources().getDimensionPixelSize(navBarResource):0;
+        LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Color.rgb(244,245,241));
 
-        LinearLayout connectCard = card();
-        connectCard.addView(text("连接手表", 20, true, Color.BLACK));
-        host = input("LAN 诊断地址");host.setVisibility(View.GONE); code = input("手表上的 6 位配对码"); code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        connectCard.addView(host); connectCard.addView(code);
-        LinearLayout connectActions = new LinearLayout(this);
-        Button discover = button("连接手表", Color.rgb(232,234,229), Color.BLACK);
-        Button connect = button("立即同步", Color.rgb(124,203,43), Color.BLACK);
-        connectActions.addView(discover, weight()); connectActions.addView(connect, weight()); connectCard.addView(connectActions);
-        connection = text("尚未连接", 14, false, Color.DKGRAY); connectCard.addView(connection);
-        root.addView(connectCard, margin());
+        // Fixed header: product title plus a one-line connection status. The old full-height
+        // "连接手表" card topped every tab forever; for a paired phone, connection is status, not
+        // a task, so setup collapses behind a tap on the status row.
+        LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.VERTICAL);header.setPadding(dp(20),topInset,dp(20),dp(4));
+        header.addView(text("步序",30,true,Color.rgb(22,24,22)));
+        LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);statusRow.setClickable(true);statusRow.setFocusable(true);
+        statusDot=new View(this);statusDot.setBackground(rounded(Color.GRAY,10));
+        LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
+        connection=text("尚未连接",14,false,Color.DKGRAY);statusRow.addView(connection,new LinearLayout.LayoutParams(0,-2,1));
+        setupChevron=text("连接设置 ▾",13,false,Color.GRAY);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
+        statusRow.setOnClickListener(v->toggleSetup(setupPanel.getVisibility()!=View.VISIBLE));
+        header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(38)));
 
-        LinearLayout tabs=new LinearLayout(this);
-        Button planTab=button("计划",Color.rgb(28,31,29),Color.WHITE), controlTab=button("训练",Color.rgb(232,234,229),Color.BLACK), historyTab=button("历史",Color.rgb(232,234,229),Color.BLACK), sleepTab=button("睡眠",Color.rgb(232,234,229),Color.BLACK);
-        tabs.addView(planTab,weight());tabs.addView(controlTab,weight());tabs.addView(historyTab,weight());tabs.addView(sleepTab,weight());root.addView(tabs,margin());
+        setupPanel=card();
+        host=input("LAN 诊断地址");host.setVisibility(View.GONE);
+        code=input("手表上的 6 位配对码");code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        setupPanel.addView(host);setupPanel.addView(code);
+        LinearLayout connectActions=new LinearLayout(this);
+        Button discover=button("连接手表",Color.rgb(232,234,229),Color.BLACK);
+        Button connect=button("立即同步",Color.rgb(124,203,43),Color.BLACK);
+        connectActions.addView(discover,weight());connectActions.addView(connect,weight());setupPanel.addView(connectActions);
+        LinearLayout.LayoutParams setupParams=new LinearLayout.LayoutParams(-1,-2);setupParams.topMargin=dp(6);
+        header.addView(setupPanel,setupParams);
+        shell.addView(header);
 
         planCard = card();
         planCard.addView(text("训练计划", 24, true, Color.BLACK));
@@ -126,26 +155,40 @@ public class MainActivity extends Activity {
         Button save=button("保存并同步",Color.rgb(124,203,43),Color.BLACK);
         planActions.addView(saveLocal,weight()); planActions.addView(save,weight()); planEditorPanel.addView(planActions);
         planCard.addView(planEditorPanel);
-        root.addView(planCard, margin());
 
-        controlCard = card(); controlCard.addView(text("训练控制", 22, true, Color.BLACK));
-        controlCard.addView(text("远程操作会立即发送到当前连接的手表",13,false,Color.DKGRAY));
-        LinearLayout controls = new LinearLayout(this);
-        for (String[] item : new String[][]{{"开始","start"},{"暂停","pause"},{"继续","resume"},{"结束","stop"}}) {
-            Button action = button(item[0], Color.rgb(232,234,229), Color.BLACK); action.setOnClickListener(v -> control(item[1])); controls.addView(action, weight());
-        }
-        controlCard.addView(controls); root.addView(controlCard, margin());
+        // Live remote: the watch's /v1/status workout block drives the readout and which actions
+        // even exist. Four state-blind buttons were a prototype leftover — pressing 开始 mid-run
+        // or 继续 while idle only produced STATE_MISMATCH errors.
+        controlCard = card();
+        controlCard.addView(text("训练", 24, true, Color.BLACK));
+        liveState=text("未在训练",15,true,Color.DKGRAY);controlCard.addView(liveState);
+        liveTime=text("--:--",46,true,Color.rgb(24,27,25));liveTime.setFontFeatureSettings("tnum");controlCard.addView(liveTime);
+        liveMeta=text("连接手表后显示实时数据",14,false,Color.DKGRAY);controlCard.addView(liveMeta);
+        liveActions=new LinearLayout(this);controlCard.addView(liveActions);
+        rebuildLiveActions("idle");
+        controlCard.addView(text("操作即时发送到手表 · 训练状态每 5 秒刷新",12,false,Color.GRAY));
 
         historyCard = card(); historyCard.addView(text("训练历史", 22, true, Color.BLACK));
         historySummary = text("连接后读取", 14, false, Color.DKGRAY); historyCard.addView(historySummary);
         historyList = new LinearLayout(this); historyList.setOrientation(LinearLayout.VERTICAL); historyCard.addView(historyList);
-        root.addView(historyCard, margin());
         sleepCard = card(); sleepCard.addView(text("系统睡眠", 22, true, Color.BLACK));
         sleepSummary = text("连接后读取手表系统睡眠", 14, false, Color.DKGRAY); sleepCard.addView(sleepSummary);
         sleepList = new LinearLayout(this); sleepList.setOrientation(LinearLayout.VERTICAL); sleepCard.addView(sleepList);
-        root.addView(sleepCard, margin());
-        controlCard.setVisibility(View.GONE); historyCard.setVisibility(View.GONE); sleepCard.setVisibility(View.GONE);
-        scroll.addView(root); setContentView(scroll);
+
+        FrameLayout content=new FrameLayout(this);
+        planScroll=wrapContent(planCard);controlScroll=wrapContent(controlCard);historyScroll=wrapContent(historyCard);sleepScroll=wrapContent(sleepCard);
+        content.addView(planScroll);content.addView(controlScroll);content.addView(historyScroll);content.addView(sleepScroll);
+        shell.addView(content,new LinearLayout.LayoutParams(-1,0,1));
+
+        // Real bottom navigation: destinations stay put while content scrolls beneath them. The
+        // old tab chips lived inside the scroll and drifted away with the content.
+        LinearLayout nav=new LinearLayout(this);nav.setBackgroundColor(Color.WHITE);nav.setElevation(dp(6));
+        nav.setPadding(dp(10),dp(6),dp(10),dp(6)+bottomInset);
+        navItems=new Button[]{button("计划",Color.TRANSPARENT,Color.DKGRAY),button("训练",Color.TRANSPARENT,Color.DKGRAY),
+                button("历史",Color.TRANSPARENT,Color.DKGRAY),button("睡眠",Color.TRANSPARENT,Color.DKGRAY)};
+        for(int i=0;i<navItems.length;i++){final int section=i;navItems[i].setOnClickListener(v->{showSection(section);if(section==3)loadSleep();});nav.addView(navItems[i],weight());}
+        shell.addView(nav);
+        setContentView(shell);
 
         connect.setOnClickListener(v -> syncAll());
         discover.setOnClickListener(v -> discoverWatch());
@@ -158,17 +201,104 @@ public class MainActivity extends Activity {
         closeEditor.setOnClickListener(v->showPlanLibrary());
         intervalPlan.setOnClickListener(v -> applyTemplate(false));
         fartlekPlan.setOnClickListener(v -> applyTemplate(true));
-        planTab.setOnClickListener(v->showSection(0,planTab,controlTab,historyTab,sleepTab));
-        controlTab.setOnClickListener(v->showSection(1,planTab,controlTab,historyTab,sleepTab));
-        historyTab.setOnClickListener(v->showSection(2,planTab,controlTab,historyTab,sleepTab));
-        sleepTab.setOnClickListener(v->{showSection(3,planTab,controlTab,historyTab,sleepTab);loadSleep();});
+        showSection(0);
         renderSavedPlans();
     }
 
-    private void showSection(int section,Button planTab,Button controlTab,Button historyTab,Button sleepTab){
-        planCard.setVisibility(section==0?View.VISIBLE:View.GONE);controlCard.setVisibility(section==1?View.VISIBLE:View.GONE);historyCard.setVisibility(section==2?View.VISIBLE:View.GONE);sleepCard.setVisibility(section==3?View.VISIBLE:View.GONE);
+    private ScrollView wrapContent(LinearLayout cardBody){
+        ScrollView scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);
+        LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(20),dp(8),dp(20),dp(16));
+        body.addView(cardBody,new LinearLayout.LayoutParams(-1,-2));
+        scroll.addView(body,new FrameLayout.LayoutParams(-1,-2));
+        return scroll;
+    }
+
+    private void showSection(int section){
+        currentSection=section;
+        planScroll.setVisibility(section==0?View.VISIBLE:View.GONE);
+        controlScroll.setVisibility(section==1?View.VISIBLE:View.GONE);
+        historyScroll.setVisibility(section==2?View.VISIBLE:View.GONE);
+        sleepScroll.setVisibility(section==3?View.VISIBLE:View.GONE);
         if(section==0)showPlanLibrary();
-        Button[] tabs={planTab,controlTab,historyTab,sleepTab};for(int i=0;i<tabs.length;i++){tabs[i].setBackground(rounded(i==section?Color.rgb(28,31,29):Color.rgb(232,234,229),16));tabs[i].setTextColor(i==section?Color.WHITE:Color.BLACK);}
+        for(int i=0;i<navItems.length;i++){boolean selected=i==section;
+            navItems[i].setBackground(rounded(selected?Color.rgb(28,31,29):Color.TRANSPARENT,16));
+            navItems[i].setTextColor(selected?Color.WHITE:Color.DKGRAY);
+            navItems[i].setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);}
+        liveHandler.removeCallbacks(livePoller);
+        if(section==1)liveHandler.post(livePoller);
+    }
+
+    private void updateStatusDot(WatchConnectionManager.Snapshot snapshot){
+        if(statusDot==null)return;
+        int color;
+        switch(snapshot.state){
+            case CONNECTED_BLE_LAN:case CONNECTED_BLE:color=Color.rgb(76,175,80);break;
+            case CONNECTED_LAN:color=Color.rgb(38,166,154);break;
+            case BLUETOOTH_DISABLED:case UNPAIRED:color=Color.rgb(211,47,47);break;
+            case SCANNING:case CONNECTING_BLE:case DISCOVERING_SERVICES:case SUBSCRIBING:case AUTHENTICATING:case BACKOFF:color=Color.rgb(245,158,11);break;
+            default:color=Color.GRAY;
+        }
+        statusDot.setBackground(rounded(color,10));
+    }
+
+    private void toggleSetup(boolean show){
+        if(setupPanel==null)return;
+        setupPanel.setVisibility(show?View.VISIBLE:View.GONE);
+        if(setupChevron!=null)setupChevron.setText(show?"收起 ▴":"连接设置 ▾");
+    }
+
+    private void rebuildLiveActions(String state){
+        if(liveActions==null||state.equals(liveActionsState))return;
+        liveActionsState=state;
+        liveActions.removeAllViews();
+        if("RUNNING".equals(state)){addLiveAction("暂停","pause",Color.rgb(232,234,229),Color.BLACK);addLiveAction("结束","stop",Color.rgb(255,226,226),Color.rgb(170,30,30));}
+        else if("PAUSED".equals(state)){addLiveAction("继续","resume",Color.rgb(124,203,43),Color.BLACK);addLiveAction("结束","stop",Color.rgb(255,226,226),Color.rgb(170,30,30));}
+        else if("PREPARING".equals(state)){addLiveAction("结束准备","stop",Color.rgb(232,234,229),Color.BLACK);}
+        else {addLiveAction("开始训练","start",Color.rgb(124,203,43),Color.BLACK);}
+    }
+
+    private void addLiveAction(String label,String action,int bg,int fg){
+        Button item=button(label,bg,fg);item.setOnClickListener(v->control(action));liveActions.addView(item,weight());
+    }
+
+    private void pollLiveStatus(){
+        if(watchConnection==null||livePollInFlight)return;
+        livePollInFlight=true;
+        io.execute(()->{
+            try{
+                JSONObject status=new JSONObject(watchConnection.requestBlocking("GET","/v1/status","",8_000L));
+                JSONObject workout=status.optJSONObject("workout");
+                runOnUiThread(()->renderLiveStatus(workout,null));
+            }catch(Exception error){
+                runOnUiThread(()->renderLiveStatus(null,error.getMessage()==null?error.getClass().getSimpleName():error.getMessage()));
+            }finally{livePollInFlight=false;}
+        });
+    }
+
+    private void renderLiveStatus(JSONObject workout,String error){
+        if(liveState==null)return;
+        if(workout==null){
+            rebuildLiveActions("idle");
+            liveState.setText(error!=null?"无法读取手表状态":"未在训练");
+            liveState.setTextColor(Color.DKGRAY);
+            liveTime.setText("--:--");
+            liveMeta.setText(error!=null?"请检查连接后重试":"在手表上开始，或点击下方按钮远程开始当前安排");
+            return;
+        }
+        String state=workout.optString("state");
+        rebuildLiveActions(state);
+        boolean paused="PAUSED".equals(state);
+        liveState.setText("PREPARING".equals(state)?"准备中":paused?"已暂停":("COMPLETED".equals(workout.optString("planState"))?"自由记录中":"训练中"));
+        liveState.setTextColor(paused?Color.rgb(245,158,11):Color.rgb(56,142,60));
+        liveTime.setText(PhoneFormat.duration(workout.optLong("activeDurationMs")));
+        StringBuilder meta=new StringBuilder(PhoneFormat.distance(workout.optDouble("distanceMeters",0)));
+        long avgPace=workout.optLong("avgPaceSecondsPerKm");
+        if(avgPace>0)meta.append(" · ").append(PhoneFormat.paceSeconds(avgPace));
+        int heart=workout.optInt("heartRate");
+        if(heart>0)meta.append(" · ").append(heart).append(" bpm");
+        int stageCount=workout.optInt("stageCount");
+        if(stageCount>0)meta.append(" · ").append(workout.optString("stageName")).append(" ").append(workout.optInt("stageNumber")).append("/").append(stageCount);
+        liveMeta.setText(meta.toString());
     }
 
     private void discoverWatch() {
