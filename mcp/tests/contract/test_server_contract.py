@@ -25,6 +25,18 @@ async def test_all_tools_are_namespaced_and_resources_cover_large_data(tmp_path:
         "watch_summarize_workouts",
         "watch_sync_plans",
     } <= names
+    tools = {tool.name: tool for tool in await value.list_tools()}
+    sync_props = tools["watch_sync_plans"].inputSchema["properties"]
+    assert {"request_id", "expected_revision", "requestId", "expectedRevision"} <= set(sync_props)
+    pause_props = tools["watch_pause_workout"].inputSchema["properties"]
+    assert {
+        "command_id",
+        "expected_state",
+        "expires_at",
+        "commandId",
+        "expectedState",
+        "expiresAt",
+    } <= set(pause_props)
     templates = {str(item.uriTemplate) for item in await value.list_resource_templates()}
     assert "watch://workouts/{workout_id}/route/{cursor}" in templates
     assert "watch://workouts/{workout_id}/heart/{cursor}" in templates

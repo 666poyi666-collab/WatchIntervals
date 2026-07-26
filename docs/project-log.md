@@ -204,3 +204,9 @@
 - 产物：提交、APK、SHA-256、截图索引
 - 遗留：新建或更新 BUG-*
 ```
+
+### 2026-07-26 12:32:53 +08:00 Watch MCP 写工具参数兼容
+
+- `watch_*` 写工具继续支持 snake_case，同时新增 `requestId`、`expectedRevision`、`commandId`、`expectedState`、`expiresAt` camelCase 别名，便于 ChatGPT 现有连接按用户验收字段调用。
+- 已执行：`cd mcp; .\.venv\Scripts\python.exe -m pytest -q`、`uv run pyright`、`uv run ruff check src tests`、`git diff --check`、`.\gradlew.bat :app:assembleDebug :phone:assembleDebug`，均通过。
+- 新 wheel：`mcp/dist/poyi_watch_mcp-0.20.0.dev0-py3-none-any.whl`，SHA-256 `437FFD62E814926131A2155C72A344D284F10369D24F58CE5265C061214B5099`。当前非提升 shell 不能重启 Windows 服务，已热更新 site-packages 文件；服务进程需提升权限重启后加载该兼容。

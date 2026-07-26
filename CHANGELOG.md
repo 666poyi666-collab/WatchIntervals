@@ -42,7 +42,7 @@
 
 ### Changed
 
-- 最后一个计划阶段达标不再结束训练；进入自由记录并继续计时、定位和采样，只有手动结束才归档。
+- Watch MCP 写工具新增 camelCase 参数别名：`requestId`、`expectedRevision`、`commandId`、`expectedState`、`expiresAt`，保持 snake_case 兼容。
 - pause/resume 使用明确动作和带前置状态、过期时间的幂等命令，不再映射为 toggle。
 - 历史列表只返回摘要，完整样本通过记录详情和游标分页读取。
 

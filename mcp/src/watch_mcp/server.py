@@ -22,6 +22,12 @@ def build_server(settings: Settings) -> FastMCP:
     tools = WatchTools(client, metrics)
     resources = WatchResources(client, tools)
 
+    def write_arg(value: str | None, alias: str | None) -> str:
+        return value if value is not None else (alias or "")
+
+    def revision_arg(value: int | None, alias: int | None) -> int:
+        return value if value is not None else (alias if alias is not None else 0)
+
     @asynccontextmanager
     async def lifespan(_: FastMCP[Any]):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -78,21 +84,49 @@ def build_server(settings: Settings) -> FastMCP:
 
     @server.tool(name="watch_set_plan", description="Create or update a workout plan idempotently")
     async def watch_set_plan(
-        request_id: str, expected_revision: int, plan: dict[str, Any]
+        plan: dict[str, Any],
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.set_plan(request_id, expected_revision, plan))
+        return await tools.invoke(
+            tools.set_plan(
+                write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision), plan
+            )
+        )
 
     @server.tool(name="watch_delete_plan", description="Delete a workout plan idempotently")
     async def watch_delete_plan(
-        request_id: str, expected_revision: int, plan_id: str
+        plan_id: str,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.delete_plan(request_id, expected_revision, plan_id))
+        return await tools.invoke(
+            tools.delete_plan(
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                plan_id,
+            )
+        )
 
     @server.tool(name="watch_select_plan", description="Select and sync a workout plan")
     async def watch_select_plan(
-        request_id: str, expected_revision: int, plan_id: str
+        plan_id: str,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.select_plan(request_id, expected_revision, plan_id))
+        return await tools.invoke(
+            tools.select_plan(
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                plan_id,
+            )
+        )
 
     @server.tool(name="watch_list_plan_groups", description="List workout plan groups")
     async def watch_list_plan_groups() -> dict[str, Any]:
@@ -100,21 +134,51 @@ def build_server(settings: Settings) -> FastMCP:
 
     @server.tool(name="watch_create_plan_group", description="Create a plan group idempotently")
     async def watch_create_plan_group(
-        request_id: str, expected_revision: int, name: str
+        name: str,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.create_group(request_id, expected_revision, name))
+        return await tools.invoke(
+            tools.create_group(
+                write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision), name
+            )
+        )
 
     @server.tool(name="watch_rename_plan_group", description="Rename a plan group idempotently")
     async def watch_rename_plan_group(
-        request_id: str, expected_revision: int, group_id: str, name: str
+        group_id: str,
+        name: str,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.rename_group(request_id, expected_revision, group_id, name))
+        return await tools.invoke(
+            tools.rename_group(
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                group_id,
+                name,
+            )
+        )
 
     @server.tool(name="watch_delete_plan_group", description="Delete a plan group idempotently")
     async def watch_delete_plan_group(
-        request_id: str, expected_revision: int, group_id: str
+        group_id: str,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.delete_group(request_id, expected_revision, group_id))
+        return await tools.invoke(
+            tools.delete_group(
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                group_id,
+            )
+        )
 
     @server.tool(name="watch_list_workouts", description="List workout summaries")
     async def watch_list_workouts(limit: int = 20) -> dict[str, Any]:
@@ -130,9 +194,19 @@ def build_server(settings: Settings) -> FastMCP:
 
     @server.tool(name="watch_delete_workout", description="Delete a workout idempotently")
     async def watch_delete_workout(
-        request_id: str, expected_revision: int, workout_id: str
+        workout_id: str,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
     ) -> dict[str, Any]:
-        return await tools.invoke(tools.delete_workout(request_id, expected_revision, workout_id))
+        return await tools.invoke(
+            tools.delete_workout(
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                workout_id,
+            )
+        )
 
     @server.tool(name="watch_get_latest_sleep", description="Get latest sleep summary")
     async def watch_get_latest_sleep() -> dict[str, Any]:
@@ -163,50 +237,90 @@ def build_server(settings: Settings) -> FastMCP:
 
     @server.tool(name="watch_start_workout", description="Start the selected workout")
     async def watch_start_workout(
-        request_id: str,
-        expected_revision: int,
-        command_id: str,
-        expected_state: str,
-        expires_at: int,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        command_id: str | None = None,
+        expected_state: str | None = None,
+        expires_at: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
+        commandId: str | None = None,
+        expectedState: str | None = None,
+        expiresAt: int | None = None,
     ) -> dict[str, Any]:
         return await control(
-            "start", request_id, expected_revision, command_id, expected_state, expires_at
+            "start",
+            write_arg(request_id, requestId),
+            revision_arg(expected_revision, expectedRevision),
+            write_arg(command_id, commandId),
+            write_arg(expected_state, expectedState),
+            revision_arg(expires_at, expiresAt),
         )
 
     @server.tool(name="watch_pause_workout", description="Pause a running workout")
     async def watch_pause_workout(
-        request_id: str,
-        expected_revision: int,
-        command_id: str,
-        expected_state: str,
-        expires_at: int,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        command_id: str | None = None,
+        expected_state: str | None = None,
+        expires_at: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
+        commandId: str | None = None,
+        expectedState: str | None = None,
+        expiresAt: int | None = None,
     ) -> dict[str, Any]:
         return await control(
-            "pause", request_id, expected_revision, command_id, expected_state, expires_at
+            "pause",
+            write_arg(request_id, requestId),
+            revision_arg(expected_revision, expectedRevision),
+            write_arg(command_id, commandId),
+            write_arg(expected_state, expectedState),
+            revision_arg(expires_at, expiresAt),
         )
 
     @server.tool(name="watch_resume_workout", description="Resume a paused workout")
     async def watch_resume_workout(
-        request_id: str,
-        expected_revision: int,
-        command_id: str,
-        expected_state: str,
-        expires_at: int,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        command_id: str | None = None,
+        expected_state: str | None = None,
+        expires_at: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
+        commandId: str | None = None,
+        expectedState: str | None = None,
+        expiresAt: int | None = None,
     ) -> dict[str, Any]:
         return await control(
-            "resume", request_id, expected_revision, command_id, expected_state, expires_at
+            "resume",
+            write_arg(request_id, requestId),
+            revision_arg(expected_revision, expectedRevision),
+            write_arg(command_id, commandId),
+            write_arg(expected_state, expectedState),
+            revision_arg(expires_at, expiresAt),
         )
 
     @server.tool(name="watch_stop_workout", description="Stop and save the active workout")
     async def watch_stop_workout(
-        request_id: str,
-        expected_revision: int,
-        command_id: str,
-        expected_state: str,
-        expires_at: int,
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        command_id: str | None = None,
+        expected_state: str | None = None,
+        expires_at: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
+        commandId: str | None = None,
+        expectedState: str | None = None,
+        expiresAt: int | None = None,
     ) -> dict[str, Any]:
         return await control(
-            "stop", request_id, expected_revision, command_id, expected_state, expires_at
+            "stop",
+            write_arg(request_id, requestId),
+            revision_arg(expected_revision, expectedRevision),
+            write_arg(command_id, commandId),
+            write_arg(expected_state, expectedState),
+            revision_arg(expires_at, expiresAt),
         )
 
     @server.tool(name="watch_get_sync_status", description="Get phone-to-watch sync status")
@@ -214,8 +328,15 @@ def build_server(settings: Settings) -> FastMCP:
         return await tools.invoke(tools.sync_status())
 
     @server.tool(name="watch_sync_plans", description="Retry plan synchronization idempotently")
-    async def watch_sync_plans(request_id: str, expected_revision: int) -> dict[str, Any]:
-        return await tools.invoke(tools.sync(request_id, expected_revision))
+    async def watch_sync_plans(
+        request_id: str | None = None,
+        expected_revision: int | None = None,
+        requestId: str | None = None,
+        expectedRevision: int | None = None,
+    ) -> dict[str, Any]:
+        return await tools.invoke(
+            tools.sync(write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision))
+        )
 
     @server.resource("watch://status", name="Watch status")
     async def status_resource() -> str:
