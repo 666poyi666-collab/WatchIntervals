@@ -300,3 +300,9 @@
 - MCP：手表 `/v1/status` 新增 `workout` 实时块（经 `WorkoutService.liveWorkoutJson()` 静态句柄读取运行中服务）；真机全链验证 ChatGPT 侧可见 `state=RUNNING`、阶段 1/5、活动时长等实况。
 - 验证：双模块单测（含 LiveWorkoutStats 7 项 + SpeedFusion 6 项）、assembleDebug、`git diff --check` 通过；主/次数据页、圈卡挂载真机截图核对；MCP watch_get_status 返回 workout 块。
 - 未覆盖：分段圈卡与区间彩条的实跑表现（室内无法产生 1km 距离与真实心率区间）；步频对 OWW221 计步器节奏的匹配度待户外对比。
+
+## 2026-07-26：移除手表端阶段编辑死代码
+
+- 计划页按离线选择器重构（b084a96）后，`StageEditorActivity` 已无任何调用方，仅剩 Manifest 声明；产品方向是阶段编辑收敛到手机端与 MCP（REQ-PLAN-005/006）。
+- 删除 `StageEditorActivity.java` 与 Manifest 声明；架构文档手表 UI 清单、需求场景表、REQ-PLAN-001/REQ-UI-001 验收口径同步去掉手表编辑页。
+- 上一轮"StageEditorActivity 仍是旧版式"的遗留项就此关闭：不是翻新死界面，而是移除。

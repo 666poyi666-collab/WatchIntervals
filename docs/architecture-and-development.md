@@ -37,7 +37,7 @@
 
 | 模块 | 关键类/文件 | 职责 |
 | --- | --- | --- |
-| 手表 UI | `MainActivity`、`PlanActivity`、`StageEditorActivity`、`WarmupActivity`、`TrainingActivity`、`HistoryActivity` | 导航、权限、计划编辑和状态展示 |
+| 手表 UI | `MainActivity`、`PlanActivity`、`WarmupActivity`、`TrainingActivity`、`HistoryActivity` | 导航、权限、计划选择和状态展示；计划编辑收敛在手机端与 MCP |
 | 训练引擎 | `WorkoutService` | 状态机、计时、阶段推进、传感器融合、检查点、通知、震动、历史落盘 |
 | 训练模型 | `Stage`、`WorkoutRecord` | 阶段和历史 JSON schema |
 | 本地存储 | `PlanStore`、`PlanLibraryStore`、`HistoryStore` | 当前计划、多计划库、最多 200 条历史 |

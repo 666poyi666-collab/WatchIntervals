@@ -61,11 +61,6 @@
             android:taskAffinity=""
             android:exported="false" />
         <activity
-            android:name=".StageEditorActivity"
-            android:screenOrientation="portrait"
-            android:taskAffinity=""
-            android:exported="false" />
-        <activity
             android:name=".PlanActivity"
             android:screenOrientation="portrait"
             android:taskAffinity=""
