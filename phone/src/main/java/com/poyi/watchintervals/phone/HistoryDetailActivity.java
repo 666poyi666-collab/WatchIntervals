@@ -44,17 +44,17 @@ public class HistoryDetailActivity extends Activity {
         mapShell.addView(map,new FrameLayout.LayoutParams(-1,-1));
         JSONArray route=record.optJSONArray("route"); ArrayList<GeoPoint> points=points(route);
         if(points.isEmpty()){
-            TextView empty=text("本次记录没有有效定位轨迹",16,true,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setBackground(round(Color.argb(230,28,28,30),18));
-            FrameLayout.LayoutParams ep=new FrameLayout.LayoutParams(-1,dp(76),Gravity.CENTER);ep.setMargins(dp(28),0,dp(28),0);mapShell.addView(empty,ep);
-            map.getController().setZoom(14d);map.getController().setCenter(new GeoPoint(39.9042,116.4074));
+            map.setVisibility(android.view.View.GONE);
+            TextView empty=text("⌖\n本次训练未记录定位轨迹",15,true,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setLineSpacing(dp(8),1f);
+            mapShell.addView(empty,new FrameLayout.LayoutParams(-1,-1));
         }else{
             Polyline line=new Polyline();line.setPoints(points);line.getOutlinePaint().setColor(Color.rgb(139,221,48));line.getOutlinePaint().setStrokeWidth(dp(6));map.getOverlays().add(line);
             Marker start=marker(points.get(0),"起点",Color.rgb(35,190,205)); Marker end=marker(points.get(points.size()-1),"终点",Color.rgb(139,221,48));map.getOverlays().add(start);map.getOverlays().add(end);
             if(points.size()==1){map.getController().setZoom(17d);map.getController().setCenter(points.get(0));}
             else {BoundingBox box=BoundingBox.fromGeoPoints(points); map.post(()->map.zoomToBoundingBox(box,true,dp(52)));}
         }
-        LinearLayout.LayoutParams mapParams=new LinearLayout.LayoutParams(-1,dp(360));mapParams.topMargin=dp(16);root.addView(mapShell,mapParams);
-        TextView attribution=text("高德地图  ·  绿色为运动轨迹",11,false,Palette.TEXT_DIM);attribution.setGravity(Gravity.CENTER);root.addView(attribution,new LinearLayout.LayoutParams(-1,dp(38)));
+        LinearLayout.LayoutParams mapParams=new LinearLayout.LayoutParams(-1,dp(points.isEmpty()?136:340));mapParams.topMargin=dp(16);root.addView(mapShell,mapParams);
+        if(!points.isEmpty()){TextView attribution=text("高德地图  ·  绿色为运动轨迹",11,false,Palette.TEXT_DIM);attribution.setGravity(Gravity.CENTER);root.addView(attribution,new LinearLayout.LayoutParams(-1,dp(38)));}
 
         double meters=record.optDouble("distanceMeters");long duration=record.optLong("durationMs");int steps=record.optInt("steps"),heart=record.optInt("averageHeartRate");
         LinearLayout summary=card();summary.addView(text("运动概览",17,true,Palette.TEXT));LinearLayout summaryRow=new LinearLayout(this);summaryRow.addView(metricCell("总距离",PhoneFormat.distance(meters),true),weight());summaryRow.addView(metricCell("运动时间",PhoneFormat.duration(duration),false),weight());summaryRow.addView(metricCell("平均配速",PhoneFormat.pace(duration,meters),false),weight());summary.addView(summaryRow);root.addView(summary,marginTop(8));
