@@ -49,7 +49,7 @@ public class MainActivity extends Activity {
     private TextView setupChevron;
     private LinearLayout setupPanel;
     private ScrollView planScroll, controlScroll, historyScroll, sleepScroll;
-    private Button[] navItems;
+    private TextView[] navItems;
     private int currentSection;
     private TextView liveState, liveTime, liveMeta;
     private ActivityRing liveRing;
@@ -96,7 +96,9 @@ public class MainActivity extends Activity {
         // "连接手表" card topped every tab forever; for a paired phone, connection is status, not
         // a task, so setup collapses behind a tap on the status row.
         LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.VERTICAL);header.setPadding(dp(20),topInset,dp(20),dp(4));
-        header.addView(text("步序",30,true,Palette.TEXT));
+        TextView productTitle=text("步序",32,true,Palette.TEXT);
+        productTitle.setLetterSpacing(.04f);
+        header.addView(productTitle);
         LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);statusRow.setClickable(true);statusRow.setFocusable(true);
         statusDot=new View(this);statusDot.setBackground(rounded(Color.GRAY,10));
         LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
@@ -105,7 +107,7 @@ public class MainActivity extends Activity {
         statusRow.setOnClickListener(v->toggleSetup(setupPanel.getVisibility()!=View.VISIBLE));
         header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(38)));
 
-        setupPanel=card();
+        setupPanel=compactCard();
         host=input("LAN 诊断地址");host.setVisibility(View.GONE);
         code=input("手表上的 6 位配对码");code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         setupPanel.addView(host);setupPanel.addView(code);
@@ -117,22 +119,25 @@ public class MainActivity extends Activity {
         header.addView(setupPanel,setupParams);
         shell.addView(header);
 
-        planCard = card();
-        planCard.addView(text("训练计划", 24, true, Palette.TEXT));
+        planCard = section();
+        planCard.addView(pageTitle("训练计划", "把每一天的训练，排成看得懂的节奏"));
         planLibraryPanel=new LinearLayout(this);planLibraryPanel.setOrientation(LinearLayout.VERTICAL);
-        planLibraryPanel.addView(text("先建立计划，再为计划逐日添加安排", 13, false, Palette.TEXT_DIM));
-        currentWatchPlan=text("手表当前安排：连接后读取",14,false,Palette.TEXT_DIM);planLibraryPanel.addView(currentWatchPlan);
+        currentWatchPlan=text("手表当前安排  ·  连接后读取",13,false,Palette.TEXT_DIM);
+        currentWatchPlan.setPadding(dp(14),dp(8),dp(14),dp(8));
+        currentWatchPlan.setBackground(rounded(Palette.CARD,14));
+        LinearLayout.LayoutParams currentPlanParams=new LinearLayout.LayoutParams(-1,dp(42));currentPlanParams.topMargin=dp(14);planLibraryPanel.addView(currentWatchPlan,currentPlanParams);
         LinearLayout libraryHeader = new LinearLayout(this); libraryHeader.setGravity(Gravity.CENTER_VERTICAL);
-        libraryHeader.addView(text("全部计划",18,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(58),1));
-        Button createGroup=button("＋ 新建计划",Palette.MOVE,Color.WHITE); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(145),dp(48)));
+        libraryHeader.addView(text("我的计划",20,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(64),1));
+        Button createGroup=button("＋",Palette.MOVE,Color.WHITE); createGroup.setTextSize(25); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(48),dp(48)));
         planLibraryPanel.addView(libraryHeader);
         savedPlanList=new LinearLayout(this); savedPlanList.setOrientation(LinearLayout.VERTICAL); planLibraryPanel.addView(savedPlanList);
         planCard.addView(planLibraryPanel);
 
         planEditorPanel=new LinearLayout(this);planEditorPanel.setOrientation(LinearLayout.VERTICAL);planEditorPanel.setVisibility(View.GONE);
         LinearLayout editorHeader=new LinearLayout(this);editorHeader.setGravity(Gravity.CENTER_VERTICAL);
-        Button closeEditor=button("‹ 返回计划",Palette.CARD_HIGH,Palette.TEXT);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(135),dp(48)));
-        editorHeader.addView(text("编辑安排",19,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(52),1));planEditorPanel.addView(editorHeader);
+        Button closeEditor=button("‹ 计划列表",Color.TRANSPARENT,Palette.MOVE);closeEditor.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(118),dp(48)));
+        planEditorPanel.addView(editorHeader);
+        planEditorPanel.addView(text("编辑安排",22,true,Palette.TEXT));
         planEditorPanel.addView(text("安排信息",16,true,Palette.TEXT));
         planName = input("安排名称，例如：第1天"); planGroup = input("所属训练计划，例如：减肥计划");
         planRequirement = input("今天的训练说明（可选）");
@@ -160,8 +165,8 @@ public class MainActivity extends Activity {
         // Live remote: the watch's /v1/status workout block drives the readout and which actions
         // even exist. Four state-blind buttons were a prototype leftover — pressing 开始 mid-run
         // or 继续 while idle only produced STATE_MISMATCH errors.
-        controlCard = card();
-        controlCard.addView(text("训练", 24, true, Palette.TEXT));
+        controlCard = section();
+        controlCard.addView(pageTitle("训练", "手表实时数据与训练控制"));
         // Fitness-style hero: the active clock sits inside a gradient progress ring that fills
         // as plan stages complete.
         FrameLayout ringBox=new FrameLayout(this);
@@ -172,17 +177,18 @@ public class MainActivity extends Activity {
         liveState=text("未在训练",13,true,Palette.TEXT_DIM);liveState.setGravity(Gravity.CENTER);
         ringCenter.addView(liveTime);ringCenter.addView(liveState);
         ringBox.addView(ringCenter,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
-        LinearLayout.LayoutParams ringBoxParams=new LinearLayout.LayoutParams(-1,dp(196));ringBoxParams.topMargin=dp(4);
+        ringBox.setBackground(rounded(Palette.CARD,24));
+        LinearLayout.LayoutParams ringBoxParams=new LinearLayout.LayoutParams(-1,dp(220));ringBoxParams.topMargin=dp(16);
         controlCard.addView(ringBox,ringBoxParams);
         liveMeta=text("连接手表后显示实时数据",14,false,Palette.TEXT_DIM);liveMeta.setGravity(Gravity.CENTER_HORIZONTAL);controlCard.addView(liveMeta);
         liveActions=new LinearLayout(this);controlCard.addView(liveActions);
         rebuildLiveActions("idle");
         TextView controlHint=text("操作即时发送到手表 · 训练状态每 5 秒刷新",12,false,Palette.TEXT_DIM);controlHint.setGravity(Gravity.CENTER_HORIZONTAL);controlCard.addView(controlHint);
 
-        historyCard = card(); historyCard.addView(text("训练历史", 22, true, Palette.TEXT));
+        historyCard = section(); historyCard.addView(pageTitle("训练历史", "每次出发，都留下可复盘的数据"));
         historySummary = text("连接后读取", 14, false, Palette.TEXT_DIM); historyCard.addView(historySummary);
         historyList = new LinearLayout(this); historyList.setOrientation(LinearLayout.VERTICAL); historyCard.addView(historyList);
-        sleepCard = card(); sleepCard.addView(text("系统睡眠", 22, true, Palette.TEXT));
+        sleepCard = section(); sleepCard.addView(pageTitle("睡眠", "恢复也是训练的一部分"));
         sleepSummary = text("连接后读取手表系统睡眠", 14, false, Palette.TEXT_DIM); sleepCard.addView(sleepSummary);
         sleepList = new LinearLayout(this); sleepList.setOrientation(LinearLayout.VERTICAL); sleepCard.addView(sleepList);
 
@@ -193,11 +199,10 @@ public class MainActivity extends Activity {
 
         // Real bottom navigation: destinations stay put while content scrolls beneath them. The
         // old tab chips lived inside the scroll and drifted away with the content.
-        LinearLayout nav=new LinearLayout(this);nav.setBackgroundColor(Palette.NAV);
-        nav.setPadding(dp(10),dp(6),dp(10),dp(6)+bottomInset);
-        navItems=new Button[]{button("计划",Color.TRANSPARENT,Palette.TEXT_DIM),button("训练",Color.TRANSPARENT,Palette.TEXT_DIM),
-                button("历史",Color.TRANSPARENT,Palette.TEXT_DIM),button("睡眠",Color.TRANSPARENT,Palette.TEXT_DIM)};
-        for(int i=0;i<navItems.length;i++){final int section=i;navItems[i].setOnClickListener(v->{showSection(section);if(section==3)loadSleep();});nav.addView(navItems[i],weight());}
+        LinearLayout nav=new LinearLayout(this);nav.setBackground(roundedStroke(Palette.NAV,0,Palette.CARD_HIGH,1));
+        nav.setPadding(dp(8),dp(4),dp(8),dp(4)+bottomInset);
+        navItems=new TextView[]{navItem("▦","计划"),navItem("▶","训练"),navItem("◷","历史"),navItem("☾","睡眠")};
+        for(int i=0;i<navItems.length;i++){final int destination=i;navItems[i].setOnClickListener(v->{showSection(destination);if(destination==3)loadSleep();});nav.addView(navItems[i],new LinearLayout.LayoutParams(0,dp(62),1));}
         shell.addView(nav);
         setContentView(shell);
 
@@ -232,7 +237,7 @@ public class MainActivity extends Activity {
         sleepScroll.setVisibility(section==3?View.VISIBLE:View.GONE);
         if(section==0)showPlanLibrary();
         for(int i=0;i<navItems.length;i++){boolean selected=i==section;
-            navItems[i].setBackground(rounded(selected?Palette.CARD_HIGH:Color.TRANSPARENT,16));
+            navItems[i].setBackground(rounded(Color.TRANSPARENT,16));
             navItems[i].setTextColor(selected?Palette.MOVE:Palette.TEXT_DIM);
             navItems[i].setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);}
         liveHandler.removeCallbacks(livePoller);
@@ -265,6 +270,11 @@ public class MainActivity extends Activity {
         if("RUNNING".equals(state)){addLiveAction("暂停","pause",Palette.CARD_HIGH,Palette.TEXT);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
         else if("PAUSED".equals(state)){addLiveAction("继续","resume",Palette.EXERCISE,Palette.TEXT);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
         else if("PREPARING".equals(state)){addLiveAction("结束准备","stop",Palette.CARD_HIGH,Palette.TEXT);}
+        else if("unavailable".equals(state)){
+            Button connect=button("打开连接设置",Palette.CARD_HIGH,Palette.TEXT);
+            connect.setOnClickListener(v->toggleSetup(true));
+            liveActions.addView(connect,weight());
+        }
         else {addLiveAction("开始训练","start",Palette.EXERCISE,Palette.TEXT);}
     }
 
@@ -289,7 +299,7 @@ public class MainActivity extends Activity {
     private void renderLiveStatus(JSONObject workout,String error){
         if(liveState==null)return;
         if(workout==null){
-            rebuildLiveActions("idle");
+            rebuildLiveActions(error!=null?"unavailable":"idle");
             if(liveRing!=null)liveRing.set(0f,Palette.MOVE,Palette.ORANGE);
             liveState.setText(error!=null?"无法读取手表状态":"未在训练");
             liveState.setTextColor(Palette.TEXT_DIM);
@@ -583,15 +593,15 @@ public class MainActivity extends Activity {
         if(groups!=null)for(int groupIndex=0;groupIndex<groups.length();groupIndex++){
             JSONObject group=groups.optJSONObject(groupIndex);if(group==null)continue;String groupId=group.optString("id");
             int arrangementCount=0;for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&groupId.equals(item.optString("groupId")))arrangementCount++;}
-            LinearLayout planBlock=card();planBlock.setPadding(dp(15),dp(14),dp(15),dp(14));planBlock.setBackground(rounded(Palette.CARD_DEEP,22));
+            LinearLayout planBlock=card();planBlock.setPadding(dp(16),dp(14),dp(16),dp(14));planBlock.setBackground(rounded(Palette.CARD,22));
             LinearLayout titleRow=new LinearLayout(this);titleRow.setGravity(Gravity.CENTER_VERTICAL);
             TextView header=text(group.optString("name"),19,true,Palette.TEXT);header.setSingleLine(false);titleRow.addView(header,new LinearLayout.LayoutParams(0,-2,1));
             TextView count=text(arrangementCount+" 个安排",12,false,Palette.TEXT_DIM);count.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);titleRow.addView(count,new LinearLayout.LayoutParams(dp(82),dp(38)));
             planBlock.addView(titleRow);
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);
-            Button addDay=button("＋ 添加安排",Palette.EXERCISE,Palette.TEXT);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(46),1));
-            Button rename=button("设置",Palette.CARD_HIGH,Palette.TEXT);actions.addView(rename,new LinearLayout.LayoutParams(dp(72),dp(46)));
-            Button delete=button("删除",Palette.FILL_DANGER,Palette.RED);actions.addView(delete,new LinearLayout.LayoutParams(dp(72),dp(46)));
+            Button addDay=button("＋ 添加安排",Palette.FILL_RUN,Palette.EXERCISE);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(44),1));
+            Button rename=button("编辑",Palette.CARD_HIGH,Palette.TEXT_DIM);actions.addView(rename,new LinearLayout.LayoutParams(dp(68),dp(44)));
+            Button delete=button("删除",Color.TRANSPARENT,Palette.RED);actions.addView(delete,new LinearLayout.LayoutParams(dp(62),dp(44)));
             planBlock.addView(actions,new LinearLayout.LayoutParams(-1,dp(54)));
             addDay.setOnClickListener(v->newPlanInGroup(group));rename.setOnClickListener(v->showGroupNameDialog(group,group.optString("name")));delete.setOnClickListener(v->confirmDeleteGroup(group));
             if(arrangementCount==0){TextView empty=text("暂无安排 · 点击上方按钮添加第1天",13,false,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setBackground(rounded(Palette.CARD_HIGH,14));planBlock.addView(empty,new LinearLayout.LayoutParams(-1,dp(48)));}
@@ -605,11 +615,11 @@ public class MainActivity extends Activity {
         String id=item.optString("id");LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(0,dp(5),0,0);
         JSONArray savedStages=item.optJSONArray("stages");int count=savedStages==null?0:savedStages.length();boolean selected=id.equals(library.optString("selectedPlanId"));
         String requirement=item.optString("requirement").trim();String summary=count+" 项训练内容"+(requirement.isEmpty()?"":" · "+requirement);
-        LinearLayout open=new LinearLayout(this);open.setOrientation(LinearLayout.VERTICAL);open.setPadding(dp(14),dp(9),dp(12),dp(9));open.setBackground(rounded(selected?Palette.FILL_SELECTED:Palette.CARD_HIGH,16));
+        LinearLayout open=new LinearLayout(this);open.setOrientation(LinearLayout.VERTICAL);open.setPadding(dp(14),dp(9),dp(12),dp(9));open.setBackground(selected?roundedStroke(Palette.FILL_SELECTED,16,Palette.EXERCISE,1):rounded(Palette.CARD_HIGH,16));
         TextView name=text((selected?"✓  ":"")+item.optString("name"),16,true,Palette.TEXT);open.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
         TextView detail=text(summary,12,false,Palette.TEXT_DIM);detail.setSingleLine(true);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);open.addView(detail,new LinearLayout.LayoutParams(-1,dp(26)));
         row.addView(open,new LinearLayout.LayoutParams(0,dp(76),1));
-        Button remove=button("删除",Palette.FILL_DANGER,Palette.RED);LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(66),dp(76));rp.leftMargin=dp(6);row.addView(remove,rp);
+        Button remove=button("删除",Color.TRANSPARENT,Palette.RED);LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(58),dp(76));rp.leftMargin=dp(4);row.addView(remove,rp);
         open.setOnClickListener(v->openSavedPlan(item));remove.setOnClickListener(v->deleteSavedPlan(id));parent.addView(row);
     }
 
@@ -698,14 +708,19 @@ public class MainActivity extends Activity {
     } }); }
     interface Throwing{void run()throws Exception;}
     private String kindName(String kind){return "WALK".equals(kind)?"快走":"REST".equals(kind)?"休息":"跑步";}
-    private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(rounded(Palette.CARD,22));return v;}
+    private LinearLayout section(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
+    private LinearLayout card(){LinearLayout v=section();v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(rounded(Palette.CARD,22));return v;}
+    private LinearLayout compactCard(){LinearLayout v=section();v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD,20));return v;}
     private LinearLayout cardHigh(){LinearLayout v=card();v.setBackground(rounded(Palette.CARD_HIGH,18));return v;}
     private LinearLayout.LayoutParams margin(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(16);return p;}
     private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(52),1);p.setMargins(dp(3),dp(6),dp(3),dp(6));return p;}
     private TextView text(String s,int sp,boolean bold,int color){TextView v=new TextView(this);v.setText(s);v.setTextSize(sp);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);v.setTypeface(null,bold?Typeface.BOLD:Typeface.NORMAL);v.setPadding(0,dp(5),0,dp(5));return v;}
+    private LinearLayout pageTitle(String title,String subtitle){LinearLayout box=section();TextView heading=text(title,28,true,Palette.TEXT);heading.setLetterSpacing(.015f);box.addView(heading,new LinearLayout.LayoutParams(-1,dp(44)));box.addView(text(subtitle,14,false,Palette.TEXT_DIM),new LinearLayout.LayoutParams(-1,dp(30)));return box;}
+    private TextView navItem(String symbol,String label){TextView v=text(symbol+"\n"+label,12,false,Palette.TEXT_DIM);v.setGravity(Gravity.CENTER);v.setLineSpacing(dp(1),1f);v.setClickable(true);v.setFocusable(true);v.setPadding(0,dp(4),0,dp(3));return v;}
     private EditText input(String hint){EditText v=new EditText(this);v.setHint(hint);v.setTextSize(16);v.setSingleLine(true);v.setTextColor(Palette.TEXT);v.setHintTextColor(Palette.HINT);v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD_HIGH,14));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(54));p.topMargin=dp(7);v.setLayoutParams(p);return v;}
     private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setBackground(rounded(bg,16));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
     private GradientDrawable rounded(int color,int radius){GradientDrawable shape=new GradientDrawable();shape.setColor(color);shape.setCornerRadius(dp(radius));return shape;}
+    private GradientDrawable roundedStroke(int color,int radius,int strokeColor,int strokeWidth){GradientDrawable shape=rounded(color,radius);shape.setStroke(dp(strokeWidth),strokeColor);return shape;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     @Override protected void onDestroy(){stopDiscovery();if(watchConnection!=null)watchConnection.removeObserver(connectionObserver);io.shutdownNow();super.onDestroy();}
 }
