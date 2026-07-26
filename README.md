@@ -30,12 +30,13 @@
 - Android 13+ 会在首次训练前请求通知权限，确保前台训练通知可见
 - 最多 200 条独立训练历史目录；摘要索引与完整轨迹/心率样本分离，支持详情、分页和删除
 - 独立 `phone` 伴侣 App：局域网 mDNS 自动发现、六位码配对；本地计划库支持新建、命名、分组、保存、再次编辑和同步，训练控制与历史分区显示
+- 手机伴侣可使用独立 `SYNC_KEY` 将状态、训练、睡眠和计划快照直接上行到 Cloudflare Watch MCP；电脑关机时 ChatGPT 仍可读取最后一次同步结果
 - 手表首页按页面方向进入训练历史和训练计划；训练数据为第一页，实时轨迹固定在其右侧页，并支持双向跟手返回
 - 手表 `8765`、手机 `8766` 协议 v2 API，以及复用同一工具核心的 stdio/Windows HTTP Gateway MCP
 
 ## 手机伴侣与本地 MCP
 
-当前正式传输以同一局域网直连为主。手表广播 `_watchintervals._tcp.`，手机广播 `_watchintervals-phone._tcp.`；IP 只是运行时端点，设备身份由稳定 deviceId 校验。BLE 目前只有 debug ping/pong POC，未通过息屏、后台、重启和 12 小时门禁，不能视为正式同步能力。手表首页显示六位配对码。远程启动训练需要允许后台定位，应用会在首次本地开始训练时单独请求该权限。
+设备控制优先使用应用层加密 BLE，已验证 LAN 作为批量数据加速通道。手表广播 `_watchintervals._tcp.`，手机广播 `_watchintervals-phone._tcp.`；IP 只是运行时端点，设备身份由稳定 deviceId 校验。手机还可配置 HTTPS `/sync/push` 与独立上行密钥，把六个只读快照直接同步到云端；该能力只提供读取，不把训练控制伪装成离线可执行。远程启动训练需要允许后台定位，应用会在首次本地开始训练时单独请求该权限。
 
 ```powershell
 .\gradlew.bat :app:assembleDebug :phone:assembleDebug

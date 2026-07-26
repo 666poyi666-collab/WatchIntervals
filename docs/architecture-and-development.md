@@ -44,6 +44,7 @@
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
 | 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS |
 | 手机伴侣 | `WatchConnectionManager`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继 |
+| 手机云同步 | `CloudSnapshotSync`、`CloudSnapshotPayload`、`CloudSyncCredentials` | 直接向 Watch Cloud MCP 上行六个只读快照；与 ChatGPT MCP 访问密钥隔离 |
 | MCP | `mcp/src/watch_mcp` | 独立 Watch MCP；只通过手机 8766 业务门面访问本项目 |
 
 ## 3. 核心状态和不变量
@@ -72,6 +73,7 @@
 | BLE 身份 | SharedPreferences `watch_identity` / `bridge` | 稳定设备 ID + 过渡六位码 | 当前仅为 debug 认证；正式密钥与挑战响应关联 `BUG-015` |
 | Watch MCP 数据 | `%ProgramData%/Poyi/WatchMcp` | 已验证手机身份、DPAPI 密文、独立服务日志 | 不保存固定 IP、明文令牌或其他项目数据 |
 | Watch Tunnel 凭据 | `%ProgramData%/Poyi/WatchMcp` | DPAPI LocalMachine + Watch 专属 Tunnel ID | Runtime Key 不写入仓库、命令行和日志 |
+| 手机云同步配置 | SharedPreferences `cloud_snapshot_sync` | HTTPS `/sync/push` + 独立 `SYNC_KEY` | debug 配置由用户/开发流程注入；密钥不写入 APK、仓库或日志 |
 
 任何 schema 变更都要：提升 schema 版本、保留向后读取、增加迁移/损坏数据测试、更新本表与 CHANGELOG。
 
@@ -125,6 +127,12 @@
 手机计划库为计划分组和多计划的主数据源，独立 Watch MCP 通过该端口读写后同步至手表。协议细节以 `PhonePlanBridgeService` 和 `mcp/src/watch_mcp` 为准；新增端点时必须补充独立契约测试。
 
 手机同时广播 `_watchintervals-phone._tcp.`。`/v1/status` 返回稳定 `phoneDeviceId` 与 `protocolVersion`；Windows Watch MCP 只把 IP 当运行时端点，旧地址失败后通过 mDNS 发现并校验身份。
+
+### 手机直连云端快照
+
+Phone 0.21.1 在计划桥服务启动、前台同步完成或用户保存云配置后调用 `CloudSnapshotSync`。它分别读取手表状态、训练历史、睡眠和手机计划库，构造与本机 Watch MCP 读工具兼容的六个 JSON 快照，并以 `POST /sync/push` 上行。任一数据面读取失败时省略该数据面，云端保留上一次有效快照；上行失败只记录错误类型，不阻断 BLE/LAN 本地功能。
+
+上行只接受 HTTPS、固定 `/sync/push` 路径和至少 32 位的独立 `SYNC_KEY`。ChatGPT 使用 capability-path `ACCESS_KEY`，两者用途和权限严格分离。当前云端为只读镜像：设备离线时返回最后快照及 stale 元数据，不提供开始、暂停、继续或结束训练工具。
 
 `POST /v1/auth/token` 用于一次性签发独立 Watch MCP Bearer Token。未迁移设备可使用当前 6 位配对码 bootstrap；完成安全 BLE 配对且旧码已清除的设备，使用已配对长期 LAN 凭据 bootstrap。签发请求仍要求 UUID `requestId` 与 `expectedRevision`，重复请求返回首次 token，旧 revision 或已有 token 的新请求返回 409。token 不写入日志、仓库或命令行。
 
@@ -181,9 +189,9 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - Release 记录：提交 SHA、构建命令、测试结果、APK SHA-256、已知问题。
 - 正式发布应使用受控 release keystore；当前 debug 预发布不得描述为正式生产包。
 
-## 10. 独立 Watch MCP 与 ChatGPT 通道
+## 10. 独立 Watch MCP、云端 MCP 与 ChatGPT 通道
 
-- 正式链路固定为 `ChatGPT -> Watch 专属 Tunnel -> PoyiWatchMcp -> 手机 8766 -> BLE/LAN -> 手表`。
+- 本机控制链路为 `ChatGPT -> Watch 专属 Tunnel -> PoyiWatchMcp -> 手机 8766 -> BLE/LAN -> 手表`；云端只读链路为 `手机 -> Watch Cloud MCP -> ChatGPT`，电脑不在数据路径上。
 - `PoyiWatchMcp` 只监听 `127.0.0.1:8768`，同端口提供 `/mcp`、`/healthz`、`/readyz`、`/metrics` 及 OAuth Protected Resource 元数据；避开 PersonalMcpGateway 的 8760/8761，且不加载其模块。
 - MCP 只发现手机 `_watchintervals-phone._tcp.local.`，以 Bearer Token 认证并固定首次验证的 `phoneDeviceId`。它不直接连接手表、不读取 Android 数据库、不使用 ADB 或固定 IP。
 - `PoyiWatchTunnel` 使用独立 Tunnel ID、独立 Runtime Key 和 `127.0.0.1:8880` 健康端口，仅连接 Watch MCP。两个 WinSW 服务均自动启动和失败重启。

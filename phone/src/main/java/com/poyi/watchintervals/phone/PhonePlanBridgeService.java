@@ -63,6 +63,7 @@ public class PhonePlanBridgeService extends Service {
         locator = new WatchLanLocator(this, WatchConnectionManager.get(this));
         locator.start();
         PhoneBootReceiver.schedule(this);
+        CloudSnapshotSync.syncAsync(this);
         workers.execute(this::serve);
     }
 

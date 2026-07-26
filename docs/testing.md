@@ -1,7 +1,7 @@
 # 测试与发布门禁
 
 状态：维护中  
-基线：2026-07-25
+基线：2026-07-27
 
 ## 1. 测试原则
 
@@ -21,6 +21,7 @@ git diff --check
 - 修改训练引擎：验证开始、暂停、继续、停止、自动阶段推进、完成只保存一次。
 - 修改传感器：验证 GPS、步数、心率各自单独可用和切换恢复。
 - 修改 API/MCP：验证 401、错误 JSON、超时、手机不在线、手表不在线和正常路径。
+- 修改手机云同步：验证 ACCESS_KEY/SYNC_KEY 隔离、六个快照 shape、部分数据面失败、电脑关机等价场景与 stale 语义。
 - 修改 Tunnel：执行 `powershell -File mcp/tests/test_persistent_tunnel.ps1`，再执行 API-011 真机/重启验证。
 - 修改 UI：至少检查 378×496 截图和点击区域。
 
@@ -85,6 +86,7 @@ git diff --check
 | PT-012 | BLE 计划同步 | 无 LAN 时计划 outbox 经 BLE ACK，手表 profile 回读一致 |
 | PT-013 | BLE 定位中继 | 训练中每 2–5 秒发送带 sequence/TTL 的手机定位，断联不补发旧点 |
 | PT-014 | BLE 控制 | start/pause/resume/stop 经 BLE；重复 commandId 返回首次结果且不反转状态 |
+| PT-015 | 手机直连云端 | 关闭全部 Windows MCP/Tunnel/watchdog 服务后由手机上行；Watch Cloud MCP 六个快照均为 `source=phone`，ChatGPT 可读最近训练/睡眠/计划 |
 
 ## 5. MCP/API 回归
 
@@ -108,6 +110,14 @@ git diff --check
 | API-016 | Watch MCP 的 24 个工具均以 `watch_` 命名；轨迹、心率和完整睡眠只通过 Resource 分页返回 |
 | API-017 | `/healthz`、`/readyz`、`/metrics` 与 `/mcp` 仅监听 `127.0.0.1:8768`；手机离线只使业务调用降级 |
 | API-018 | 手机 API Bearer Token 错误返回 401；mDNS 发现身份不匹配时拒绝固定新端点；日志不包含令牌、IP 或正文 |
+| API-019 | Watch Cloud MCP 只暴露 7 个快照/同步概览工具，不包含本机训练控制工具；设备离线时返回最后快照并带 `stale`/`lastSyncAt`，不报告伪在线 |
+
+### 0.21.1 手机直连云端与 ChatGPT 验收（2026-07-27）
+
+- 小米手机安装 Phone 0.21.1（versionCode 16），云端六个数据面均确认 `source=phone`。
+- 停止本机 9 个 MCP、Tunnel 与 watchdog 服务，Journal Cloud MCP 的 `journal_list_recent` 与 Watch Cloud MCP 的同步概览/训练快照仍可调用；Watch 返回 `state=synced`、训练计数 2。测试后本机服务全部恢复为 Automatic/Running。
+- ChatGPT 删除旧“拾光日记”与“步序运动”开发连接，新增云端连接；日记扫描到 6 个 UUID CRUD/搜索工具，步序扫描到 7 个快照/同步概览工具，旧的 `watch_start_workout`、`watch_pause_workout`、`watch_resume_workout`、`watch_stop_workout` 均不存在。
+- 本测试证明电脑关机不再是读取链路的单点；仍依赖手机/手表完成上行以及互联网和 Cloudflare 可用。设备离线期间只保证最后快照可读并明确标记过期。
 
 ## 5.1 BLE 集成门禁
 

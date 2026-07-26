@@ -56,7 +56,7 @@ public class PhoneBootReceiver extends BroadcastReceiver {
         PendingIntent pending = PendingIntent.getBroadcast(context, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         long triggerAt = SystemClock.elapsedRealtime() + WATCHDOG_INTERVAL_MILLIS;
-        if (alarms.canScheduleExactAlarms()) {
+        if (android.os.Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
             // One-shot by nature: every delivery re-arms the next one from onReceive.
             alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pending);
             return;

@@ -436,3 +436,11 @@
 - 用不落盘的合成详情启动手机历史页，复现室内记录仍显示 360dp 空白地图网格的问题；地图空壳占据大半首屏，核心运动数据需要继续滚动。
 - 无轨迹时隐藏 `MapView` 并改为 136dp 深色定位空状态，不再显示地图署名；真实轨迹分支仍保留 340dp 地图、起终点和自动包络缩放。
 - Pixel 6 / API 35 截图确认首屏可同时看到轨迹空状态、运动概览与详细数据。为截图临时开放的 Activity 导出标志已恢复为 `false`，合成记录未写入历史。
+
+## 2026-07-27：Phone 0.21.1 直连 Watch Cloud MCP（REQ-SYNC-011、BUG-032）
+
+- 手机新增 `CloudSnapshotSync`、`CloudSnapshotPayload` 与 `CloudSyncCredentials`：状态、训练列表/汇总、睡眠最近/汇总、计划列表六个数据面直接上行，任何单面失败时保留云端上一份有效数据。
+- 云端上行固定 HTTPS `/sync/push`，使用独立 `SYNC_KEY`；ChatGPT 的 capability-path `ACCESS_KEY` 不进入 APK。版本升为 Phone 0.21.1（16），已安装到小米手机。
+- 关机等价验收：停止本机 9 个 MCP/Tunnel/watchdog 服务，Watch Cloud MCP 仍返回 `source=phone`、`state=synced` 与 2 条训练；测试后服务全部恢复。
+- ChatGPT 删除旧日记/步序连接并改接 Cloudflare MCP：日记为 6 个 UUID CRUD/搜索工具，步序为 7 个快照/同步概览工具，旧的 24 工具本机控制面不再暴露。
+- 最终门禁：Gradle `test lint :app:assembleDebug :phone:assembleDebug` 成功（140 tasks）；Phone `CloudSnapshotPayloadTest` 覆盖完整六面与部分数据面缺失；两个 Cloud Worker 的 TypeScript 检查与 Wrangler dry-run 通过；`git diff --check` 通过。

@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     private static final int REQUEST_BLUETOOTH = 45;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<JSONObject> stages = new ArrayList<>();
-    private EditText host, code, planName, planGroup, planRequirement;
+    private EditText host, code, cloudEndpoint, cloudKey, planName, planGroup, planRequirement;
     private TextView connection, historySummary, sleepSummary, currentWatchPlan;
     private LinearLayout planList, historyList, sleepList, savedPlanList, planCard, controlCard, historyCard, sleepCard, planLibraryPanel, planEditorPanel;
     private String editingPlanId = "";
@@ -72,6 +72,11 @@ public class MainActivity extends Activity {
         android.content.SharedPreferences preferences = getSharedPreferences("connection", MODE_PRIVATE);
         host.setText(preferences.getString("host", ""));
         if(watchConnection.identity().isPaired()){code.setText("");code.setHint("已完成安全配对");}else code.setText(preferences.getString("code", ""));
+        CloudSyncCredentials.Config cloud = CloudSyncCredentials.load(this);
+        cloudEndpoint.setText(cloud.endpoint);
+        cloudKey.setText("");
+        if (cloud.configured()) cloudKey.setHint("已配置独立上行密钥");
+        provisionCloudFromIntent(getIntent());
         watchConnection.configurePairing(code.getText().toString().trim());
         watchConnection.configureLan(host.getText().toString().trim(),code.getText().toString().trim());
         toggleSetup(!watchConnection.identity().isPaired());
@@ -115,6 +120,14 @@ public class MainActivity extends Activity {
         Button discover=button("连接手表",Palette.CARD_HIGH,Palette.TEXT);
         Button connect=button("立即同步",Palette.EXERCISE,Palette.TEXT);
         connectActions.addView(discover,weight());connectActions.addView(connect,weight());setupPanel.addView(connectActions);
+        setupPanel.addView(text("云端快照",14,true,Palette.TEXT));
+        cloudEndpoint=input("https://…/sync/push");
+        cloudEndpoint.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        cloudKey=input("独立 SYNC_KEY（不会写入 APK）");
+        cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        setupPanel.addView(cloudEndpoint);setupPanel.addView(cloudKey);
+        Button saveCloud=button("保存并测试云同步",Palette.CARD_HIGH,Palette.TEXT);
+        setupPanel.addView(saveCloud);
         LinearLayout.LayoutParams setupParams=new LinearLayout.LayoutParams(-1,-2);setupParams.topMargin=dp(6);
         header.addView(setupPanel,setupParams);
         shell.addView(header);
@@ -207,6 +220,7 @@ public class MainActivity extends Activity {
         setContentView(shell);
 
         connect.setOnClickListener(v -> syncAll());
+        saveCloud.setOnClickListener(v -> saveCloudConfig());
         discover.setOnClickListener(v -> discoverWatch());
         addRun.setOnClickListener(v -> addStage("RUN", "DISTANCE", 1000));
         addWalk.setOnClickListener(v -> addStage("WALK", "DISTANCE", 200));
@@ -413,8 +427,35 @@ public class MainActivity extends Activity {
             if(expected.isEmpty()&&!actual.isEmpty())getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",actual).apply();
             JSONObject library = PhonePlanLibrary.load(this); if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");PhoneSyncOutbox.drain(this,watchConnection);
             JSONObject plan = new JSONObject(watchConnection.requestBlocking("GET","/v1/plan/profile","",20_000L)); JSONArray history = new JSONArray(watchConnection.requestBlocking("GET","/v1/history","",20_000L));
+            CloudSnapshotSync.syncAsync(this);
             runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · " + transportLabel(watchConnection.snapshot())); showPlan(plan); showHistory(history); ensureLocationRelay(); });
         });
+    }
+
+    private void saveCloudConfig() {
+        CloudSyncCredentials.Config current = CloudSyncCredentials.load(this);
+        String key = cloudKey.getText().toString().trim();
+        if (key.isEmpty()) key = current.syncKey;
+        if (!CloudSyncCredentials.save(this, cloudEndpoint.getText().toString(), key)) {
+            Toast.makeText(this, "请输入 HTTPS /sync/push 地址和至少 32 位上行密钥", Toast.LENGTH_LONG).show();
+            return;
+        }
+        cloudKey.setText(""); cloudKey.setHint("已配置独立上行密钥");
+        CloudSnapshotSync.syncAsync(this);
+        Toast.makeText(this, "云同步配置已保存，正在后台测试", Toast.LENGTH_SHORT).show();
+    }
+
+    private void provisionCloudFromIntent(Intent intent) {
+        if (!BuildConfig.DEBUG || intent == null) return;
+        String endpoint = intent.getStringExtra("poyi_cloud_endpoint");
+        String key = intent.getStringExtra("poyi_cloud_key");
+        if (endpoint == null || key == null) return;
+        if (CloudSyncCredentials.save(this, endpoint, key)) {
+            cloudEndpoint.setText(endpoint); cloudKey.setText("");
+            cloudKey.setHint("已配置独立上行密钥");
+            intent.removeExtra("poyi_cloud_endpoint"); intent.removeExtra("poyi_cloud_key");
+            CloudSnapshotSync.syncAsync(this);
+        }
     }
 
     private void ensureBluetoothConnection(){
