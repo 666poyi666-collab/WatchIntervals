@@ -92,7 +92,9 @@ def build_server(settings: Settings) -> FastMCP:
     ) -> dict[str, Any]:
         return await tools.invoke(
             tools.set_plan(
-                write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision), plan
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                plan,
             )
         )
 
@@ -142,7 +144,9 @@ def build_server(settings: Settings) -> FastMCP:
     ) -> dict[str, Any]:
         return await tools.invoke(
             tools.create_group(
-                write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision), name
+                write_arg(request_id, requestId),
+                revision_arg(expected_revision, expectedRevision),
+                name,
             )
         )
 
@@ -335,7 +339,9 @@ def build_server(settings: Settings) -> FastMCP:
         expectedRevision: int | None = None,
     ) -> dict[str, Any]:
         return await tools.invoke(
-            tools.sync(write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision))
+            tools.sync(
+                write_arg(request_id, requestId), revision_arg(expected_revision, expectedRevision)
+            )
         )
 
     @server.resource("watch://status", name="Watch status")
