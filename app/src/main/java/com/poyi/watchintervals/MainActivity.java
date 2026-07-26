@@ -285,8 +285,16 @@ public class MainActivity extends Activity {
 
     private void renderPagerPages() {
         if(pagerHistoryList!=null){pagerHistoryList.removeAllViews();List<WorkoutRecord> records=HistoryStore.load(this);pagerHistorySummary.setText(records.isEmpty()?"还没有训练记录":records.size()+" 次训练");
-            for(WorkoutRecord record:records){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(Ui.dp(this,14),Ui.dp(this,9),Ui.dp(this,14),Ui.dp(this,9));row.setBackground(Ui.background(this,Ui.PANEL,18));
-                TextView date=Ui.bold(this,new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.startedAt)),15,Ui.WHITE);TextView data=Ui.text(this,formatDistance(record.distanceMeters)+" · "+formatDuration(record.durationMs)+" · "+record.steps+" 步",12,Ui.MUTED);row.addView(date);row.addView(data);row.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class).putExtra("record_id",record.id)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,64));p.bottomMargin=Ui.dp(this,7);pagerHistoryList.addView(row,p);}}
+            // Distance-first rows, matching HistoryActivity: the figure a runner scans by leads,
+            // the timestamp becomes quiet metadata on the right.
+            for(WorkoutRecord record:records){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(Ui.dp(this,14),Ui.dp(this,8),Ui.dp(this,14),Ui.dp(this,8));row.setBackground(Ui.background(this,Ui.PANEL,18));
+                LinearLayout headline=new LinearLayout(this);headline.setGravity(Gravity.CENTER_VERTICAL);
+                TextView value=Ui.numeral(this,formatDistance(record.distanceMeters),21,Ui.WHITE);headline.addView(value,new LinearLayout.LayoutParams(0,-2,1));
+                TextView when=Ui.text(this,new SimpleDateFormat("MM/dd HH:mm",Locale.CHINA).format(new Date(record.startedAt)),Ui.CAPTION,Ui.MUTED);headline.addView(when,new LinearLayout.LayoutParams(-2,-2));
+                row.addView(headline,new LinearLayout.LayoutParams(-1,Ui.dp(this,26)));
+                TextView data=Ui.text(this,formatDuration(record.durationMs)+" · "+record.steps+" 步",Ui.LABEL,Ui.MUTED);
+                row.addView(data,new LinearLayout.LayoutParams(-1,Ui.dp(this,20)));
+                row.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class).putExtra("record_id",record.id)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,62));p.bottomMargin=Ui.dp(this,7);pagerHistoryList.addView(row,p);}}
         if(pagerPlanList!=null){pagerPlanList.removeAllViews();ArrayList<Stage> current=PlanStore.load(this);pagerPlanTitle.setText(PlanStore.name(this));TextView group=Ui.text(this,PlanStore.group(this)+" · "+current.size()+" 项内容",13,Ui.MUTED);pagerPlanList.addView(group,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));TextView req=Ui.text(this,PlanStore.requirement(this),12,Ui.MUTED);pagerPlanList.addView(req,new LinearLayout.LayoutParams(-1,-2));
             for(int i=0;i<current.size();i++){Stage item=current.get(i);TextView row=Ui.text(this,(i+1)+"   "+item.name()+"   "+item.targetText(),15,Ui.WHITE);row.setBackground(Ui.background(this,Ui.PANEL,18));row.setPadding(Ui.dp(this,14),0,Ui.dp(this,14),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,52));p.topMargin=Ui.dp(this,7);pagerPlanList.addView(row,p);}}
     }

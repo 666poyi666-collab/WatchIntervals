@@ -152,6 +152,18 @@ final class Ui {
         return view;
     }
 
+    /** Circular back affordance shared by every secondary screen (36dp panel disc with "‹"). */
+    static TextView backButton(Context context) {
+        TextView view = bold(context, "‹", 22, WHITE);
+        view.setGravity(Gravity.CENTER);
+        view.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(Color.argb(45, 255, 255, 255)), oval(PANEL), null));
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setContentDescription("返回");
+        return view;
+    }
+
     static View divider(Context context) {
         View view = new View(context);
         view.setBackgroundColor(LINE);

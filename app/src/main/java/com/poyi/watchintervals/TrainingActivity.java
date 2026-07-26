@@ -287,12 +287,7 @@ public class TrainingActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView close = Ui.bold(this, "‹", 22, Ui.WHITE);
-        close.setGravity(Gravity.CENTER);
-        close.setBackground(new android.graphics.drawable.RippleDrawable(
-                android.content.res.ColorStateList.valueOf(android.graphics.Color.argb(45, 255, 255, 255)),
-                Ui.oval(Ui.PANEL), null));
-        close.setClickable(true);
+        TextView close = Ui.backButton(this);
         LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(Ui.dp(this, 36), Ui.dp(this, 36));
         closeParams.rightMargin = Ui.dp(this, 8);
         header.addView(close, closeParams);

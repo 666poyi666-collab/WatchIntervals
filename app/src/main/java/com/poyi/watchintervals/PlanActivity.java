@@ -30,15 +30,17 @@ public class PlanActivity extends Activity {
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Ui.BLACK);
         root.setPadding(Ui.dp(this,16),Ui.dp(this,8),Ui.dp(this,16),Ui.dp(this,12));
         LinearLayout nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER_VERTICAL);
-        TextView back=Ui.action(this,"‹",30,Ui.WHITE,Ui.PANEL);back.setOnClickListener(v->finish());nav.addView(back,new LinearLayout.LayoutParams(Ui.dp(this,42),Ui.dp(this,42)));
-        TextView title=Ui.bold(this,"选择训练安排",22,Ui.WHITE);nav.addView(title,new LinearLayout.LayoutParams(0,Ui.dp(this,42),1));root.addView(nav);
-        TextView source=Ui.text(this,"按训练计划查看 · 离线可用",11,Ui.CYAN);source.setGravity(Gravity.CENTER);root.addView(source,new LinearLayout.LayoutParams(-1,Ui.dp(this,28)));
+        TextView back=Ui.backButton(this);back.setOnClickListener(v->finish());
+        LinearLayout.LayoutParams backParams=new LinearLayout.LayoutParams(Ui.dp(this,36),Ui.dp(this,36));backParams.rightMargin=Ui.dp(this,8);
+        nav.addView(back,backParams);
+        TextView title=Ui.bold(this,"选择训练安排",Ui.TITLE,Ui.WHITE);nav.addView(title,new LinearLayout.LayoutParams(0,Ui.dp(this,42),1));root.addView(nav);
+        TextView source=Ui.text(this,"按训练计划查看 · 离线可用",Ui.LABEL,Ui.MUTED);root.addView(source,new LinearLayout.LayoutParams(-1,Ui.dp(this,24)));
 
         libraryList=new LinearLayout(this);libraryList.setOrientation(LinearLayout.VERTICAL);root.addView(libraryList,new LinearLayout.LayoutParams(-1,-2));
         TextView previewLabel=Ui.bold(this,"安排详情",16,Ui.WHITE);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,Ui.dp(this,34));lp.topMargin=Ui.dp(this,10);root.addView(previewLabel,lp);
         LinearLayout preview=Ui.card(this);
         previewName=Ui.bold(this,"",20,Ui.WHITE);previewName.setSingleLine(false);previewName.setMaxLines(2);preview.addView(previewName,new LinearLayout.LayoutParams(-1,-2));
-        previewMeta=Ui.text(this,"",12,Ui.LIME);preview.addView(previewMeta,new LinearLayout.LayoutParams(-1,Ui.dp(this,26)));
+        previewMeta=Ui.text(this,"",12,Ui.MUTED);preview.addView(previewMeta,new LinearLayout.LayoutParams(-1,Ui.dp(this,26)));
         previewRequirement=Ui.text(this,"",12,Ui.MUTED);previewRequirement.setSingleLine(false);previewRequirement.setMaxLines(5);preview.addView(previewRequirement,new LinearLayout.LayoutParams(-1,-2));
         previewStages=new LinearLayout(this);previewStages.setOrientation(LinearLayout.VERTICAL);preview.addView(previewStages,new LinearLayout.LayoutParams(-1,-2));root.addView(preview);
 
