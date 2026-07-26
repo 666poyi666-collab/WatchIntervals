@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The watchdog needs the temporary allowlist that only an exact alarm grants; without it
+         Android 12+ refuses to restart the API foreground service after the process is reclaimed. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
@@ -22,7 +25,7 @@
         <service android:name=".PhoneLocationRelayService" android:foregroundServiceType="location" android:exported="false" />
         <service android:name=".PhonePlanBridgeService" android:foregroundServiceType="dataSync" android:exported="false" />
         <service android:name=".PhoneCompanionService" android:foregroundServiceType="connectedDevice" android:exported="false" />
-        <receiver android:name=".PhoneBootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
+        <receiver android:name=".PhoneBootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="com.poyi.watchintervals.phone.WATCHDOG" /></intent-filter></receiver>
         <activity android:name=".HistoryDetailActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>

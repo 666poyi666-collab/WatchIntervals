@@ -100,6 +100,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private long lastRecordedHeartAt;
     private WorkoutFileStore fileStore;
     private final WorkoutMetricsAccumulator metrics = new WorkoutMetricsAccumulator();
+    private final SpeedFusion speedFusion = new SpeedFusion();
     private final org.json.JSONObject routePointCountBySource = new org.json.JSONObject();
     private final org.json.JSONArray sourceTransitions = new org.json.JSONArray();
     private String lastDistanceSource = "";
@@ -348,7 +349,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         latestGpsLocationIsCached = false;
         routePoints.clear();
         heartSampleTimes.clear(); heartSampleValues.clear();
-        metrics.resetWindow();
+        metrics.resetWindow(); speedFusion.reset();
         while (routePointCountBySource.length() > 0) routePointCountBySource.remove(routePointCountBySource.keys().next());
         while (sourceTransitions.length() > 0) sourceTransitions.remove(0);
         lastDistanceSource = ""; accuracyTotal = 0; accuracySamples = 0; accuracyMinimum = Float.MAX_VALUE; accuracyMaximum = 0;
@@ -750,7 +751,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
 
     public synchronized void pauseWorkout() {
         if (!running || paused) return;
-        tick(); paused = true; pauseStartedWall = System.currentTimeMillis(); metrics.resetWindow();
+        tick(); paused = true; pauseStartedWall = System.currentTimeMillis(); metrics.resetWindow(); speedFusion.reset();
         if (paused) {
             lastLocation = null;
             stageGpsReady = false;
@@ -765,7 +766,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     public synchronized void resumeWorkout() {
         if (!running || !paused) return;
         if (pauseStartedWall > 0) pausedDurationMs += Math.max(0, System.currentTimeMillis() - pauseStartedWall);
-        pauseStartedWall = 0; paused = false; metrics.resetWindow(); resetStageGpsBaseline(); systemExerciseBridge.resume();
+        pauseStartedWall = 0; paused = false; metrics.resetWindow(); speedFusion.reset(); resetStageGpsBaseline(); systemExerciseBridge.resume();
         lastTick = SystemClock.elapsedRealtime(); vibrate(new long[]{0, 100, 80, 100});
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification()); saveSession(true);
     }
@@ -880,6 +881,13 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         gpsProviderEnabled = true;
         latestGpsLocation = new Location(location);
         latestGpsLocationIsCached = false;
+        // The GNSS chip derives this from Doppler shift, so it is both steadier and quicker to
+        // react than differencing successive positions. Feed it before any trackability filter:
+        // a fix can be too imprecise to extend the route yet still carry a usable speed.
+        if (location.hasSpeed() && running && !paused) {
+            speedFusion.addGnssSpeed(SystemClock.elapsedRealtime(), location.getSpeed(),
+                    location.hasSpeedAccuracy() ? location.getSpeedAccuracyMetersPerSecond() : -1d);
+        }
         if (isTrackableGpsLocation(location)) lastTrackableGpsElapsed = lastGpsFixElapsed;
         if (preparing || paused) return;
         if (!isTrackableGpsLocation(location)) {
@@ -1099,7 +1107,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             planCompletedWallTime = System.currentTimeMillis();
             stageMeters = currentStage().unit == Stage.Unit.DISTANCE ? currentStage().target : stageMeters;
             stageMillis = currentStage().unit == Stage.Unit.TIME ? currentStage().target * 1000L : stageMillis;
-            metrics.resetWindow();
+            metrics.resetWindow(); speedFusion.reset();
             getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification());
             saveSession(true);
         } else {
@@ -1157,7 +1165,19 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                 systemGpsAvailable, systemGpsLocated, systemGpsSnr, systemGpsDetail,
                 routeLatitudes, routeLongitudes,
                 preparing, paused, planCompleted,
-                metrics.currentSpeedMps(SystemClock.elapsedRealtime()), metrics.currentSpeedEstimated(), metrics.maxSmoothedSpeedMps(), currentPausedDuration());
+                fusedSpeedMps(), speedFusion.estimated(), metrics.maxSmoothedSpeedMps(), currentPausedDuration());
+    }
+
+    /**
+     * Current speed for the UI, preferring the GNSS chip's own Doppler reading over the
+     * distance-differenced window. The window figure is refreshed here so both sources share the
+     * same clock reading and the fusion sees them as equally fresh.
+     */
+    private double fusedSpeedMps() {
+        long now = SystemClock.elapsedRealtime();
+        double windowSpeed = metrics.currentSpeedMps(now);
+        if (Double.isFinite(windowSpeed)) speedFusion.addWindowSpeed(now, windowSpeed, metrics.currentSpeedEstimated());
+        return speedFusion.speedMps(now);
     }
 
     private String remainingText() {

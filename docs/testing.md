@@ -147,6 +147,16 @@ git diff --check
 - ChatGPT 真实写入：`watch_sync_plans` 首次成功，同一 `requestId` 重放返回 `duplicate=true`；pause 成功，以不同 requestId 重放同一 `commandId` 返回 `duplicate=true`。训练最终经状态回读为 `RUNNING + COMPLETED`。
 - 现场修复 mDNS IPv6 缺少方括号及不可达 IPv6 阻塞 IPv4的问题；新增 2 项测试后 MCP pytest 为 12 项通过。手机前台 API 被系统结束后的首次远程调用按离线失败，重新启动应用后读取恢复；无 ADB 的开机/后台恢复仍需单独重启验收。
 
+### 0.20.0 后台链路恢复与配速融合证据（2026-07-26）
+
+- Android 与 MCP 自动化：`:app:testDebugUnitTest`、`:phone:testDebugUnitTest` 通过；`mcp` pytest 12 项通过；两个模块 `assembleDebug` 通过。
+- `SpeedFusion` 新增 6 项纯 Java 用例：GNSS 优先、过期回退到距离窗口、精度与异常值拦截、抖动阻尼与收敛、静止判定与全源过期、配速换算与 `m'ss"` 格式化。
+- 后台 LAN 发现：删除手机 `connection.xml` 并销毁 `MainActivity` 后，后台 `WatchLanLocator` 重新写回 `host` 与 `watch_device_id`；此时 MCP `watch_get_status` 为 `CONNECTED_BLE_LAN`、`lanAvailable=true`、`connection.state=healthy`。
+- 控制链路：`watch_stop_workout` 首次 `accepted=true`（controlRevision 5→6）；对已停止会话重复 `expected_state=running` 返回 `STATE_MISMATCH`；相同 `requestId`/`commandId` 重放返回 `duplicateRequest=true`。
+- 进程恢复：`am crash` 后进程消失、`/v1/health` 不可达；`dumpsys deviceidle tempwhitelist`（等价于精确闹钟投递时的临时白名单）后触发 `WATCHDOG` 广播，进程重建、`/v1/health` 恢复 401、看门狗重新挂起。
+- 监听器硬化：绑定失败路径现有明确日志与退避重试，`logcat -s PhonePlanBridge` 可见 `API listening on 8766`。
+- 未覆盖：开阔户外 GNSS 多普勒配速对比、非充电长时间功耗、MIUI 自启动关闭时的恢复行为。
+
 ## 6. 建议优先补齐的自动测试
 
 1. `Stage`/`PlanStore` 编解码、默认计划和法特莱克识别。

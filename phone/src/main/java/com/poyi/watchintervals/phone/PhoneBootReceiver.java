@@ -1,7 +1,67 @@
 package com.poyi.watchintervals.phone;
+
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.SystemClock;
+
+/**
+ * Brings the phone-side services back up, both after a reboot and after the process is reclaimed.
+ *
+ * <p>{@code START_STICKY} alone was not enough on this phone: once the OS killed the app while it
+ * sat in the background, nothing restarted it, so the Watch MCP chain stayed dark until the user
+ * happened to reopen the app by hand. That is precisely the failure that makes remote control
+ * unreliable from outdoors, so the receiver also arms a repeating watchdog alarm that re-issues
+ * the service start. Both entry points are idempotent — starting an already-running foreground
+ * service is a no-op.
+ */
 public class PhoneBootReceiver extends BroadcastReceiver {
-    @Override public void onReceive(Context context, Intent intent) { context.startForegroundService(new Intent(context, PhonePlanBridgeService.class));context.startForegroundService(new Intent(context,PhoneCompanionService.class)); }
+    /** Broadcast the watchdog alarm sends back to this receiver. */
+    public static final String ACTION_WATCHDOG = "com.poyi.watchintervals.phone.WATCHDOG";
+    /** Inexact so the OS can batch it; the goal is eventual recovery, not punctuality. */
+    private static final long WATCHDOG_INTERVAL_MILLIS = AlarmManager.INTERVAL_FIFTEEN_MINUTES;
+
+    @Override public void onReceive(Context context, Intent intent) {
+        startServices(context);
+        schedule(context);
+    }
+
+    static void startServices(Context context) {
+        try {
+            context.startForegroundService(new Intent(context, PhonePlanBridgeService.class));
+            context.startForegroundService(new Intent(context, PhoneCompanionService.class));
+        } catch (Exception error) {
+            // Android 12+ blocks background foreground-service starts in some states. The next
+            // watchdog tick retries, so this must not take the receiver down.
+            android.util.Log.w("PhoneBootReceiver", "service start deferred", error);
+        }
+    }
+
+    /**
+     * Arms (or re-arms) the recovery alarm. Safe to call on every service start.
+     *
+     * <p>A plain inexact alarm is not enough on API 31+: the receiver runs in state {@code RCVR},
+     * where {@code startForegroundService} is refused with
+     * {@code ForegroundServiceStartNotAllowedException}. Firing through
+     * {@code setExactAndAllowWhileIdle} puts the app on the short temporary allowlist that
+     * explicitly permits that start, so the exact variant is used whenever the OS grants it, and
+     * the inexact repeating alarm remains as a best-effort fallback.
+     */
+    static void schedule(Context context) {
+        AlarmManager alarms = context.getSystemService(AlarmManager.class);
+        if (alarms == null) return;
+        Intent intent = new Intent(context, PhoneBootReceiver.class).setAction(ACTION_WATCHDOG);
+        PendingIntent pending = PendingIntent.getBroadcast(context, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        long triggerAt = SystemClock.elapsedRealtime() + WATCHDOG_INTERVAL_MILLIS;
+        if (alarms.canScheduleExactAlarms()) {
+            // One-shot by nature: every delivery re-arms the next one from onReceive.
+            alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pending);
+            return;
+        }
+        alarms.setInexactRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt,
+                WATCHDOG_INTERVAL_MILLIS, pending);
+    }
 }

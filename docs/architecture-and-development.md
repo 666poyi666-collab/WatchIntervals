@@ -87,6 +87,17 @@
 
 这些阈值改变属于产品行为变化，必须关联需求/缺陷编号并进行户外真机对比。
 
+### 5.1 速度与配速融合
+
+距离来源决定「跑了多远」，`SpeedFusion` 决定「现在多快」，两者互相独立：
+
+- 主源为 GNSS 多普勒速度 `Location.getSpeed()`。样本需在 3 秒内、`getSpeedAccuracyMetersPerSecond()` 优于 1.6 m/s（平台未提供精度时不做该项拦截），且不超过 12.5 m/s。
+- 备源为 `WorkoutMetricsAccumulator` 的 10 秒距离窗口速度，沿用既有 `STALE_MILLIS` 过期规则。
+- 输出按 4 秒时间常数做基于时间的指数平滑，因此不规则的定位频率不会改变平滑强度；低于 0.5 m/s 显示为静止而不是抖动的小数。
+- 暂停、恢复和阶段切换调用 `resetWindow()` 时同步 `SpeedFusion.reset()`，避免休息后仍显示休息前的速度。
+
+`SpeedFusion` 不引用任何 Android 类型，规则由 `app/src/test` 的纯 Java 测试覆盖。
+
 ## 6. 本地 API 合约
 
 ### 手表 `:8765`

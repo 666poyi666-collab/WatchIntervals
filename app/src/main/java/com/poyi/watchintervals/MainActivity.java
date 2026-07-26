@@ -177,8 +177,14 @@ public class MainActivity extends Activity {
         boolean heartIssue = hasHeartSensor && !heartGranted;
         boolean stepsIssue = needsLocation() && hasStepSensor && !stepsGranted;
         if (!gpsIssue && !heartIssue && !stepsIssue) {
+            // The pairing code is setup material, not a permanent readout. Once a phone has paired
+            // it only competes with the training controls for attention, so the row goes away.
+            if (WatchPairingStore.hasPairedPhone(this)) {
+                sensorStatus.setVisibility(View.GONE);
+                return;
+            }
             sensorStatus.setText("手机配对码  " + WatchBridgeService.pairingCode(this));
-            sensorStatus.setTextColor(Ui.CYAN);
+            sensorStatus.setTextColor(Ui.MUTED);
             sensorStatus.setVisibility(View.VISIBLE);
             return;
         }

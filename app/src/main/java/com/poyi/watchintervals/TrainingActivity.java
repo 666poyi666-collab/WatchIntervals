@@ -23,6 +23,8 @@ import java.util.ArrayList;
 
 public class TrainingActivity extends Activity {
     public static final String EXTRA_PREPARED_SESSION = "com.poyi.watchintervals.PREPARED_SESSION";
+    /** Index of the live route panel inside {@link #workoutPager}. */
+    private static final int ROUTE_PAGE = 3;
     private WorkoutService service;
     private boolean bound, workoutCompleted;
     private boolean allowTaskLeave;
@@ -30,13 +32,19 @@ public class TrainingActivity extends Activity {
     private String lastStageSummary = "";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView stageName, remaining, remainingLabel, stageProgress, stageCounter, gps, distance, pace, heart, steps, duration, pause, stop;
+    private TextView paceUnit, speed, speedSource;
     private LinearLayout controls, stopConfirmation, transitionNotice, routePanel;
     private View stopScrim;
     private TextView transitionTitle, transitionDetail, routeSummary;
     private WorkoutRouteView routeView;
     private ProgressBar progress;
     private WatchPagerLayout workoutPager;
-    private final Runnable update = new Runnable() { @Override public void run() { refresh(); handler.postDelayed(this, 500); } };
+    // Every value on screen changes at most once a second, so a 2 Hz tick just doubled the CPU
+    // wake-ups and layout passes for an identical picture.
+    private static final long REFRESH_INTERVAL_MILLIS = 1_000L;
+    private final Runnable update = new Runnable() {
+        @Override public void run() { refresh(); handler.postDelayed(this, REFRESH_INTERVAL_MILLIS); }
+    };
     private final Runnable hideTransition = new Runnable() { @Override public void run() {
         if (transitionNotice != null) transitionNotice.setVisibility(View.GONE);
     }};
@@ -76,7 +84,7 @@ public class TrainingActivity extends Activity {
         workoutPager.addView(controlPage);
         workoutPager.addView(corePage);
         workoutPager.addView(dataPage);
-        workoutPager.addView(routePanel);
+        workoutPager.addView(routePanel);   // index == ROUTE_PAGE
         workoutPager.setCurrentItem(1, false);
         shell.addView(workoutPager, new FrameLayout.LayoutParams(-1, -1));
 
@@ -130,16 +138,58 @@ public class TrainingActivity extends Activity {
         return root;
     }
 
+    /**
+     * Primary in-workout page. Pace is the hero because that is the number a runner steers by;
+     * speed stays visible underneath since the user asked for both readings at once.
+     */
     private LinearLayout buildCorePage() {
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(Ui.dp(this,16),Ui.dp(this,12),Ui.dp(this,16),Ui.dp(this,8));root.setBackgroundColor(Ui.BLACK);
-        TextView title=Ui.bold(this,"实时数据",18,Ui.WHITE);title.setGravity(Gravity.CENTER);root.addView(title,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));
-        TextView speedLabel=Ui.text(this,"当前时速",11,Ui.MUTED);speedLabel.setGravity(Gravity.CENTER);root.addView(speedLabel,new LinearLayout.LayoutParams(-1,Ui.dp(this,20)));
-        pace=Ui.bold(this,"-- km/h",48,Ui.LIME);pace.setGravity(Gravity.CENTER);root.addView(pace,new LinearLayout.LayoutParams(-1,Ui.dp(this,62)));
-        LinearLayout metrics=Ui.card(this);metrics.setPadding(Ui.dp(this,6),Ui.dp(this,6),Ui.dp(this,6),Ui.dp(this,6));
-        LinearLayout first=new LinearLayout(this);distance=metric(first,"总距离","0 m");duration=metric(first,"活动时间","00:00");metrics.addView(first,new LinearLayout.LayoutParams(-1,Ui.dp(this,58)));metrics.addView(Ui.divider(this));
-        LinearLayout second=new LinearLayout(this);heart=metric(second,"心率","-- bpm");steps=metric(second,"实际步数","0 步");metrics.addView(second,new LinearLayout.LayoutParams(-1,Ui.dp(this,58)));root.addView(metrics,new LinearLayout.LayoutParams(-1,-2));
-        root.addView(new View(this),new LinearLayout.LayoutParams(-1,0,1));root.addView(Ui.pagerDots(this,1,4),new LinearLayout.LayoutParams(-1,Ui.dp(this,22)));
-        TextView hint=Ui.text(this,"左侧控制 · 右侧计划",10,Ui.MUTED);hint.setGravity(Gravity.CENTER);root.addView(hint,new LinearLayout.LayoutParams(-1,Ui.dp(this,16)));return root;
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 16), Ui.dp(this, 6));
+        root.setBackgroundColor(Ui.BLACK);
+
+        // Weighted spacers above and below the stack keep the block optically centred instead of
+        // stranding a third of the panel empty under the metric card.
+        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+
+        TextView paceLabel = Ui.text(this, "当前配速", Ui.LABEL, Ui.MUTED);
+        paceLabel.setGravity(Gravity.CENTER);
+        root.addView(paceLabel, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
+
+        pace = Ui.bold(this, "--", Ui.DISPLAY, Ui.LIME);
+        pace.setGravity(Gravity.CENTER);
+        root.addView(pace, new LinearLayout.LayoutParams(-1, Ui.dp(this, 54)));
+
+        paceUnit = Ui.text(this, "分钟 / 公里", Ui.CAPTION, Ui.MUTED);
+        paceUnit.setGravity(Gravity.CENTER);
+        root.addView(paceUnit, new LinearLayout.LayoutParams(-1, Ui.dp(this, 15)));
+
+        speed = Ui.bold(this, "-- km/h", Ui.HEADLINE, Ui.WHITE);
+        speed.setGravity(Gravity.CENTER);
+        root.addView(speed, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
+
+        speedSource = Ui.text(this, "", Ui.CAPTION, Ui.MUTED);
+        speedSource.setGravity(Gravity.CENTER);
+        root.addView(speedSource, new LinearLayout.LayoutParams(-1, Ui.dp(this, 15)));
+
+        LinearLayout metrics = Ui.card(this);
+        metrics.setPadding(Ui.dp(this, 6), Ui.dp(this, 8), Ui.dp(this, 6), Ui.dp(this, 8));
+        LinearLayout first = new LinearLayout(this);
+        distance = Ui.metricTile(this, first, "总距离", "0 m", Ui.WHITE);
+        duration = Ui.metricTile(this, first, "活动时间", "00:00", Ui.WHITE);
+        metrics.addView(first, new LinearLayout.LayoutParams(-1, -2));
+        metrics.addView(Ui.divider(this));
+        LinearLayout second = new LinearLayout(this);
+        heart = Ui.metricTile(this, second, "心率", "--", Ui.WHITE);
+        steps = Ui.metricTile(this, second, "步数", "0", Ui.WHITE);
+        metrics.addView(second, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.topMargin = Ui.dp(this, 6);
+        root.addView(metrics, cardParams);
+
+        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(Ui.pagerDots(this, 1, 4), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
+        return root;
     }
 
     private LinearLayout buildControlPage() {
@@ -154,8 +204,8 @@ public class TrainingActivity extends Activity {
         page.addView(title, new LinearLayout.LayoutParams(-1, Ui.dp(this, 44)));
         page.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
         controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER);
-        pause = roundControl("Ⅱ", "暂停", Ui.GREEN);
-        stop = roundControl("■", "长按结束", Ui.RED);
+        pause = roundControl("Ⅱ", "暂停", Ui.GREEN, true);
+        stop = roundControl("■", "结束", Ui.RED, false);
         LinearLayout.LayoutParams action = new LinearLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 104));
         action.rightMargin = Ui.dp(this, 18); controls.addView(pause, action);
         controls.addView(stop, new LinearLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 104)));
@@ -172,10 +222,18 @@ public class TrainingActivity extends Activity {
         return page;
     }
 
-    private TextView roundControl(String symbol, String label, int color) {
-        TextView button = Ui.bold(this, symbol + "\n" + label, 17, Ui.BLACK);
-        button.setSingleLine(false); button.setGravity(Gravity.CENTER); button.setLineSpacing(0, .86f);
-        button.setBackground(Ui.ovalAction(this, color)); button.setClickable(true); button.setFocusable(true);
+    /**
+     * @param primary the routine action gets the solid fill; the destructive one stays tonal so
+     *                the two circles no longer compete for the same visual weight.
+     */
+    private TextView roundControl(String symbol, String label, int color, boolean primary) {
+        TextView button = Ui.bold(this, symbol + "\n" + label, Ui.BODY, primary ? Ui.BLACK : color);
+        button.setSingleLine(false);
+        button.setGravity(Gravity.CENTER);
+        button.setLineSpacing(0, 1.05f);
+        button.setBackground(primary ? Ui.ovalAction(this, color) : Ui.tonalOvalAction(this, color, 38, 130));
+        button.setClickable(true);
+        button.setFocusable(true);
         return button;
     }
 
@@ -327,12 +385,24 @@ public class TrainingActivity extends Activity {
         }
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
         progress.setProgress((int)(s.progress * 1000));
-        distance.setText(formatDistance(s.totalMeters));
-        pace.setText(formatCurrentSpeed(s));
-        heart.setText(heartStatus(s));
-        steps.setText(s.sessionSteps + " 步");
-        duration.setText(formatDuration(s.activeMillis));
-        if (routeView != null) routeView.setRoute(s.routeLatitudes, s.routeLongitudes);
+        // setTextIfChanged throughout: refresh runs on a timer, and TextView.setText relayouts
+        // even when the string is identical, which is most ticks for slow-moving values.
+        Ui.setTextIfChanged(distance, formatDistance(s.totalMeters));
+        Ui.setTextIfChanged(pace, formatCurrentPace(s));
+        Ui.setTextIfChanged(speed, formatCurrentSpeed(s));
+        Ui.setTextIfChanged(speedSource, speedSourceText(s));
+        // A live figure earns the accent colour; a placeholder stays muted so the eye is not
+        // drawn to a number that is not there yet.
+        boolean paceLive = Double.isFinite(s.currentSpeedMps) && s.currentSpeedMps >= SpeedFusion.MOVING_THRESHOLD_MPS;
+        pace.setTextColor(paceLive ? accent : Ui.MUTED);
+        speed.setTextColor(paceLive ? Ui.WHITE : Ui.MUTED);
+        Ui.setTextIfChanged(heart, heartStatus(s));
+        Ui.setTextIfChanged(steps, String.valueOf(s.sessionSteps));
+        Ui.setTextIfChanged(duration, formatDuration(s.activeMillis));
+        // The route view rasterises every point; only feed it while its page can actually be seen.
+        if (routeView != null && workoutPager != null && workoutPager.getCurrentItem() == ROUTE_PAGE) {
+            routeView.setRoute(s.routeLatitudes, s.routeLongitudes);
+        }
         if (routeSummary != null) {
             int points = Math.min(s.routeLatitudes.length, s.routeLongitudes.length);
             routeSummary.setText(points > 0
@@ -401,6 +471,24 @@ public class TrainingActivity extends Activity {
     private String formatCurrentSpeed(WorkoutService.Snapshot s) {
         if (!Double.isFinite(s.currentSpeedMps)) return "-- km/h";
         return (s.currentSpeedEstimated ? "约 " : "") + String.format(Locale.CHINA, "%.1f km/h", s.currentSpeedMps * 3.6d);
+    }
+
+    /** Minutes per kilometre, the reading runners actually pace by. */
+    private String formatCurrentPace(WorkoutService.Snapshot s) {
+        // A bare dash beats "--'--\"" as a placeholder: the prime marks read as broken glyphs at
+        // display size when there is no number between them.
+        if (!Double.isFinite(s.currentSpeedMps) || s.currentSpeedMps < SpeedFusion.MOVING_THRESHOLD_MPS) {
+            return "--";
+        }
+        return SpeedFusion.formatPace(1000d / s.currentSpeedMps);
+    }
+
+    /** Names the measurement behind the readout so an estimated figure is never mistaken for GPS. */
+    private String speedSourceText(WorkoutService.Snapshot s) {
+        if (s.paused) return "已暂停";
+        if (!Double.isFinite(s.currentSpeedMps)) return "等待速度数据";
+        if (s.currentSpeedEstimated) return "步数估算";
+        return s.hasGpsFix ? "卫星测速" : "轨迹推算";
     }
 
     private String heartStatus(WorkoutService.Snapshot s) {

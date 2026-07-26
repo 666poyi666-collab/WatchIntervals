@@ -21,11 +21,11 @@
 | 项目 | 当前值 |
 | --- | --- |
 | 基线日期 | 2026-07-26 |
-| 手表应用 | `app`，`com.poyi.watchintervals`，`0.19.0`（29） |
-| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.19.0`（13） |
+| 手表应用 | `app`，`com.poyi.watchintervals`，`0.20.0`（30） |
+| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.20.0`（14） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | `0.19.0` BLE 集成 debug 候选，待安全配对、无 Wi-Fi、后台与长时间门禁 |
+| 发布状态 | `0.20.0` debug 候选：原生配速融合与后台链路恢复已真机验证，待户外 GNSS 配速对比与长时间功耗门禁 |
 
 ## 事实来源
 

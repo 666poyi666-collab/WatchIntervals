@@ -41,6 +41,7 @@ mcp/*.pid
 analysis/
 dist/
 .agents/
+.work/
 
 # Root-level test captures and third-party APK samples
 /*.png

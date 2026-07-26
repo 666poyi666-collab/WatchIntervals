@@ -15,18 +15,31 @@ import android.widget.TextView;
 
 final class Ui {
     private static final float WATCH_SCALE = 1.35f;
-    static final int BLACK = Color.rgb(7, 9, 10);
-    static final int PANEL = Color.rgb(22, 25, 27);
-    static final int PANEL_ACTIVE = Color.rgb(35, 39, 41);
-    static final int WHITE = Color.rgb(248, 249, 246);
-    static final int MUTED = Color.rgb(151, 158, 155);
-    static final int LINE = Color.rgb(47, 51, 52);
+
+    // OWW221 is AMOLED: a pure black background leaves those pixels physically unlit, which both
+    // saves panel power on a long run and gives the bezel-less look a real product has. The old
+    // near-black (7,9,10) lit every pixel on screen for no visual gain.
+    static final int BLACK = Color.rgb(0, 0, 0);
+    static final int PANEL = Color.rgb(19, 21, 24);
+    static final int PANEL_ACTIVE = Color.rgb(32, 35, 39);
+    static final int WHITE = Color.rgb(245, 246, 247);
+    static final int MUTED = Color.rgb(138, 145, 153);
+    static final int LINE = Color.rgb(42, 45, 50);
     static final int LIME = Color.rgb(190, 255, 71);
     static final int YELLOW = Color.rgb(255, 215, 52);
     static final int CYAN = Color.rgb(83, 218, 229);
     static final int AMBER = Color.rgb(255, 183, 66);
     static final int RED = Color.rgb(255, 86, 79);
     static final int GREEN = Color.rgb(70, 226, 129);
+
+    // One type scale instead of per-screen magic numbers, so headings and labels line up across
+    // the home, training, plan and history pages.
+    static final float DISPLAY = 44f;
+    static final float TITLE = 22f;
+    static final float HEADLINE = 17f;
+    static final float BODY = 13f;
+    static final float LABEL = 11f;
+    static final float CAPTION = 9.5f;
 
     private Ui() {}
 
@@ -82,6 +95,25 @@ final class Ui {
                 oval(Color.WHITE));
     }
 
+    /**
+     * Tonal circular button: a dark fill tinted toward {@code color} with a matching ring.
+     *
+     * <p>Two fully saturated circles side by side read as unfinished — nothing else on the watch
+     * is that loud, and neither action looks more primary than the other. A tonal treatment keeps
+     * the colour coding while letting the destructive action sit back from the routine one.
+     */
+    static RippleDrawable tonalOvalAction(Context context, int color, int fillAlpha, int strokeAlpha) {
+        GradientDrawable base = new GradientDrawable();
+        base.setShape(GradientDrawable.OVAL);
+        base.setColor(Color.argb(fillAlpha, Color.red(color), Color.green(color), Color.blue(color)));
+        base.setStroke(dp(context, 1.5f),
+                Color.argb(strokeAlpha, Color.red(color), Color.green(color), Color.blue(color)));
+        return new RippleDrawable(
+                ColorStateList.valueOf(Color.argb(60, Color.red(color), Color.green(color), Color.blue(color))),
+                base,
+                oval(Color.WHITE));
+    }
+
     static GradientDrawable outlinedBackground(Context context, int color, int stroke, float radiusDp) {
         GradientDrawable drawable = background(context, color, radiusDp);
         drawable.setStroke(dp(context, 1), stroke);
@@ -120,15 +152,75 @@ final class Ui {
         return card;
     }
 
-    static TextView pagerDots(Context context, int active, int count) {
-        StringBuilder dots = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            if (i > 0) dots.append("   ");
-            dots.append(i == active ? "●" : "○");
+    /**
+     * Page indicator drawn as real geometry.
+     *
+     * <p>The previous version rendered "●   ○   ○" as text, so the dot size, spacing and vertical
+     * alignment were all at the mercy of the font's glyph metrics — the visible unevenness was the
+     * single clearest "hand-made" tell on the home screen.
+     */
+    static final class PagerDots extends View {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final float radius, spacing;
+        private final int count;
+        private int active;
+
+        PagerDots(Context context, int count, int active) {
+            super(context);
+            this.count = Math.max(1, count);
+            this.active = active;
+            radius = dp(context, 2.6f);
+            spacing = dp(context, 9f);
         }
-        TextView view = text(context, dots.toString(), 9, MUTED);
-        view.setGravity(Gravity.CENTER);
-        return view;
+
+        void setActive(int value) {
+            if (value == active) return;
+            active = value;
+            invalidate();
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            setMeasuredDimension(resolveSize((int)Math.ceil(count * spacing), widthSpec),
+                    resolveSize((int)Math.ceil(radius * 4f), heightSpec));
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            float centerY = getHeight() / 2f;
+            float startX = (getWidth() - (count - 1) * spacing) / 2f;
+            for (int index = 0; index < count; index++) {
+                boolean current = index == active;
+                paint.setColor(current ? WHITE : LINE);
+                canvas.drawCircle(startX + index * spacing, centerY, current ? radius : radius * 0.72f, paint);
+            }
+        }
+    }
+
+    static PagerDots pagerDots(Context context, int active, int count) {
+        return new PagerDots(context, count, active);
+    }
+
+    /**
+     * Label-over-value tile used by the training metric grid. Returns the value view so callers
+     * keep a handle for updates without re-walking the hierarchy.
+     */
+    static TextView metricTile(Context context, LinearLayout row, String label, String initialValue, int valueColor) {
+        LinearLayout cell = new LinearLayout(context);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER);
+        TextView caption = text(context, label, CAPTION, MUTED);
+        caption.setGravity(Gravity.CENTER);
+        TextView value = bold(context, initialValue, HEADLINE, valueColor);
+        value.setGravity(Gravity.CENTER);
+        cell.addView(caption, new LinearLayout.LayoutParams(-1, -2));
+        cell.addView(value, new LinearLayout.LayoutParams(-1, -2));
+        row.addView(cell, new LinearLayout.LayoutParams(0, -2, 1));
+        return value;
+    }
+
+    /** Skips the relayout that {@link TextView#setText} forces even when the string is unchanged. */
+    static void setTextIfChanged(TextView view, CharSequence value) {
+        if (view == null || value == null) return;
+        if (!value.toString().contentEquals(view.getText())) view.setText(value);
     }
 
     static int stageColor(Stage.Kind kind) {

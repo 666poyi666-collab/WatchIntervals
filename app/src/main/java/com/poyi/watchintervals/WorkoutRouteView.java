@@ -77,16 +77,30 @@ final class WorkoutRouteView extends FrameLayout {
     }
 
     private void applyDarkTileFilter() {
-        // Low-luminance blue/green gray closely follows baidu_map_dark.sty
-        // while keeping roads and labels readable on a 378px round display.
+        // Invert luminance rather than scaling it down. The previous matrix multiplied every
+        // channel by ~0.1 and then added a constant, so a blank map tile (near-white, which is
+        // most of a raster basemap) landed on RGB(58,71,80): a flat slate slab that read as a
+        // broken placeholder instead of a dark map.
+        //
+        // Inverting luminance and keeping the result near-grey gives the real thing: white paper
+        // becomes near-black, dark roads and labels become light, and a plain colour inversion's
+        // hue flip (green parks turning purple) never happens because hue is discarded.
+        final float weight = 0.80f;
+        final float lumR = 0.299f * weight, lumG = 0.587f * weight, lumB = 0.114f * weight;
         ColorMatrix dark = new ColorMatrix(new float[] {
-            .08f, .11f, .03f, 0, 3,
-            .09f, .13f, .04f, 0, 6,
-            .10f, .14f, .05f, 0, 8,
+            -lumR, -lumG, -lumB, 0, 200,
+            -lumR, -lumG, -lumB, 0, 204,
+            -lumR, -lumG, -lumB, 0, 212,   // a touch more blue keeps it from reading brown
             0, 0, 0, 1, 0
         });
         mapView.getOverlayManager().getTilesOverlay()
                 .setColorFilter(new ColorMatrixColorFilter(dark));
+        // Without these, osmdroid paints its default slate-grey placeholder wherever a tile has
+        // not loaded. Outdoors with no data connection that is the entire panel, which made the
+        // map look like an unfinished placeholder rather than a dark map.
+        mapView.setBackgroundColor(Ui.BLACK);
+        mapView.getOverlayManager().getTilesOverlay().setLoadingBackgroundColor(Color.rgb(14, 16, 18));
+        mapView.getOverlayManager().getTilesOverlay().setLoadingLineColor(Color.rgb(26, 29, 32));
     }
 
     void setRoute(double[] latitudes, double[] longitudes) {

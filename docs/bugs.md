@@ -187,6 +187,37 @@
 - 当前判断：连接创建页只展示工具，当前 ChatGPT 插件执行面未把该 URI 路由到 MCP `resources/read`。
 - 关闭条件：平台端可见并读取静态/模板 Resource，或在不增加第 25 个业务工具的前提下提供等价 Resource 入口。
 
+### BUG-020：手机 API 监听绑定失败被静默吞掉
+
+- 状态：Fixed，已真机验证
+- 严重度：P1
+- 影响：手机 0.19.0 及更早
+- 现象：`PhonePlanBridgeService.serve()` 只 `new ServerSocket(PORT)` 一次；绑定抛异常时 `server` 仍为 `null`，日志分支被跳过，进程存活但 8766 不服务，MCP 全链路返回 `watch_offline` 且无任何诊断。
+- 初步根因：catch 分支以 `server != null` 为前提；无重试、无 `SO_REUSEADDR`、无失败日志。
+- 处理：改为显式 `bind` + `setReuseAddress(true)`，失败按 1s→30s 退避重试并记录端口与异常；`stopping` 标志区分正常停止与需重试的失败。
+- 验证：`adb` 强制杀进程后重启，`logcat -s PhonePlanBridge` 出现 `API listening on 8766`，`/v1/health` 恢复 401。
+
+### BUG-021：手机进程被回收后台服务不再恢复
+
+- 状态：Fixed，已真机验证（依赖 MIUI 自启动授权）
+- 严重度：P1
+- 影响：手机 0.19.0 及更早
+- 现象：进程被系统或异常终止后不再自行拉起，8766 长期不可达；用户在户外打开 ChatGPT 时 MCP 无法连接，必须手动打开手机 App 才恢复。
+- 初步根因：仅依赖 `START_STICKY` 默认值；MIUI 抑制异常终止后的重启。补加广播看门狗后，Android 15 在 `uidState: RCVR` 下拒绝后台启动前台服务，日志为 `ForegroundServiceStartNotAllowedException: mAllowStartForeground false`。
+- 处理：`onStartCommand` 显式返回 `START_STICKY`；`PhoneBootReceiver` 增加 `WATCHDOG` 动作与 15 分钟看门狗，并改用 `setExactAndAllowWhileIdle` 取得投递时的临时白名单，该白名单是平台文档中允许后台启动前台服务的豁免路径；无精确闹钟权限时退回 `setInexactRepeating`。
+- 验证：`am crash` 后进程消失、8766 不可达；`dumpsys deviceidle tempwhitelist`（模拟精确闹钟投递时的临时白名单）后触发 `WATCHDOG` 广播，进程重建、`/v1/health` 恢复 401、看门狗重新挂起。
+- 残留风险：MIUI「自启动」为系统级开关，代码无法覆盖；关闭时任何拉起路径都会失败，需用户在系统设置中授权。
+
+### BUG-022：轨迹底图暗色滤镜把空白瓦片变成灰蓝色块
+
+- 状态：Fixed，已真机验证
+- 严重度：P2
+- 影响：手表 0.19.0 及更早
+- 现象：训练轨迹页整块呈 `RGB(58,71,80)` 灰蓝，看起来像未完成的占位图而不是暗色地图。
+- 初步根因：滤镜矩阵把各通道乘以约 0.1 后再加常数偏移，近白色瓦片（栅格底图的大部分区域）被压到中等亮度而非接近黑色。
+- 处理：改为反转亮度并保持近灰输出；白纸变近黑、深色道路与注记变亮，同时避免朴素颜色反转造成的色相翻转。
+- 验证：真机截图底图为近黑，轨迹折线与起点/当前点标记对比正常。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。

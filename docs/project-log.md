@@ -222,3 +222,43 @@
 - ChatGPT 请求 `watch://status` 返回 `Unknown resource`，而本机 `resources/read` 成功；Tunnel 未转发该 Resource 请求，登记 BUG-019。
 - 现场发现 mDNS IPv6 被拼成缺少方括号的 URL并可能阻塞 IPv4；修复地址规范化、IPv4 优先、坏缓存跳过和 InvalidURL 容错，新增测试后 MCP pytest 12 项通过。
 - 最终 MCP Wheel：`mcp/dist/poyi_watch_mcp-0.20.0.dev0-py3-none-any.whl`，SHA-256 `C0155E7B1545B7406D4DC66617CAFCF450A7D04DDB1B72FCA400053D5981A365`。
+
+## 2026-07-26：0.20.0 原生配速、界面成熟度与后台链路可靠性
+
+- 关联 `REQ-DATA-011`、`REQ-DATA-013`、`BUG-020` 至 `BUG-022`。
+
+### 配速改用原生 GNSS 测速
+
+- 原实现的当前速度完全由 10 秒距离窗口求得：反应滞后于实际用力变化，且定位抖动会直接反映成读数跳动。
+- OWW221 固件的 HealthKit `OUTDOOR_RUN` 能力映射仍为空（见 `system-exercise-implementation.md`），因此本轮的「原生数据」指 GNSS 芯片自身的多普勒测速与 `TYPE_STEP_COUNTER`，而不是 HealthKit 运动会话。
+- 新增 `SpeedFusion`：GNSS 速度为主源，距离窗口为备源，按 4 秒时间常数平滑，静止判定 0.5 m/s。不依赖 Android 类型，由 6 个纯 Java 用例覆盖优先级、过期回退、精度与异常值拦截、抖动阻尼、静止与格式化。
+- 训练页主读数改为分钟/公里配速，同屏保留 km/h，并显示来源（卫星测速 / 轨迹推算 / 步数估算）。
+
+### 界面与功耗
+
+- 底色由 `RGB(7,9,10)` 改为纯黑：AMOLED 上这些像素不再点亮，同时深色对比更干净。
+- 统一字号刻度（DISPLAY/TITLE/HEADLINE/BODY/LABEL/CAPTION），页码指示器由文本字形 `●○` 改为实际绘制的圆点。
+- 训练页刷新由 2 Hz 降为 1 Hz；文本经 `Ui.setTextIfChanged` 写入，避免 `TextView.setText` 在内容相同时仍触发重排；轨迹图仅在轨迹页可见时重绘。
+- 控制页区分主次：暂停为实心主按钮，结束改为同色调描边按钮，两个高饱和圆形不再等量争夺注意力。
+- 首页在已完成配对后隐藏配对码，配对信息回归为一次性设置内容。
+
+### 后台链路可靠性
+
+- `WatchLanLocator`：把原本只存在于手机前台页面的 mDNS 发现搬到后台服务，校验 `deviceId` 后才替换已保存主机，并按在线 10 分钟、离线 1 分钟的节奏复查。
+- `WatchConnectionManager`：构造时从持久化配对状态恢复 LAN，并允许独立于 BLE 结果验证 LAN，冷启动不再需要先等一次 BLE 超时。
+- `PhonePlanBridgeService.serve()`：显式 `bind` + `SO_REUSEADDR`，失败按 1s→30s 退避重试并记录端口与异常，不再静默失效。
+- `PhoneBootReceiver`：新增 `WATCHDOG` 动作与精确闹钟看门狗，取得投递时的临时白名单以绕过 Android 15 对后台启动前台服务的限制。
+
+### 已执行验证
+
+- `.\gradlew.bat :app:assembleDebug :phone:assembleDebug`、`:app:testDebugUnitTest`、`:phone:testDebugUnitTest` 全部通过。
+- `mcp`：`.venv\Scripts\python.exe -m pytest -q` 12 项通过。
+- 真机 MCP 全链路：`watch_get_status` 返回 `CONNECTED_BLE_LAN`、`lanAvailable=true`、`watch=online`；手机 Activity 销毁后仍由后台定位器重建 `host`。
+- 真机控制链路：`watch_stop_workout` 首次 accepted（controlRevision 5→6），重复 `expected_state=running` 正确返回 `STATE_MISMATCH`，相同 requestId 重放返回 `duplicateRequest=true`。
+- 真机恢复：`am crash` 后进程消失、8766 不可达；临时白名单下触发 `WATCHDOG` 广播后进程重建、`/v1/health` 恢复 401、看门狗重新挂起。
+
+### 未覆盖风险
+
+- 配速融合尚未在开阔户外做真实 GNSS 对比，室内无法产生有效多普勒样本。
+- MIUI「自启动」为系统级开关，关闭时任何拉起路径都会失败，代码无法覆盖。
+- 本轮未改动 BLE 安全配对与长时间门禁，`BUG-015`、`BUG-016` 仍开放。

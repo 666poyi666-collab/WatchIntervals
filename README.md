@@ -19,7 +19,8 @@
 
 - 自定义跑步、快走、休息阶段，目标可按距离或时间设置
 - 内置“1 公里跑 + 200 米快走”和法特莱克模板
-- GPS 距离、步数估距、活动时间、当前/平均时速、平均配速和标准光学心率显示
+- GPS 距离、步数估距、活动时间、当前配速（分钟/公里）与时速同屏显示，以及标准光学心率
+- 当前速度优先使用 GNSS 芯片自身的多普勒测速，失效时退回距离窗口估算，界面标注实际来源
 - 训练页直接显示实际步数；点击“总距离 · 轨迹”可打开离线实时轨迹图
 - 阶段达标震动并自动推进；最后阶段达标后进入自由记录，直到用户手动结束
 - 前台训练服务、息屏持续定位与 Wi-Fi 休眠保护
@@ -73,3 +74,13 @@ adb -s WATCH_SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
 
 定位服务、异常 GPS 点过滤和训练期间前台运行的设计参考了
 [OpenTracks](https://codeberg.org/OpenTracksApp/OpenTracks)（Apache-2.0）。本项目未复制其源码。
+
+## 开发期设备连接
+
+`tools/watch-link.ps1` 负责重建网络 ADB 并保持开发期屏幕常亮。OWW221 未 root，`persist.adb.tcp.port` 无法写入，因此重启后 TCP ADB 不会自行恢复；脚本从 USB 侧读取当前 `wlan0` 地址而不是写死 IP，可反复执行。
+
+```powershell
+.\tools\watch-link.ps1                 # 单次重建连接并应用显示策略
+.\tools\watch-link.ps1 -Install        # 注册每 5 分钟运行的计划任务
+.\tools\watch-link.ps1 -Uninstall      # 移除计划任务
+```

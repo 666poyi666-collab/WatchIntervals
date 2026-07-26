@@ -10,9 +10,11 @@ import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.IBinder;
 import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
+import com.poyi.watchintervals.phone.connection.lan.WatchLanLocator;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -35,8 +37,11 @@ public class PhonePlanBridgeService extends Service {
     private static final String CONTROL_MUTATIONS = "gateway_control_mutations";
     private static final String CONTROL_STATE = "gateway_control_state";
     private final ExecutorService workers = Executors.newCachedThreadPool();
-    private ServerSocket server;
+    private volatile ServerSocket server;
+    /** Distinguishes a real teardown from a bind failure the accept loop should retry. */
+    private volatile boolean stopping;
     private NsdManager.RegistrationListener registration;
+    private WatchLanLocator locator;
 
     private static final class HttpResult {
         final int status;
@@ -55,19 +60,53 @@ public class PhonePlanBridgeService extends Service {
                 .setContentText("手机计划库可供手表与 Watch MCP 使用").build();
         startForeground(63, notification);
         registerNsd();
+        locator = new WatchLanLocator(this, WatchConnectionManager.get(this));
+        locator.start();
+        PhoneBootReceiver.schedule(this);
         workers.execute(this::serve);
     }
 
+    /** Explicit so the restart contract is stated rather than inherited from the base class. */
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY;
+    }
+
+    /**
+     * Accept loop for the phone-authoritative API.
+     *
+     * <p>This used to bind once and swallow any failure: when the bind itself threw, {@code server}
+     * was still null so even the warning was skipped, and the whole
+     * {@code MCP -> phone -> watch} chain went dark with no diagnostic and no recovery until the
+     * user happened to reopen the app. Android restarts this service after process death, and a
+     * port left in TIME_WAIT by the previous process is enough to hit that path, so the listener
+     * now reports why it failed and keeps retrying.
+     */
     private void serve() {
-        try (ServerSocket socket = new ServerSocket(PORT)) {
-            server = socket;
-            while (!socket.isClosed()) {
-                Socket client = socket.accept();
-                workers.execute(() -> handle(client));
+        int attempt = 0;
+        while (!stopping) {
+            try (ServerSocket socket = new ServerSocket()) {
+                socket.setReuseAddress(true);
+                socket.bind(new InetSocketAddress(PORT));
+                server = socket;
+                attempt = 0;
+                android.util.Log.i("PhonePlanBridge", "API listening on " + PORT);
+                while (!stopping && !socket.isClosed()) {
+                    Socket client = socket.accept();
+                    workers.execute(() -> handle(client));
+                }
+            } catch (Exception error) {
+                if (stopping) return;
+                // Back off 1s, 2s, 4s ... capped at 30s so a permanently occupied port cannot spin.
+                long delay = Math.min(30_000L, 1_000L << Math.min(attempt++, 5));
+                android.util.Log.w("PhonePlanBridge",
+                        "API listener failed on " + PORT + ", retrying in " + delay + "ms", error);
+                try { Thread.sleep(delay); } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            } finally {
+                server = null;
             }
-        } catch (Exception error) {
-            if (server != null && !server.isClosed())
-                android.util.Log.w("PhonePlanBridge", "API listener stopped", error);
         }
     }
 
@@ -520,6 +559,8 @@ public class PhonePlanBridgeService extends Service {
     }
 
     @Override public void onDestroy() {
+        stopping = true;
+        if (locator != null) locator.stop();
         try { if (server != null) server.close(); } catch (Exception ignored) {}
         try { if (registration != null) getSystemService(NsdManager.class)
                 .unregisterService(registration); } catch (Exception ignored) {}
