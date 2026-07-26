@@ -129,6 +129,13 @@ git diff --check
 - 两端关闭 Wi-Fi、无线 ADB 离线且息屏时，15 分钟训练持续完成 94 次加密请求和 4 轮重复暂停/继续；落盘活动时间 951,996 ms、暂停 8,343 ms，最终正常停止。
 - BLE-001、BLE-002、BLE-006、BLE-007、BLE-008 和 PT-014 通过。手表通过 USB 取证并持续充电，电量 72%→81%，因此 BLE-010 功耗结论无效；BLE-003 至 005、BLE-009/010 继续开放。
 
+### 0.20.0 BLE 恢复矩阵补测（2026-07-26 晚）
+
+- BLE-005 手机半场通过：`cmd bluetooth_manager disable` 关闭小米蓝牙后手表 `dumpsys bluetooth_manager` 转 `STATE_DISCONNECTED`；重新 enable 后 12 秒内恢复 `STATE_CONNECTED`，全程无重新配对。注意该指标含系统级配对链路，应用会话证据以日志与业务请求为准。
+- BLE-005 手表半场未执行：OWW221 构建不实现 `cmd bluetooth_manager`/`svc bluetooth` shell 命令，蓝牙设置页无开关（在快捷面板），为避免把日常佩戴设备置于蓝牙关闭态，留待手动测试。
+- BLE-003 手表半场通过：关闭手表 Activity（回表盘）后 8765 `/v1/health` 仍返回 401 门禁存活。
+- BLE-003 手机半场记录到设计内的两段式恢复：`am force-stop` 后进程死亡；shell 发送 `WATCHDOG` 广播可拉起进程，但 RCVR 态 `startForegroundService` 被系统拒绝（W 级日志自捕获，符合 PhoneBootReceiver 注释预期），服务启动推迟到 `setExactAndAllowWhileIdle` 闹钟（携临时白名单豁免）；`dumpsys alarm` 确认 u0a325 闹钟挂起。闹钟投递后的完整恢复见下一条目。
+
 ### 0.19.0 小米手机 API 与独立 MCP 补测（2026-07-26）
 
 - 小米 `xaga` 覆盖安装手机 debug APK 成功，`PhonePlanBridgeService`、`PhoneCompanionService`、`PhoneLocationRelayService` 均以前台服务运行。
