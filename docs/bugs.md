@@ -254,6 +254,15 @@
 - 处理：新增纯 Java `Format.duration/distance`（超过 1 小时进位 `h:mm:ss`，与手机端一致），三个 Activity 删除本地副本；手表历史配速统一改用 `SpeedFusion.formatPace` 的 `5'32"` 专业记法（1 公里分段的 `/km` 后缀冗余，删除）；爬升四舍五入到整米。
 - 验证：新增 `FormatTest` 覆盖进位、边界与钳制；`:app:testDebugUnitTest`、`assembleDebug` 通过。
 
+### BUG-027：手机历史详情数据行用 38 个空格排版，配速记法同屏不一致
+
+- 状态：Fixed，待真机截图核对
+- 严重度：P2
+- 影响：手机 0.20.0 及更早
+- 现象：`HistoryDetailActivity.dataLine` 用硬编码 38 个空格分隔标签和值，标签长度或字号一变就错位，值不右对齐；同屏「运动概览」卡配速为 `5:32 /公里` 而「运动表现」「公里分段」卡用 formatDuration 拼出 `05:32 /公里`；累计爬升拼接原始 double；睡眠列表把整晚时长显示为秒表记法 `7:12:00`。
+- 处理：`dataLine` 改为真两列（标签弹性宽度、值加粗右对齐）；新增纯 Java `PhoneFormat`（duration/distance/pace/paceSeconds/minutesHuman），两个 Activity 的私有格式化副本删除；配速统一 `5:32 /公里` 记法；爬升取整米；睡眠总长/深睡/REM 改为「7小时12分」人读格式。
+- 验证：新增 `PhoneFormatTest` 5 组用例；`:phone:assembleDebug`、`:phone:testDebugUnitTest` 通过；真机渲染核对待设备恢复连接。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。

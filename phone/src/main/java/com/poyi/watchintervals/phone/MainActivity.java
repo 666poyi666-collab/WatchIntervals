@@ -490,7 +490,7 @@ public class MainActivity extends Activity {
             TextView date=text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.optLong("startedAt"))),15,true,Color.BLACK);
             row.addView(date);
             long duration=record.optLong("durationMs"); double meters=record.optDouble("distanceMeters");
-            TextView primary=text(formatDistance(meters)+"  ·  "+formatDuration(duration)+"  ·  "+formatPace(duration,meters),17,true,Color.rgb(28,31,29));
+            TextView primary=text(PhoneFormat.distance(meters)+"  ·  "+PhoneFormat.duration(duration)+"  ·  "+PhoneFormat.pace(duration,meters),17,true,Color.rgb(28,31,29));
             row.addView(primary);
             TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+record.optInt("routePointCount")+" 个轨迹点",13,false,Color.DKGRAY);
             row.addView(secondary);
@@ -528,15 +528,12 @@ public class MainActivity extends Activity {
             int score=record.optInt("sleepScore"),spo2=record.optInt("spo2AveragePercent");
             LinearLayout row=card();row.setPadding(dp(16),dp(12),dp(16),dp(12));
             row.addView(text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(start)),15,true,Color.BLACK));
-            row.addView(text(formatDuration(duration*60_000L)+" · 评分 "+(score>0?score:"--")+" · 平均血氧 "+(spo2>0?spo2+"%":"--"),16,true,Color.rgb(28,31,29)));
+            row.addView(text(PhoneFormat.minutesHuman(duration)+" · 评分 "+(score>0?score:"--")+" · 平均血氧 "+(spo2>0?spo2+"%":"--"),16,true,Color.rgb(28,31,29)));
             String sessionLabel=sessionCount>1?" · "+sessionCount+" 段睡眠":"";
-            row.addView(text("深睡 "+formatDuration(deep*60_000L)+" · REM "+formatDuration(rem*60_000L)+" · "+stageCount+" 个阶段"+sessionLabel,13,false,Color.DKGRAY));
+            row.addView(text("深睡 "+PhoneFormat.minutesHuman(deep)+" · REM "+PhoneFormat.minutesHuman(rem)+" · "+stageCount+" 个阶段"+sessionLabel,13,false,Color.DKGRAY));
             LinearLayout.LayoutParams params=margin();params.topMargin=dp(10);sleepList.addView(row,params);
         }
     }
-    private String formatDistance(double meters){return meters<1000?Math.round(meters)+" 米":String.format(Locale.CHINA,"%.2f 公里",meters/1000d);}
-    private String formatDuration(long millis){long total=Math.max(0,millis/1000),hours=total/3600,minutes=(total%3600)/60,seconds=total%60;return hours>0?String.format(Locale.CHINA,"%d:%02d:%02d",hours,minutes,seconds):String.format(Locale.CHINA,"%02d:%02d",minutes,seconds);}
-    private String formatPace(long millis,double meters){if(meters<1||millis<=0)return "-- /公里";long seconds=Math.round(millis/1000d*1000d/meters);return String.format(Locale.CHINA,"%d:%02d /公里",seconds/60,seconds%60);}
     private void runIo(Throwing action){ connection.setText("正在同步…"); io.execute(()->{ try{action.run();}catch(Exception error){
         // ExecutionException and friends often carry a null message; surface the cause instead
         // of the literal text "null".

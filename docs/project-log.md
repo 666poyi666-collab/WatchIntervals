@@ -330,3 +330,11 @@
 - 详情分段卡两遍渲染：先找最快段（paceSecondsPerKm 最小且 >0），渲染时对该行值文字用 LIME 高亮；仅一段时不高亮（没有比较意义）。`detailLine` 增加值颜色重载。
 - `:app:assembleDebug`、`:app:testDebugUnitTest` 通过（class 时间戳核对确认增量编译包含改动）。
 - 未覆盖：真机渲染核对随手表上线一并补做。
+
+## 2026-07-26：手机端格式与数据行整改（BUG-027）
+
+- 巡检延伸到手机模块，确认三处硬伤：`HistoryDetailActivity.dataLine` 用 38 个硬编码空格分隔标签与值（伪两列，字号一变即错位）；「运动表现」「公里分段」卡用 formatDuration 拼配速（`05:32 /公里`）与同屏概览卡 `5:32 /公里` 记法割裂；爬升拼原始 double。睡眠列表整晚时长用秒表记法 `7:12:00`。
+- 新增纯 Java `PhoneFormat`（duration/distance/pace/paceSeconds/minutesHuman）+ `PhoneFormatTest`；两个 Activity 私有格式化副本删除；`dataLine` 改为标签弹性宽度 + 值加粗右对齐的真两列；睡眠总长/深睡/REM 改「7小时12分」。
+- 记法口径明确：手机说中文单位（`公里`、`5:32 /公里`），手表说仪表语言（`km`、`5'32"`）——伴侣文本与表盘读数是两种表面，各自内部一致。
+- `:phone:assembleDebug`、`:phone:testDebugUnitTest` 通过。
+- 未覆盖：平板与手表当前均 ADB 离线，真机渲染核对（尤其 dataLine 两列在窄屏的换行表现）待设备恢复。
