@@ -101,6 +101,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private WorkoutFileStore fileStore;
     private final WorkoutMetricsAccumulator metrics = new WorkoutMetricsAccumulator();
     private final SpeedFusion speedFusion = new SpeedFusion();
+    // Live pro-runner metrics (splits, cadence, climb, HR zones); replaced per session.
+    private LiveWorkoutStats liveStats = new LiveWorkoutStats();
     private final org.json.JSONObject routePointCountBySource = new org.json.JSONObject();
     private final org.json.JSONArray sourceTransitions = new org.json.JSONArray();
     private String lastDistanceSource = "";
@@ -175,6 +177,46 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     public final class LocalBinder extends Binder { public WorkoutService service() { return WorkoutService.this; } }
     @Override public IBinder onBind(Intent intent) { return binder; }
 
+    /** Process-local handle so the 8765/BLE status route can report the live workout. */
+    private static volatile WorkoutService activeInstance;
+
+    /**
+     * Live workout block for /v1/status, or null when nothing is running. This is what lets the
+     * phone and the MCP chain show a workout in progress instead of only "activeSession: true".
+     */
+    static org.json.JSONObject liveWorkoutJson() {
+        WorkoutService service = activeInstance;
+        if (service == null) return null;
+        synchronized (service) {
+            if (!service.running && !service.preparing) return null;
+            try {
+                Snapshot s = service.snapshot();
+                int currentPace = Double.isFinite(s.currentSpeedMps) && s.currentSpeedMps >= SpeedFusion.MOVING_THRESHOLD_MPS
+                        ? (int)Math.round(1000d / s.currentSpeedMps) : 0;
+                return new org.json.JSONObject()
+                        .put("state", s.preparing ? "PREPARING" : s.paused ? "PAUSED" : "RUNNING")
+                        .put("planState", s.planCompleted ? "COMPLETED" : "ACTIVE")
+                        .put("stageName", s.stageName)
+                        .put("stageNumber", s.stageNumber)
+                        .put("stageCount", s.stageCount)
+                        .put("activeDurationMs", s.activeMillis)
+                        .put("distanceMeters", Math.round(s.totalMeters))
+                        .put("currentPaceSecondsPerKm", currentPace)
+                        .put("avgPaceSecondsPerKm", s.live.avgPaceSecondsPerKm)
+                        .put("heartRate", s.heartRate)
+                        .put("heartRateZone", s.live.heartRateZone)
+                        .put("averageHeartRate", s.live.averageHeartRate)
+                        .put("maxHeartRate", s.live.maxHeartRate)
+                        .put("cadenceSpm", s.live.cadenceSpm)
+                        .put("elevationGainMeters", Math.round(s.live.elevationGainMeters * 10d) / 10d)
+                        .put("calories", s.live.calories)
+                        .put("splitCount", s.live.splitCount)
+                        .put("lastSplitPaceSecondsPerKm", s.live.lastSplitPaceSecondsPerKm)
+                        .put("steps", s.sessionSteps);
+            } catch (Exception ignored) { return null; }
+        }
+    }
+
     public static boolean hasRecoverableSession(Context context) {
         if (WorkoutFileStore.hasRecoverable(context)) return true;
         android.content.SharedPreferences preferences = context.getSharedPreferences(SESSION_PREF, MODE_PRIVATE);
@@ -198,6 +240,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
 
     @Override public void onCreate() {
         super.onCreate();
+        activeInstance = this;
         NotificationChannel channel = new NotificationChannel(CHANNEL, "正在训练", NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
         locationManager = getSystemService(LocationManager.class);
@@ -387,6 +430,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         running = true;
         preparing = false;
         workoutStartedAt = System.currentTimeMillis();
+        liveStats = new LiveWorkoutStats();
         openNewFileStore();
         lastTick = SystemClock.elapsedRealtime();
         resetStageGpsBaseline();
@@ -435,6 +479,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                 lastDistanceSource=checkpoint.optString("lastDistanceSource");accuracyTotal=checkpoint.optDouble("accuracyTotal");accuracySamples=checkpoint.optInt("accuracySamples");accuracyMinimum=(float)checkpoint.optDouble("accuracyMinimum",Float.MAX_VALUE);accuracyMaximum=(float)checkpoint.optDouble("accuracyMaximum");
                 restoreStageResults(checkpoint.optJSONArray("stageResults") == null ? null : checkpoint.optJSONArray("stageResults").toString());
                 routePoints.clear(); routePoints.addAll(fileStore.readRoutePreview(600));
+                liveStats = new LiveWorkoutStats();
+                liveStats.restore(totalMeters, activeMillis);
                 running = true; preparing = false; historySaved = false;
                 pauseStartedWall = paused ? System.currentTimeMillis() : 0;
                 resetTransientSensorState();
@@ -792,6 +838,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                     planCompletedWallTime = System.currentTimeMillis() - (delta - needed);
                 }
             }
+            liveStats.onTick(activeMillis, sessionSteps);
             saveSession(false);
         }
         lastTick = now;
@@ -898,6 +945,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         }
         WorkoutMetricsAccumulator.Source locationSource = "phone_companion".equals(location.getProvider())
                 ? WorkoutMetricsAccumulator.Source.PHONE_GPS : WorkoutMetricsAccumulator.Source.WATCH_GPS;
+        if (location.hasAltitude() && running && !paused) liveStats.onAltitude(location.getAltitude());
         recordRoutePoint(location, locationSource);
         if (isSystemDistanceFresh()) {
             lastLocation = null;
@@ -1079,6 +1127,9 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             if (planCompleted) freeRecordingDistanceMeters += remainingDelta;
             else planDistanceMeters += remainingDelta;
         }
+        // Automatic kilometre laps, as on any serious running watch: a short double buzz and the
+        // UI shows the lap card off the snapshot delta.
+        if (liveStats.onDistance(totalMeters, activeMillis) != null) vibrate(new long[]{0, 120, 70, 120});
     }
 
     private void recordSourceTransition(WorkoutMetricsAccumulator.Source source) {
@@ -1165,7 +1216,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                 systemGpsAvailable, systemGpsLocated, systemGpsSnr, systemGpsDetail,
                 routeLatitudes, routeLongitudes,
                 preparing, paused, planCompleted,
-                fusedSpeedMps(), speedFusion.estimated(), metrics.maxSmoothedSpeedMps(), currentPausedDuration());
+                fusedSpeedMps(), speedFusion.estimated(), metrics.maxSmoothedSpeedMps(), currentPausedDuration(),
+                buildLiveView(visibleHeartRate));
     }
 
     /**
@@ -1178,6 +1230,21 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         double windowSpeed = metrics.currentSpeedMps(now);
         if (Double.isFinite(windowSpeed)) speedFusion.addWindowSpeed(now, windowSpeed, metrics.currentSpeedEstimated());
         return speedFusion.speedMps(now);
+    }
+
+    private Snapshot.LiveView buildLiveView(int visibleHeartRate) {
+        LiveWorkoutStats.Split lastSplit = liveStats.lastSplit();
+        return new Snapshot.LiveView(
+                LiveWorkoutStats.averagePaceSecondsPerKm(totalMeters, activeMillis),
+                liveStats.cadenceSpm(activeMillis),
+                liveStats.calories(totalMeters),
+                heartRateSamples > 0 ? (int)Math.round((double)heartRateTotal / heartRateSamples) : 0,
+                liveStats.maxHeartRateSeen(),
+                liveStats.heartRateZone(visibleHeartRate),
+                liveStats.splitCount(),
+                lastSplit == null ? 0 : lastSplit.index,
+                lastSplit == null ? 0 : lastSplit.paceSecondsPerKm,
+                liveStats.elevationGainMeters());
     }
 
     private String remainingText() {
@@ -1194,7 +1261,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             int value = Math.round(event.values[0]);
             if (value >= MIN_HEART_RATE && value <= MAX_HEART_RATE) {
                 heartRate = value;
-                if (running && !paused) { heartRateTotal += value; heartRateSamples++; }
+                if (running && !paused) { heartRateTotal += value; heartRateSamples++; liveStats.onHeartRate(value); }
                 lastHeartRateElapsed = lastHeartSensorEventElapsed;
                 recordHeartSample(value);
             }
@@ -1296,6 +1363,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             systemExerciseBridge.close();
         }
         if (systemGpsBridge != null) systemGpsBridge.close();
+        activeInstance = null;
         super.onDestroy();
     }
 
@@ -1319,6 +1387,30 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         public final double currentSpeedMps, maxSmoothedSpeedMps;
         public final boolean currentSpeedEstimated;
         public final long pausedDurationMs;
+        public final LiveView live;
+
+        /** Live pro-runner metrics; grouped so the positional constructor stays readable. */
+        public static final class LiveView {
+            public final int avgPaceSecondsPerKm, cadenceSpm, calories;
+            public final int averageHeartRate, maxHeartRate, heartRateZone;
+            public final int splitCount, lastSplitIndex, lastSplitPaceSecondsPerKm;
+            public final double elevationGainMeters;
+            LiveView(int avgPaceSecondsPerKm, int cadenceSpm, int calories,
+                     int averageHeartRate, int maxHeartRate, int heartRateZone,
+                     int splitCount, int lastSplitIndex, int lastSplitPaceSecondsPerKm,
+                     double elevationGainMeters) {
+                this.avgPaceSecondsPerKm = avgPaceSecondsPerKm;
+                this.cadenceSpm = cadenceSpm;
+                this.calories = calories;
+                this.averageHeartRate = averageHeartRate;
+                this.maxHeartRate = maxHeartRate;
+                this.heartRateZone = heartRateZone;
+                this.splitCount = splitCount;
+                this.lastSplitIndex = lastSplitIndex;
+                this.lastSplitPaceSecondsPerKm = lastSplitPaceSecondsPerKm;
+                this.elevationGainMeters = elevationGainMeters;
+            }
+        }
         Snapshot(String stageName, Stage.Unit unit, int stageTarget, double stageProgressValue, long remaining, double progress, int stageNumber, int stageCount, double totalMeters, long activeMillis, int heartRate,
                  boolean gpsPermissionGranted, boolean gpsProviderEnabled, boolean gpsRequestActive, boolean hasGpsFix, boolean gpsFixFromCache, boolean waitingForGps, int gpsSatelliteCount, int gpsSatellitesUsed, float gpsAccuracyMeters,
                  boolean stepSensorAvailable, boolean activityRecognitionPermissionGranted, boolean stepSensorActive, boolean usingStepDistance, int sessionSteps,
@@ -1327,7 +1419,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                   boolean systemGpsAvailable, boolean systemGpsLocated, int systemGpsSnr, String systemGpsStatus,
                   double[] routeLatitudes, double[] routeLongitudes,
                   boolean preparing, boolean paused, boolean planCompleted,
-                  double currentSpeedMps, boolean currentSpeedEstimated, double maxSmoothedSpeedMps, long pausedDurationMs) {
+                  double currentSpeedMps, boolean currentSpeedEstimated, double maxSmoothedSpeedMps, long pausedDurationMs, LiveView live) {
             this.stageName=stageName; this.unit=unit; this.stageTarget=stageTarget; this.stageProgressValue=stageProgressValue; this.remaining=remaining; this.progress=progress; this.stageNumber=stageNumber; this.stageCount=stageCount;
             this.totalMeters=totalMeters; this.activeMillis=activeMillis; this.heartRate=heartRate;
             this.gpsPermissionGranted=gpsPermissionGranted; this.gpsProviderEnabled=gpsProviderEnabled; this.gpsRequestActive=gpsRequestActive; this.hasGpsFix=hasGpsFix; this.gpsFixFromCache=gpsFixFromCache; this.waitingForGps=waitingForGps;
@@ -1338,7 +1430,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             this.systemGpsAvailable=systemGpsAvailable; this.systemGpsLocated=systemGpsLocated; this.systemGpsSnr=systemGpsSnr; this.systemGpsStatus=systemGpsStatus;
             this.routeLatitudes=routeLatitudes; this.routeLongitudes=routeLongitudes;
             this.preparing=preparing; this.paused=paused; this.planCompleted=planCompleted;
-            this.currentSpeedMps=currentSpeedMps;this.currentSpeedEstimated=currentSpeedEstimated;this.maxSmoothedSpeedMps=maxSmoothedSpeedMps;this.pausedDurationMs=pausedDurationMs;
+            this.currentSpeedMps=currentSpeedMps;this.currentSpeedEstimated=currentSpeedEstimated;this.maxSmoothedSpeedMps=maxSmoothedSpeedMps;this.pausedDurationMs=pausedDurationMs;this.live=live;
         }
     }
 }

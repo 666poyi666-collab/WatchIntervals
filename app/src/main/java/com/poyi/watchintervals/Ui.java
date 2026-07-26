@@ -181,6 +181,46 @@ final class Ui {
         return value;
     }
 
+    /** Zone colours indexed 1..5 — the classic blue/green/yellow/orange/red training bands. */
+    static final int[] ZONE_COLORS = {CYAN, GREEN, YELLOW, AMBER, RED};
+
+    /**
+     * Five-segment heart-rate zone band, the visual every serious running watch carries. The
+     * current zone's segment is lit solid; the rest stay dim so intensity reads at a glance
+     * without any numbers.
+     */
+    static final class ZoneBar extends View {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF rect = new android.graphics.RectF();
+        private int zone;
+
+        ZoneBar(Context context) { super(context); }
+
+        void set(int value) {
+            int clamped = Math.max(0, Math.min(5, value));
+            if (clamped == zone) return;
+            zone = clamped;
+            invalidate();
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            float gap = dp(getContext(), 3);
+            float segment = (getWidth() - gap * 4f) / 5f;
+            float radius = getHeight() / 2f;
+            for (int index = 0; index < 5; index++) {
+                boolean current = zone == index + 1;
+                int color = ZONE_COLORS[index];
+                paint.setColor(current ? color
+                        : Color.argb(zone == 0 ? 46 : 34, Color.red(color), Color.green(color), Color.blue(color)));
+                float left = index * (segment + gap);
+                float top = current ? 0f : getHeight() * 0.18f;
+                float bottom = current ? getHeight() : getHeight() * 0.82f;
+                rect.set(left, top, left + segment, bottom);
+                canvas.drawRoundRect(rect, radius, radius, paint);
+            }
+        }
+    }
+
     /** Top bar shared by every page: small title left, live clock right, stock-sports style. */
     static TextView topBar(Context context, LinearLayout parent, TextView titleView) {
         LinearLayout bar = new LinearLayout(context);
@@ -191,6 +231,22 @@ final class Ui {
         bar.addView(clock, new LinearLayout.LayoutParams(dp(context, 64), -1));
         parent.addView(bar, new LinearLayout.LayoutParams(-1, dp(context, 34)));
         return clock;
+    }
+
+    /**
+     * Garmin-style grid cell: big figure over a small label, filling an equal share of its row.
+     * Returns the figure view for updates.
+     */
+    static TextView gridCell(Context context, LinearLayout row, String initial, String label,
+                             int color, float figureSize) {
+        LinearLayout cell = new LinearLayout(context);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        TextView value = numeral(context, initial, figureSize, color);
+        cell.addView(value, new LinearLayout.LayoutParams(-2, -2));
+        TextView caption = text(context, label, CAPTION, MUTED);
+        cell.addView(caption, new LinearLayout.LayoutParams(-2, -2));
+        row.addView(cell, new LinearLayout.LayoutParams(0, -2, 1));
+        return value;
     }
 
     /** Soft radial glow behind a primary action disc, as on the stock start button. */

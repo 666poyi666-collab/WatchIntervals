@@ -288,3 +288,15 @@
 - 干扰处理：采样期间随心一听/focuslink 反复抢占前台，音乐应用临时 `pm disable-user` 后已恢复 `enabled`；测试流程改为每步校验 `mCurrentFocus` 再操作。
 - 验证：`:app:testDebugUnitTest`、`:phone:testDebugUnitTest`、双模块 `assembleDebug`、MCP pytest 12 项、`git diff --check` 全部通过；手表五个页面与手机四个标签页真机截图核对。
 - 未覆盖：pager 触感（阻尼系数/阈值）未经户外汗手实测；手表看门狗 15 分钟自续链依赖闹钟投递，deep doze 下的实际间隔未做整夜观测；手机聊天等第三方应用抢前台导致的采样中断与产品无关。
+
+
+## 2026-07-26：专业跑者数据层与 Garmin 式数据屏
+
+- 用户反馈：作为跑者，只有当前配速/距离/心率远远不够；参考 Apple Watch、Garmin、COROS。
+- 差距确认：分段、爬升、最佳配速此前只在保存时由 600 点预览轨迹事后粗算，运动中一概没有。
+- 新增 `LiveWorkoutStats`（纯 Java，7 项单测）：实时 1km 分段（活动时间口径，暂停不计；跨多边界循环补段；恢复后按已完成公里重建边界）、20s 滑窗步频（≥8s 跨度才出值，停下自然归零）、EMA(0.35)+2m 阈值累计爬升（下坡重置基线不累计）、1.036×65kg×km 千卡、平均/最高心率与 50-90% 五级区间。
+- WorkoutService 集成：tick 喂步频窗、心率回调喂聚合、GPS 喂海拔、applyDistanceDelta 后检测分段并双震动；Snapshot 挂 `LiveView` 数据包；checkpoint 恢复后 `restore()` 对齐分段边界。
+- UI：主数据页 = 大计时 + 当前/平均配速、距离/心率 2×2 网格 + `Ui.ZoneBar` 五区彩条（当前区间点亮、心率数字同区间色）；新增 2×3「更多数据」页；训练 pager 五页；每公里全屏圈卡 3 秒（首个 refresh 只同步计数，恢复会话不回放旧圈）。
+- MCP：手表 `/v1/status` 新增 `workout` 实时块（经 `WorkoutService.liveWorkoutJson()` 静态句柄读取运行中服务）；真机全链验证 ChatGPT 侧可见 `state=RUNNING`、阶段 1/5、活动时长等实况。
+- 验证：双模块单测（含 LiveWorkoutStats 7 项 + SpeedFusion 6 项）、assembleDebug、`git diff --check` 通过；主/次数据页、圈卡挂载真机截图核对；MCP watch_get_status 返回 workout 块。
+- 未覆盖：分段圈卡与区间彩条的实跑表现（室内无法产生 1km 距离与真实心率区间）；步频对 OWW221 计步器节奏的匹配度待户外对比。

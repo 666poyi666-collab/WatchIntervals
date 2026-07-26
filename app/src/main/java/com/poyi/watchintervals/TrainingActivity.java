@@ -23,7 +23,7 @@ import java.util.ArrayList;
 public class TrainingActivity extends Activity {
     public static final String EXTRA_PREPARED_SESSION = "com.poyi.watchintervals.PREPARED_SESSION";
     /** Index of the live route panel inside {@link #workoutPager}. */
-    private static final int ROUTE_PAGE = 3;
+    private static final int ROUTE_PAGE = 4;
     private WorkoutService service;
     private boolean bound, workoutCompleted;
     private boolean allowTaskLeave;
@@ -32,7 +32,12 @@ public class TrainingActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView stageName, remaining, remainingLabel, stageProgress, stageCounter, gps, distance, pace, heart, steps, duration, pause, stop;
     private TextView coreHeader, speed, controlState, controlDuration, controlSummary;
-    private TextView trainClock, distanceLabel, speedLabel;
+    private TextView trainClock, extraClock;
+    private TextView avgPace, cadence, climb, calories, maxHeart;
+    private Ui.ZoneBar zoneBar;
+    private TextView splitTitle, splitDetail;
+    private LinearLayout splitNotice;
+    private int displayedSplitCount = -1;
     private LinearLayout controls, stopConfirmation, transitionNotice, routePanel;
     private View stopScrim;
     private TextView transitionTitle, transitionDetail, routeSummary;
@@ -76,13 +81,16 @@ public class TrainingActivity extends Activity {
         FrameLayout shell = new FrameLayout(this);
         LinearLayout controlPage = buildControlPage();
         LinearLayout corePage = buildCorePage();
+        LinearLayout extraPage = buildExtraPage();
         LinearLayout dataPage = buildDataPage();
         routePanel = buildRoutePanel();
         workoutPager = new WatchPagerLayout(this);
         // Physical order follows the demonstrated system app. The workout opens
-        // in the centre; dragging left reveals the page on the physical right.
+        // on the main data screen; controls sit one swipe to the left, deeper
+        // data screens to the right, the live route at the far end.
         workoutPager.addView(controlPage);
         workoutPager.addView(corePage);
+        workoutPager.addView(extraPage);
         workoutPager.addView(dataPage);
         workoutPager.addView(routePanel);   // index == ROUTE_PAGE
         workoutPager.setCurrentItem(1, false);
@@ -92,6 +100,10 @@ public class TrainingActivity extends Activity {
         FrameLayout.LayoutParams transitionParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 124), Gravity.CENTER);
         transitionParams.leftMargin = Ui.dp(this, 16); transitionParams.rightMargin = Ui.dp(this, 16);
         shell.addView(transitionNotice, transitionParams);
+        splitNotice = buildSplitNotice();
+        FrameLayout.LayoutParams splitParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 112), Gravity.CENTER);
+        splitParams.leftMargin = Ui.dp(this, 20); splitParams.rightMargin = Ui.dp(this, 20);
+        shell.addView(splitNotice, splitParams);
         stopScrim = new View(this);
         stopScrim.setBackgroundColor(Color.argb(190, 0, 0, 0));
         stopScrim.setClickable(true);
@@ -138,19 +150,17 @@ public class TrainingActivity extends Activity {
 
         stageProgress = Ui.text(this, "本阶段 --", Ui.LABEL, Ui.MUTED); stageProgress.setGravity(Gravity.CENTER);
         root.addView(stageProgress, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
-        steps = Ui.numeral(this, "0 步", 22, Ui.CYAN); steps.setGravity(Gravity.CENTER);
-        root.addView(steps, new LinearLayout.LayoutParams(-1, Ui.dp(this, 30)));
 
         root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        root.addView(Ui.pagerDots(this, 2, 4), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
+        root.addView(Ui.pagerDots(this, 3, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
         return root;
     }
 
     /**
-     * Primary in-workout page, a direct transcription of the stock HeySports workout screen:
-     * top bar with stage context and a live clock, the elapsed time as the big yellow hero
-     * figure, then one metric per line with its unit/label trailing the figure's baseline.
-     * Nothing is boxed; hierarchy comes from figure size and one colour per metric.
+     * Primary in-workout page in the Garmin data-screen idiom: hero elapsed time, then a 2x2
+     * grid — current pace / average pace / distance / heart rate — closed by the five-segment
+     * heart-rate zone band. Average pace sits beside current pace because holding a target
+     * average is how a runner actually paces a distance.
      */
     private LinearLayout buildCorePage() {
         LinearLayout root = new LinearLayout(this);
@@ -161,18 +171,68 @@ public class TrainingActivity extends Activity {
         coreHeader = Ui.bold(this, "训练中", Ui.FIGURE_LABEL, Ui.MUTED);
         trainClock = Ui.topBar(this, root, coreHeader);
 
-        duration = Ui.figureLine(this, root, "00:00", "", Ui.YELLOW, Ui.FIGURE_HERO, 64, null);
-        TextView[] label = new TextView[1];
-        distance = Ui.figureLine(this, root, "0", "米", Ui.WHITE, Ui.FIGURE, 56, label);
-        distanceLabel = label[0];
-        pace = Ui.figureLine(this, root, "--", "配速", Ui.LIME, Ui.FIGURE, 56, null);
-        speed = Ui.figureLine(this, root, "--", "千米/时", Ui.WHITE, Ui.FIGURE, 56, label);
-        speedLabel = label[0];
-        heart = Ui.figureLine(this, root, "--", "心率", Ui.RED, Ui.FIGURE, 56, null);
+        duration = Ui.figureLine(this, root, "00:00", "", Ui.YELLOW, Ui.FIGURE_HERO, 68, null);
+        root.addView(Ui.divider(this));
+
+        LinearLayout paceRow = new LinearLayout(this);
+        pace = Ui.gridCell(this, paceRow, "--", "当前配速", Ui.LIME, 34);
+        avgPace = Ui.gridCell(this, paceRow, "--", "平均配速", Ui.WHITE, 34);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+        rowParams.topMargin = Ui.dp(this, 14); rowParams.bottomMargin = Ui.dp(this, 14);
+        root.addView(paceRow, rowParams);
+        root.addView(Ui.divider(this));
+
+        LinearLayout secondRow = new LinearLayout(this);
+        distance = Ui.gridCell(this, secondRow, "0", "距离", Ui.WHITE, 34);
+        heart = Ui.gridCell(this, secondRow, "--", "心率", Ui.RED, 34);
+        LinearLayout.LayoutParams row2Params = new LinearLayout.LayoutParams(-1, -2);
+        row2Params.topMargin = Ui.dp(this, 14); row2Params.bottomMargin = Ui.dp(this, 14);
+        root.addView(secondRow, row2Params);
+
+        zoneBar = new Ui.ZoneBar(this);
+        LinearLayout.LayoutParams zoneParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 13));
+        zoneParams.topMargin = Ui.dp(this, 10);
+        root.addView(zoneBar, zoneParams);
 
         root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        root.addView(Ui.pagerDots(this, 1, 4), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
+        root.addView(Ui.pagerDots(this, 1, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
         return root;
+    }
+
+    /** Secondary data screen: cadence, speed, climb, calories, steps, max HR in a 2x3 grid. */
+    private LinearLayout buildExtraPage() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 10), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 4));
+        root.setBackgroundColor(Ui.BLACK);
+
+        TextView title = Ui.bold(this, "更多数据", Ui.FIGURE_LABEL, Ui.MUTED);
+        extraClock = Ui.topBar(this, root, title);
+
+        LinearLayout first = new LinearLayout(this);
+        cadence = Ui.gridCell(this, first, "--", "步频 spm", Ui.CYAN, 33);
+        speed = Ui.gridCell(this, first, "--", "时速 km/h", Ui.WHITE, 33);
+        root.addView(first, extraRowParams());
+        root.addView(Ui.divider(this));
+        LinearLayout second = new LinearLayout(this);
+        climb = Ui.gridCell(this, second, "0", "累计爬升 m", Ui.WHITE, 33);
+        calories = Ui.gridCell(this, second, "0", "千卡", Ui.AMBER, 33);
+        root.addView(second, extraRowParams());
+        root.addView(Ui.divider(this));
+        LinearLayout third = new LinearLayout(this);
+        steps = Ui.gridCell(this, third, "0", "步数", Ui.WHITE, 33);
+        maxHeart = Ui.gridCell(this, third, "--", "最高心率", Ui.RED, 33);
+        root.addView(third, extraRowParams());
+
+        root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(Ui.pagerDots(this, 2, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
+        return root;
+    }
+
+    private LinearLayout.LayoutParams extraRowParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.topMargin = Ui.dp(this, 17); params.bottomMargin = Ui.dp(this, 17);
+        return params;
     }
 
     /**
@@ -205,7 +265,7 @@ public class TrainingActivity extends Activity {
         TextView instruction = Ui.text(this, "轻触暂停 · 长按结束", Ui.CAPTION, Ui.MUTED); instruction.setGravity(Gravity.CENTER);
         page.addView(instruction, new LinearLayout.LayoutParams(-1, Ui.dp(this, 26)));
         page.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        page.addView(Ui.pagerDots(this, 0, 4), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
+        page.addView(Ui.pagerDots(this, 0, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
         pause.setOnClickListener(v -> { if (service != null) service.togglePause(); });
         stop.setOnLongClickListener(v -> { confirmStop(); return true; });
         stop.setOnClickListener(v -> android.widget.Toast.makeText(this, "长按结束训练", android.widget.Toast.LENGTH_SHORT).show());
@@ -231,6 +291,41 @@ public class TrainingActivity extends Activity {
         if (pause == null || stop == null) return;
         pause.setText(service != null && service.snapshot().paused ? "▶\n继续" : "Ⅱ\n暂停");
         stop.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Kilometre lap card, shown for a few seconds when a split completes — mirrors the auto-lap
+     * flash every running watch does. First refresh only syncs the counter so recovering an
+     * in-progress session does not replay an old lap.
+     */
+    private void maybeShowSplit(WorkoutService.Snapshot s) {
+        if (displayedSplitCount < 0) { displayedSplitCount = s.live.splitCount; return; }
+        if (s.live.splitCount <= displayedSplitCount) return;
+        displayedSplitCount = s.live.splitCount;
+        if (splitNotice == null) return;
+        splitTitle.setText(String.format(Locale.CHINA, "第 %d 公里", s.live.lastSplitIndex));
+        splitDetail.setText("配速 " + SpeedFusion.formatPace(s.live.lastSplitPaceSecondsPerKm));
+        splitNotice.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideSplit);
+        handler.postDelayed(hideSplit, 3_000L);
+    }
+
+    private final Runnable hideSplit = new Runnable() { @Override public void run() {
+        if (splitNotice != null) splitNotice.setVisibility(View.GONE);
+    }};
+
+    private LinearLayout buildSplitNotice() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER);
+        panel.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 14));
+        panel.setBackground(Ui.background(this, Ui.PANEL_ACTIVE, 20));
+        panel.setVisibility(View.GONE);
+        splitTitle = Ui.numeral(this, "", 30, Ui.YELLOW); splitTitle.setGravity(Gravity.CENTER);
+        splitDetail = Ui.numeral(this, "", 20, Ui.WHITE); splitDetail.setGravity(Gravity.CENTER);
+        panel.addView(splitTitle, new LinearLayout.LayoutParams(-1, Ui.dp(this, 42)));
+        panel.addView(splitDetail, new LinearLayout.LayoutParams(-1, Ui.dp(this, 30)));
+        return panel;
     }
 
     private LinearLayout buildTransitionNotice() {
@@ -285,7 +380,7 @@ public class TrainingActivity extends Activity {
         TextView hint = Ui.text(this, "红色为起点 · 白色为当前位置", 11, Ui.MUTED);
         hint.setGravity(Gravity.CENTER);
         panel.addView(hint, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
-        panel.addView(Ui.pagerDots(this, 3, 4), new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
+        panel.addView(Ui.pagerDots(this, 4, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
         close.setOnClickListener(v -> hideRoute());
         return panel;
     }
@@ -317,6 +412,7 @@ public class TrainingActivity extends Activity {
     @Override public void onStop() {
         handler.removeCallbacks(update);
         handler.removeCallbacks(hideTransition);
+        handler.removeCallbacks(hideSplit);
         if (bound) { unbindService(connection); bound = false; service = null; }
         super.onStop();
         // During an active workout this task owns the foreground just like the
@@ -371,25 +467,30 @@ public class TrainingActivity extends Activity {
         Ui.setTextIfChanged(coreHeader, s.planCompleted ? "自由记录"
                 : String.format(Locale.CHINA, "%s · 第 %d/%d 项%s", s.stageName, s.stageNumber, s.stageCount, s.paused ? " · 已暂停" : ""));
         coreHeader.setTextColor(accent);
-        Ui.setTextIfChanged(trainClock, new java.text.SimpleDateFormat("HH:mm", Locale.CHINA).format(new java.util.Date()));
-        // Figure and unit live in separate views so the unit can stay small at the baseline.
-        if (s.totalMeters < 1000) {
-            Ui.setTextIfChanged(distance, String.valueOf(Math.round(s.totalMeters)));
-            Ui.setTextIfChanged(distanceLabel, "米");
-        } else {
-            Ui.setTextIfChanged(distance, String.format(Locale.CHINA, "%.2f", s.totalMeters / 1000d));
-            Ui.setTextIfChanged(distanceLabel, "公里");
-        }
+        String clockText = new java.text.SimpleDateFormat("HH:mm", Locale.CHINA).format(new java.util.Date());
+        Ui.setTextIfChanged(trainClock, clockText);
+        Ui.setTextIfChanged(extraClock, clockText);
+        Ui.setTextIfChanged(distance, formatDistance(s.totalMeters));
         Ui.setTextIfChanged(pace, formatCurrentPace(s));
         boolean paceLive = Double.isFinite(s.currentSpeedMps) && s.currentSpeedMps >= SpeedFusion.MOVING_THRESHOLD_MPS;
         pace.setTextColor(paceLive ? accent : Ui.MUTED);
+        Ui.setTextIfChanged(avgPace, s.live.avgPaceSecondsPerKm > 0
+                ? SpeedFusion.formatPace(s.live.avgPaceSecondsPerKm) : "--");
+        // Heart figure carries its zone colour, zone band lights the matching segment — the
+        // Garmin way of making intensity readable without reading numbers.
+        Ui.setTextIfChanged(heart, s.heartRate > 0 ? String.valueOf(s.heartRate) : "--");
+        heart.setTextColor(s.live.heartRateZone > 0 ? Ui.ZONE_COLORS[s.live.heartRateZone - 1] : Ui.MUTED);
+        zoneBar.set(s.live.heartRateZone);
+        Ui.setTextIfChanged(duration, formatDuration(s.activeMillis));
+        // Secondary data screen.
+        Ui.setTextIfChanged(cadence, s.live.cadenceSpm > 0 ? String.valueOf(s.live.cadenceSpm) : "--");
         Ui.setTextIfChanged(speed, paceLive ? String.format(Locale.CHINA, "%.1f", s.currentSpeedMps * 3.6d) : "--");
         speed.setTextColor(paceLive ? Ui.WHITE : Ui.MUTED);
-        Ui.setTextIfChanged(speedLabel, "千米/时 · " + speedSourceText(s));
-        Ui.setTextIfChanged(heart, s.heartRate > 0 ? String.valueOf(s.heartRate) : "--");
-        heart.setTextColor(s.heartRate > 0 ? Ui.RED : Ui.MUTED);
-        Ui.setTextIfChanged(steps, s.sessionSteps + " 步");
-        Ui.setTextIfChanged(duration, formatDuration(s.activeMillis));
+        Ui.setTextIfChanged(climb, String.valueOf(Math.round(s.live.elevationGainMeters)));
+        Ui.setTextIfChanged(calories, String.valueOf(s.live.calories));
+        Ui.setTextIfChanged(steps, String.valueOf(s.sessionSteps));
+        Ui.setTextIfChanged(maxHeart, s.live.maxHeartRate > 0 ? String.valueOf(s.live.maxHeartRate) : "--");
+        maybeShowSplit(s);
         Ui.setTextIfChanged(controlState, s.paused ? "已暂停" : s.planCompleted ? "自由记录中" : "训练中");
         controlState.setTextColor(s.paused ? Ui.AMBER : accent);
         Ui.setTextIfChanged(controlDuration, formatDuration(s.activeMillis));
@@ -474,14 +575,6 @@ public class TrainingActivity extends Activity {
         return SpeedFusion.formatPace(1000d / s.currentSpeedMps);
     }
 
-    /** Names the measurement behind the readout so an estimated figure is never mistaken for GPS. */
-    private String speedSourceText(WorkoutService.Snapshot s) {
-        if (s.paused) return "已暂停";
-        if (!Double.isFinite(s.currentSpeedMps)) return "等待速度数据";
-        if (s.currentSpeedEstimated) return "步数估算";
-        return s.hasGpsFix ? "卫星测速" : "轨迹推算";
-    }
-
     private void showTransition(String previous, String next) {
         if (transitionNotice == null || previous.isEmpty()) return;
         transitionTitle.setText(previous + " 已完成");
@@ -520,7 +613,7 @@ public class TrainingActivity extends Activity {
     }
 
     private void showRoute() {
-        if (workoutPager != null) workoutPager.setCurrentItem(3,true);
+        if (workoutPager != null) workoutPager.setCurrentItem(ROUTE_PAGE,true);
     }
 
     private void hideRoute() {
