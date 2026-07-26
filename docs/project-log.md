@@ -210,3 +210,15 @@
 - `watch_*` 写工具继续支持 snake_case，同时新增 `requestId`、`expectedRevision`、`commandId`、`expectedState`、`expiresAt` camelCase 别名，便于 ChatGPT 现有连接按用户验收字段调用。
 - 已执行：`cd mcp; .\.venv\Scripts\python.exe -m pytest -q`、`uv run pyright`、`uv run ruff check src tests`、`git diff --check`、`.\gradlew.bat :app:assembleDebug :phone:assembleDebug`，均通过。
 - 新 wheel：`mcp/dist/poyi_watch_mcp-0.20.0.dev0-py3-none-any.whl`，SHA-256 `437FFD62E814926131A2155C72A344D284F10369D24F58CE5265C061214B5099`。当前非提升 shell 不能重启 Windows 服务，已热更新 site-packages 文件；服务进程需提升权限重启后加载该兼容。
+
+## 2026-07-26：Watch 专属 Tunnel 与 ChatGPT 真实端到端
+
+- 关联 `REQ-SYNC-003` 至 `REQ-SYNC-005`、`BUG-017` 至 `BUG-019`、`API-013`、`API-016` 至 `API-018`。
+- 创建 Watch 专属固定 Tunnel 和独立服务账号 Runtime Key；密钥立即转换为 DPAPI LocalMachine 密文，明文临时文件删除。`PoyiWatchMcp` 与 `PoyiWatchTunnel` 均以 LocalSystem/Automatic 运行，8768/8880 ready，Tunnel doctor 与 verify 通过。
+- MCP 新增 OAuth Protected Resource 元数据；doctor 从 DPAPI 临时解密 Runtime Key 到进程环境并在 finally 清除，健康监听使用临时端口，避免与已运行实例冲突。
+- 现有“步序运动”私人连接没有 MCP 端点编辑入口。删除旧对象后用同一名称重新建立私人开发连接并绑定 Watch Tunnel，全程未同时创建第二个同名应用，也未进行目录发布、组织/域名/身份认证。
+- ChatGPT 扫描 24 个 `watch_*` 工具；真实 `watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep` 成功。首次调用遇到手机业务服务离线，恢复应用前台服务后重试通过。
+- ChatGPT 写入验收：`watch_sync_plans` 同 requestId 重放为 duplicate；pause 首次成功，以不同 requestId 重放同一 commandId 为 duplicate。最终状态回读为 `RUNNING + COMPLETED`。
+- ChatGPT 请求 `watch://status` 返回 `Unknown resource`，而本机 `resources/read` 成功；Tunnel 未转发该 Resource 请求，登记 BUG-019。
+- 现场发现 mDNS IPv6 被拼成缺少方括号的 URL并可能阻塞 IPv4；修复地址规范化、IPv4 优先、坏缓存跳过和 InvalidURL 容错，新增测试后 MCP pytest 12 项通过。
+- 最终 MCP Wheel：`mcp/dist/poyi_watch_mcp-0.20.0.dev0-py3-none-any.whl`，SHA-256 `C0155E7B1545B7406D4DC66617CAFCF450A7D04DDB1B72FCA400053D5981A365`。

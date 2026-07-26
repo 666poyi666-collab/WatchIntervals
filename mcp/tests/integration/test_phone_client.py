@@ -72,3 +72,26 @@ async def test_client_reopens_after_stateless_http_lifespan_close(tmp_path: Path
     finally:
         await client.close()
     assert result["phoneDeviceId"] == "phone-one"
+
+
+def test_ipv6_discovery_url_is_bracketed() -> None:
+    assert PhoneApiClient._base_url("2001:db8::7", 8766) == "http://[2001:db8::7]:8766"
+    assert PhoneApiClient._base_url("192.0.2.7", 8766) == "http://192.0.2.7:8766"
+    hosts = ["2001:db8::7", "phone.local", "192.0.2.7"]
+    assert sorted(hosts, key=PhoneApiClient._address_family_order) == [
+        "192.0.2.7",
+        "2001:db8::7",
+        "phone.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invalid_cached_ipv6_url_is_skipped(tmp_path: Path) -> None:
+    (tmp_path / "phone-endpoint.json").write_text(
+        '{"baseUrl":"http://2001:db8::7:8766","phoneDeviceId":"phone-one"}', "utf-8"
+    )
+    client = PhoneApiClient(settings(tmp_path), Metrics())
+    try:
+        assert client._load_endpoint() is None
+    finally:
+        await client.close()

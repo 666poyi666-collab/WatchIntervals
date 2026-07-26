@@ -51,7 +51,15 @@ async def test_health_ready_and_metrics_share_watch_port_app(tmp_path: Path) -> 
         health = await client.get("/healthz")
         ready = await client.get("/readyz")
         metrics = await client.get("/metrics")
+        protected_resource = await client.get("/.well-known/oauth-protected-resource/mcp")
+        protected_resource_fallback = await client.get("/.well-known/oauth-protected-resource")
     assert health.status_code == 200
     assert health.json()["service"] == "PoyiWatchMcp"
     assert ready.status_code == 200
     assert "watch_mcp_ready 1" in metrics.text
+    assert protected_resource.status_code == 200
+    assert protected_resource.json() == {
+        "resource": "http://127.0.0.1:8768/mcp",
+        "authorization_servers": [],
+    }
+    assert protected_resource_fallback.json() == protected_resource.json()

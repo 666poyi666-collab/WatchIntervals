@@ -141,7 +141,11 @@ git diff --check
 - `PoyiWatchMcp` / `PoyiWatchTunnel` 已安装为自动启动服务；`PoyiWatchMcp` 以 LocalSystem 运行并通过 `127.0.0.1:8768/healthz`、`/readyz`。
 - MCP 服务端口真实调用通过：`watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep`、`watch://status`。
 - 安全写验收通过：`watch_sync_plans` 同一 `requestId` 重放返回 duplicate；`watch_pause_workout` 同一 `commandId` 重放返回 duplicate；随后恢复训练，最终 `sessionState=RUNNING`、`planState=COMPLETED`。
-- `PoyiWatchTunnel` 因缺 Watch 专属固定 Tunnel ID 与 Runtime Key 尚未启动，`127.0.0.1:8880/readyz` 和 ChatGPT 远程端到端仍开放。
+- Watch 专属固定 Tunnel 与独立 Runtime Key 已 provision；Runtime Key 仅以 DPAPI LocalMachine 密文落盘。`PoyiWatchTunnel` 以 LocalSystem 自动服务运行，`127.0.0.1:8880/readyz` 为 `ready`，`doctor.ps1` 与 `verify.ps1` 通过。
+- 现有“步序运动”旧私人连接没有 MCP 端点编辑入口，删除旧对象后以相同名称重新绑定 Watch Tunnel；没有同时存在第二个同名应用。连接页扫描到 24 个 `watch_*` 工具。
+- ChatGPT 真实读取：`watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep` 成功；`watch://status` 返回 `Unknown resource`，本地相同 Resource 仍成功，记录为 BUG-019。
+- ChatGPT 真实写入：`watch_sync_plans` 首次成功，同一 `requestId` 重放返回 `duplicate=true`；pause 成功，以不同 requestId 重放同一 `commandId` 返回 `duplicate=true`。训练最终经状态回读为 `RUNNING + COMPLETED`。
+- 现场修复 mDNS IPv6 缺少方括号及不可达 IPv6 阻塞 IPv4的问题；新增 2 项测试后 MCP pytest 为 12 项通过。手机前台 API 被系统结束后的首次远程调用按离线失败，重新启动应用后读取恢复；无 ADB 的开机/后台恢复仍需单独重启验收。
 
 ## 6. 建议优先补齐的自动测试
 

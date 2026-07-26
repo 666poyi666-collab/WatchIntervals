@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- 修复 Watch MCP 将手机 mDNS IPv6 地址拼成无效 URL、不可达 IPv6 阻塞 IPv4 候选和旧坏缓存持续复用的问题。
+- 补齐 Watch MCP OAuth Protected Resource 元数据，Tunnel doctor 可在不暴露 DPAPI Runtime Key 的情况下完成全项检查。
 - 修复 checkpoint 写入 offset 前未无条件 flush 缓冲样本的问题。
 - 修复 Xiaomi 认证完成后 GATT 写入竞态、Android 13 旧写 API失败，以及 MTU 517 生成 514 字节属性值超过 512 字节上限的问题。
 - 修复 BLE 权限缺失且 LAN 可用时每秒重置退避并反复扫描的问题。
@@ -61,7 +63,7 @@
 
 - `0.18.0/0.11.0` 为 debug 候选，尚未完成三次 30–60 分钟户外对比、进程终止矩阵、378×496 全页面截图和功耗测试。
 - BLE 已接入计划、控制选择和定位中继；安全配对、防重放、息屏、10 次重连、100 次请求及 15 分钟连续运行已验证，双端重启和真实非充电功耗仍待执行。
-- 独立 Watch MCP 已通过本地契约门禁；Watch 专属 Tunnel 与 ChatGPT 应用因账号未登录尚未完成真实远程绑定。
+- Watch 专属 Tunnel 与同名“步序运动”私人连接已完成绑定，24 个 `watch_*` 工具和读写幂等调用通过；ChatGPT 对 `watch://status` 仍返回 `Unknown resource`，本地 MCP Resource 调用正常。
 
 ## [Phone 0.10.1 / MCP 0.5.1] - 2026-07-25
 

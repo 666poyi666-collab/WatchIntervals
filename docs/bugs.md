@@ -161,12 +161,31 @@
 
 ### BUG-017：Watch 业务曾注册到统一 PersonalMcpGateway
 
-- 状态：Fixed，待服务/Tunnel/ChatGPT 端验证
+- 状态：Fixed，待 Windows 重启恢复验证
 - 严重度：P1
 - 影响：独立部署、项目故障隔离和工具命名空间。
 - 现象：旧架构由统一 Gateway 同时直接连接手机和手表，并与其他项目共享 MCP/Tunnel 生命周期。
 - 处理：在本仓库新增独立 `PoyiWatchMcp` 与 `PoyiWatchTunnel`；只连接手机业务门面，使用 `watch_*` 工具和 `watch://` Resource；统一 Gateway 仓库不再承载新增 Watch Adapter。
-- 验证：独立 MCP Python 10 项测试、Ruff、Pyright、PowerShell 语法和真实本地 streamable HTTP 调用通过；小米手机 8766 已签发独立 token，`PoyiWatchMcp` WinSW 服务已安装并通过 `watch_get_status`、`watch_list_plans`、`watch_get_latest_sleep`、`watch://status` 及写入幂等验收。独立 Tunnel 和 ChatGPT 现有“步序运动”连接仍需 Watch 专属 Tunnel ID/Runtime Key 后继续验收。
+- 验证：独立 MCP Python 12 项测试、Ruff、Pyright、PowerShell 语法和真实本地 streamable HTTP 调用通过；`PoyiWatchMcp`、`PoyiWatchTunnel` 均以 LocalSystem 自动服务运行，Tunnel doctor/ready 通过。现有“步序运动”因不提供端点编辑入口，删除旧对象后以相同名称建立私人开发连接，ChatGPT 已扫描 24 个 `watch_*` 工具并成功读取状态、计划和睡眠；统一 Gateway/Tunnel 未被复用。
+
+### BUG-018：手机 mDNS IPv6 地址生成无效 URL
+
+- 状态：Fixed，待跨网络真机验证
+- 严重度：P1
+- 影响：独立 Watch MCP 手机发现和训练控制。
+- 现象：手机 mDNS 返回 IPv6 时曾生成 `http://IPv6:port`，HTTP 客户端将末段误判为非法端口，远程工具表现为 `INVALID_ARGUMENT`；不可达 IPv6 还会阻塞后续 IPv4 候选。
+- 处理：IPv6 authority 强制方括号、IPv4 候选优先、坏 endpoint 缓存跳过，并将 `InvalidURL` 映射为可重试的协议错误。
+- 验证：新增 IPv4/IPv6 URL、地址排序和旧坏缓存测试；MCP pytest 12 项通过。
+- 关闭条件：手机 IP 变化和 IPv4/IPv6 双栈各完成一次无 ADB 自动重发现。
+
+### BUG-019：ChatGPT 私人 MCP 未读取 `watch://` Resource
+
+- 状态：Open
+- 严重度：P2
+- 影响：ChatGPT 中的大量/长内容访问。
+- 现象：本地 MCP `resources/list`、`resources/read watch://status` 均通过，ChatGPT 私人连接也扫描出 24 个工具，但真实请求 `watch://status` 返回 `Unknown resource`，Tunnel 日志未出现对应 Resource 转发。
+- 当前判断：连接创建页只展示工具，当前 ChatGPT 插件执行面未把该 URI 路由到 MCP `resources/read`。
+- 关闭条件：平台端可见并读取静态/模板 Resource，或在不增加第 25 个业务工具的前提下提供等价 Resource 入口。
 
 ## 2. 已修复/历史项
 

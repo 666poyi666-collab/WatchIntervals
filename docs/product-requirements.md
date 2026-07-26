@@ -70,9 +70,9 @@
 | REQ-HISTORY-003 | 支持查看详情、轨迹和删除记录 | 删除后列表与 API 都不再返回该记录 | 已实现 |
 | REQ-SYNC-001 | 手机自动发现同网手表 | 通过 `_watchintervals._tcp.` mDNS 发现 8765 端口 | 已实现 |
 | REQ-SYNC-002 | 使用六位码配对本地 API | 未提供正确 `X-Pairing-Code` 时返回 401 | 已实现 |
-| REQ-SYNC-003 | 独立 Watch MCP 支持计划、统计、历史和训练控制 | 仅注册 `watch_*` 工具；长轨迹、心率和睡眠明细使用 `watch://` Resource | 已实现，待 ChatGPT 实测 |
-| REQ-SYNC-004 | ChatGPT 使用 Watch 专属长效 MCP 通道 | `PoyiWatchMcp` 与 `PoyiWatchTunnel` 独立自启动；应用固定绑定 Watch Tunnel ID；Runtime Key 不明文落盘 | 服务实现完成，待账号绑定 |
-| REQ-SYNC-005 | Windows 自动重新发现手机 | 手机广播稳定设备 ID；Watch MCP 在旧地址失败后通过 mDNS 验证并更新运行时端点 | 已实现，待跨网络真机验证 |
+| REQ-SYNC-003 | 独立 Watch MCP 支持计划、统计、历史和训练控制 | 仅注册 `watch_*` 工具；长轨迹、心率和睡眠明细使用 `watch://` Resource | 24 个工具已通过 ChatGPT；Resource 本地通过、ChatGPT 返回 Unknown resource |
+| REQ-SYNC-004 | ChatGPT 使用 Watch 专属长效 MCP 通道 | `PoyiWatchMcp` 与 `PoyiWatchTunnel` 独立自启动；应用固定绑定 Watch Tunnel ID；Runtime Key 不明文落盘 | 已绑定并通过 Tunnel doctor；待 Windows 重启恢复 |
+| REQ-SYNC-005 | Windows 自动重新发现手机 | 手机广播稳定设备 ID；Watch MCP 在旧地址失败后通过 mDNS 验证并更新运行时端点 | IPv6 URL 已修复；mDNS 消失/跨网络仍待真机验证 |
 | REQ-SYNC-006 | 计划修改支持可靠 LAN 队列 | 手机先写持久 outbox，手表按 operationId 去重并 ACK，失败操作保留重试 | 已实现基础链路 |
 | REQ-SYNC-007 | MCP 计划写入支持 revision 与请求幂等 | 手机 8766 写计划/选择计划接受 `requestId`、`expectedRevision`；重复请求返回首次结果，复用 ID 或旧 revision 返回 409，崩溃恢复不重复执行 | 已实现，待真机故障注入 |
 | REQ-SYNC-008 | 手机与手表以 BLE 作为主控制链路 | 手机 Central/GATT Client 自动连接手表 Peripheral/GATT Server；状态、控制、计划小增量和定位不依赖共同 Wi-Fi | 基础链路已实现，待完整门禁 |

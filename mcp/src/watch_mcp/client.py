@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import time
 from dataclasses import dataclass
@@ -88,6 +89,10 @@ class PhoneApiClient:
                 last_error = WatchMcpError("PHONE_TIMEOUT", "Phone request timed out", True)
             except httpx.NetworkError:
                 last_error = WatchMcpError("PHONE_OFFLINE", "Phone is offline", True)
+            except httpx.InvalidURL:
+                last_error = WatchMcpError(
+                    "PHONE_PROTOCOL_ERROR", "Discovered phone URL is invalid", True
+                )
         raise last_error or WatchMcpError("PHONE_OFFLINE", "Phone was not discovered", True)
 
     async def verify(self) -> dict[str, Any]:
@@ -112,7 +117,10 @@ class PhoneApiClient:
         browser = ServiceBrowser(zeroconf, self.settings.discovery_service, listener)
         try:
             time.sleep(1.8)
-            return [f"http://{host}:{port}" for host, port in listener.addresses]
+            addresses = sorted(
+                listener.addresses, key=lambda item: self._address_family_order(item[0])
+            )
+            return [self._base_url(host, port) for host, port in addresses]
         finally:
             browser.cancel()
             zeroconf.close()
@@ -133,7 +141,9 @@ class PhoneApiClient:
         path = self.settings.data_dir / "phone-endpoint.json"
         try:
             value = json.loads(path.read_text("utf-8"))
-            return Endpoint(str(value["baseUrl"]), str(value["phoneDeviceId"]))
+            base_url = self._normalize_url(str(value["baseUrl"]))
+            device_id = str(value["phoneDeviceId"])
+            return Endpoint(base_url, device_id) if base_url and device_id else None
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
@@ -190,6 +200,32 @@ class PhoneApiClient:
         if not isinstance(value, dict):
             raise WatchMcpError("PHONE_PROTOCOL_ERROR", "Expected a JSON object", True)
         return cast(dict[str, Any], value)
+
+    @staticmethod
+    def _base_url(host: str, port: int) -> str:
+        try:
+            parsed = ipaddress.ip_address(host.split("%", 1)[0])
+        except ValueError:
+            return f"http://{host}:{port}"
+        authority = f"[{host}]" if parsed.version == 6 else host
+        return f"http://{authority}:{port}"
+
+    @staticmethod
+    def _address_family_order(host: str) -> int:
+        try:
+            return 0 if ipaddress.ip_address(host.split("%", 1)[0]).version == 4 else 1
+        except ValueError:
+            return 2
+
+    @staticmethod
+    def _normalize_url(value: str) -> str:
+        try:
+            url = httpx.URL(value)
+            if url.scheme not in {"http", "https"} or not url.host or url.port is None:
+                return ""
+            return str(url).rstrip("/")
+        except (httpx.InvalidURL, ValueError):
+            return ""
 
 
 def encoded(value: str) -> str:

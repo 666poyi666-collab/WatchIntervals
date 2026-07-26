@@ -62,6 +62,21 @@ def build_server(settings: Settings) -> FastMCP:
     async def metrics_route(_: Request) -> Response:
         return PlainTextResponse(metrics.render(True), media_type="text/plain; version=0.0.4")
 
+    async def protected_resource_metadata(_: Request) -> Response:
+        return JSONResponse(
+            {
+                "resource": f"http://{settings.host}:{settings.port}/mcp",
+                "authorization_servers": [],
+            }
+        )
+
+    server.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET"])(
+        protected_resource_metadata
+    )
+    server.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])(
+        protected_resource_metadata
+    )
+
     @server.tool(name="watch_get_status", description="Get phone, watch, BLE, and workout status")
     async def watch_get_status() -> dict[str, Any]:
         return await tools.invoke(tools.status())
