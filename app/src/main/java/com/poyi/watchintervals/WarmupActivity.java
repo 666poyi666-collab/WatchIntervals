@@ -122,7 +122,7 @@ public class WarmupActivity extends Activity {
         back.setOnClickListener(v -> cancelAndFinish());
         FrameLayout shell = new FrameLayout(this);
         shell.addView(root, new FrameLayout.LayoutParams(-1, -1));
-        countdownOverlay = Ui.bold(this, "", 112, Ui.BLACK);
+        countdownOverlay = Ui.numeral(this, "", 112, Ui.BLACK);
         countdownOverlay.setGravity(Gravity.CENTER);
         countdownOverlay.setBackgroundColor(Ui.YELLOW);
         countdownOverlay.setVisibility(View.GONE);

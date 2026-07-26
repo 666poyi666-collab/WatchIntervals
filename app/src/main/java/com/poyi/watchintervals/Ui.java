@@ -275,6 +275,32 @@ final class Ui {
         return view;
     }
 
+    /**
+     * Plan step row: stage-colour accent bar, muted order number, stage name, target figure
+     * right-aligned in the numeral face. The previous rows glued index, name and target into one
+     * plain string — the last "three fields in a sentence" list left after the instrument
+     * redesign, with no hierarchy and none of the stage colour semantics the training pages use.
+     */
+    static LinearLayout stageRow(Context context, int index, Stage stage, int backgroundColor) {
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackground(background(context, backgroundColor, 14));
+        row.setPadding(dp(context, 12), 0, dp(context, 14), 0);
+        View accent = new View(context);
+        accent.setBackground(background(context, stageColor(stage.kind), 2));
+        LinearLayout.LayoutParams accentParams = new LinearLayout.LayoutParams(dp(context, 3.5f), dp(context, 16));
+        accentParams.rightMargin = dp(context, 10);
+        row.addView(accent, accentParams);
+        TextView order = text(context, String.valueOf(index), BODY, MUTED);
+        row.addView(order, new LinearLayout.LayoutParams(dp(context, 22), -1));
+        TextView name = bold(context, stage.name(), BODY, WHITE);
+        row.addView(name, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView target = numeral(context, stage.targetText(), 17, WHITE);
+        target.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        row.addView(target, new LinearLayout.LayoutParams(-2, -1));
+        return row;
+    }
+
     static View divider(Context context) {
         View view = new View(context);
         view.setBackgroundColor(LINE);

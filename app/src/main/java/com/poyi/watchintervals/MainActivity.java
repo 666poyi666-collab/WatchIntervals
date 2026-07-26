@@ -298,7 +298,7 @@ public class MainActivity extends Activity {
                 row.addView(data,new LinearLayout.LayoutParams(-1,Ui.dp(this,20)));
                 row.setOnClickListener(v->startActivity(new Intent(this,HistoryActivity.class).putExtra("record_id",record.id)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,62));p.bottomMargin=Ui.dp(this,7);pagerHistoryList.addView(row,p);}}
         if(pagerPlanList!=null){pagerPlanList.removeAllViews();ArrayList<Stage> current=PlanStore.load(this);pagerPlanTitle.setText(PlanStore.name(this));TextView group=Ui.text(this,PlanStore.group(this)+" · "+current.size()+" 项内容",13,Ui.MUTED);pagerPlanList.addView(group,new LinearLayout.LayoutParams(-1,Ui.dp(this,34)));TextView req=Ui.text(this,PlanStore.requirement(this),12,Ui.MUTED);pagerPlanList.addView(req,new LinearLayout.LayoutParams(-1,-2));
-            for(int i=0;i<current.size();i++){Stage item=current.get(i);TextView row=Ui.text(this,(i+1)+"   "+item.name()+"   "+item.targetText(),15,Ui.WHITE);row.setBackground(Ui.background(this,Ui.PANEL,18));row.setPadding(Ui.dp(this,14),0,Ui.dp(this,14),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,52));p.topMargin=Ui.dp(this,7);pagerPlanList.addView(row,p);}}
+            for(int i=0;i<current.size();i++){LinearLayout row=Ui.stageRow(this,i+1,current.get(i),Ui.PANEL);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Ui.dp(this,52));p.topMargin=Ui.dp(this,7);pagerPlanList.addView(row,p);}}
     }
 
 
