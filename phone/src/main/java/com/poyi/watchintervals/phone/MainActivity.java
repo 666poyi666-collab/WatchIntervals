@@ -52,6 +52,7 @@ public class MainActivity extends Activity {
     private Button[] navItems;
     private int currentSection;
     private TextView liveState, liveTime, liveMeta;
+    private ActivityRing liveRing;
     private LinearLayout liveActions;
     private String liveActionsState = "";
     private volatile boolean livePollInFlight;
@@ -89,18 +90,18 @@ public class MainActivity extends Activity {
         int topInset=(statusBarResource>0?getResources().getDimensionPixelSize(statusBarResource):0)+dp(10);
         int navBarResource=getResources().getIdentifier("navigation_bar_height","dimen","android");
         int bottomInset=navBarResource>0?getResources().getDimensionPixelSize(navBarResource):0;
-        LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Color.rgb(244,245,241));
+        LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Palette.BG);
 
         // Fixed header: product title plus a one-line connection status. The old full-height
         // "连接手表" card topped every tab forever; for a paired phone, connection is status, not
         // a task, so setup collapses behind a tap on the status row.
         LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.VERTICAL);header.setPadding(dp(20),topInset,dp(20),dp(4));
-        header.addView(text("步序",30,true,Color.rgb(22,24,22)));
+        header.addView(text("步序",30,true,Palette.TEXT));
         LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);statusRow.setClickable(true);statusRow.setFocusable(true);
         statusDot=new View(this);statusDot.setBackground(rounded(Color.GRAY,10));
         LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
-        connection=text("尚未连接",14,false,Color.DKGRAY);statusRow.addView(connection,new LinearLayout.LayoutParams(0,-2,1));
-        setupChevron=text("连接设置 ▾",13,false,Color.GRAY);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
+        connection=text("尚未连接",14,false,Palette.TEXT_DIM);statusRow.addView(connection,new LinearLayout.LayoutParams(0,-2,1));
+        setupChevron=text("连接设置 ▾",13,false,Palette.TEXT_DIM);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
         statusRow.setOnClickListener(v->toggleSetup(setupPanel.getVisibility()!=View.VISIBLE));
         header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(38)));
 
@@ -109,50 +110,50 @@ public class MainActivity extends Activity {
         code=input("手表上的 6 位配对码");code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         setupPanel.addView(host);setupPanel.addView(code);
         LinearLayout connectActions=new LinearLayout(this);
-        Button discover=button("连接手表",Color.rgb(232,234,229),Color.BLACK);
-        Button connect=button("立即同步",Color.rgb(124,203,43),Color.BLACK);
+        Button discover=button("连接手表",Palette.CARD_HIGH,Palette.TEXT);
+        Button connect=button("立即同步",Palette.EXERCISE,Palette.TEXT);
         connectActions.addView(discover,weight());connectActions.addView(connect,weight());setupPanel.addView(connectActions);
         LinearLayout.LayoutParams setupParams=new LinearLayout.LayoutParams(-1,-2);setupParams.topMargin=dp(6);
         header.addView(setupPanel,setupParams);
         shell.addView(header);
 
         planCard = card();
-        planCard.addView(text("训练计划", 24, true, Color.BLACK));
+        planCard.addView(text("训练计划", 24, true, Palette.TEXT));
         planLibraryPanel=new LinearLayout(this);planLibraryPanel.setOrientation(LinearLayout.VERTICAL);
-        planLibraryPanel.addView(text("先建立计划，再为计划逐日添加安排", 13, false, Color.DKGRAY));
-        currentWatchPlan=text("手表当前安排：连接后读取",14,false,Color.DKGRAY);planLibraryPanel.addView(currentWatchPlan);
+        planLibraryPanel.addView(text("先建立计划，再为计划逐日添加安排", 13, false, Palette.TEXT_DIM));
+        currentWatchPlan=text("手表当前安排：连接后读取",14,false,Palette.TEXT_DIM);planLibraryPanel.addView(currentWatchPlan);
         LinearLayout libraryHeader = new LinearLayout(this); libraryHeader.setGravity(Gravity.CENTER_VERTICAL);
-        libraryHeader.addView(text("全部计划",18,true,Color.BLACK),new LinearLayout.LayoutParams(0,dp(58),1));
-        Button createGroup=button("＋ 新建计划",Color.rgb(28,31,29),Color.WHITE); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(145),dp(48)));
+        libraryHeader.addView(text("全部计划",18,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(58),1));
+        Button createGroup=button("＋ 新建计划",Palette.MOVE,Color.WHITE); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(145),dp(48)));
         planLibraryPanel.addView(libraryHeader);
         savedPlanList=new LinearLayout(this); savedPlanList.setOrientation(LinearLayout.VERTICAL); planLibraryPanel.addView(savedPlanList);
         planCard.addView(planLibraryPanel);
 
         planEditorPanel=new LinearLayout(this);planEditorPanel.setOrientation(LinearLayout.VERTICAL);planEditorPanel.setVisibility(View.GONE);
         LinearLayout editorHeader=new LinearLayout(this);editorHeader.setGravity(Gravity.CENTER_VERTICAL);
-        Button closeEditor=button("‹ 返回计划",Color.rgb(232,234,229),Color.BLACK);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(135),dp(48)));
-        editorHeader.addView(text("编辑安排",19,true,Color.BLACK),new LinearLayout.LayoutParams(0,dp(52),1));planEditorPanel.addView(editorHeader);
-        planEditorPanel.addView(text("安排信息",16,true,Color.BLACK));
+        Button closeEditor=button("‹ 返回计划",Palette.CARD_HIGH,Palette.TEXT);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(135),dp(48)));
+        editorHeader.addView(text("编辑安排",19,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(52),1));planEditorPanel.addView(editorHeader);
+        planEditorPanel.addView(text("安排信息",16,true,Palette.TEXT));
         planName = input("安排名称，例如：第1天"); planGroup = input("所属训练计划，例如：减肥计划");
         planRequirement = input("今天的训练说明（可选）");
         planRequirement.setSingleLine(false); planRequirement.setMinLines(2); planRequirement.setGravity(Gravity.TOP);LinearLayout.LayoutParams requirementParams=new LinearLayout.LayoutParams(-1,dp(92));requirementParams.topMargin=dp(7);planRequirement.setLayoutParams(requirementParams);
         planEditorPanel.addView(planName); planEditorPanel.addView(planGroup); planEditorPanel.addView(planRequirement);
-        planEditorPanel.addView(text("快速填充训练内容",16,true,Color.BLACK));
+        planEditorPanel.addView(text("快速填充训练内容",16,true,Palette.TEXT));
         LinearLayout templates = new LinearLayout(this);
-        Button intervalPlan = button("1千米 + 200米", Color.rgb(232,234,229), Color.BLACK);
-        Button fartlekPlan = button("法特莱克跑", Color.rgb(232,234,229), Color.BLACK);
+        Button intervalPlan = button("1千米 + 200米", Palette.CARD_HIGH, Palette.TEXT);
+        Button fartlekPlan = button("法特莱克跑", Palette.CARD_HIGH, Palette.TEXT);
         templates.addView(intervalPlan, weight()); templates.addView(fartlekPlan, weight()); planEditorPanel.addView(templates);
-        planEditorPanel.addView(text("训练内容",18,true,Color.BLACK));
-        planEditorPanel.addView(text("每项都可选择按时间或距离，支持交替组合",13,false,Color.DKGRAY));
+        planEditorPanel.addView(text("训练内容",18,true,Palette.TEXT));
+        planEditorPanel.addView(text("每项都可选择按时间或距离，支持交替组合",13,false,Palette.TEXT_DIM));
         planList = new LinearLayout(this); planList.setOrientation(LinearLayout.VERTICAL); planEditorPanel.addView(planList);
         LinearLayout additions = new LinearLayout(this);
-        Button addRun = button("+ 跑步", Color.rgb(215,245,183), Color.BLACK);
-        Button addWalk = button("+ 快走", Color.rgb(196,237,240), Color.BLACK);
-        Button addRest = button("+ 休息", Color.rgb(255,227,174), Color.BLACK);
+        Button addRun = button("+ 跑步", Palette.FILL_RUN, Palette.EXERCISE);
+        Button addWalk = button("+ 快走", Palette.FILL_WALK, Palette.STAND);
+        Button addRest = button("+ 休息", Palette.FILL_REST, Palette.YELLOW);
         additions.addView(addRun, weight()); additions.addView(addWalk, weight()); additions.addView(addRest, weight()); planEditorPanel.addView(additions);
         LinearLayout planActions=new LinearLayout(this);
-        Button saveLocal=button("保存安排",Color.rgb(28,31,29),Color.WHITE);
-        Button save=button("保存并同步",Color.rgb(124,203,43),Color.BLACK);
+        Button saveLocal=button("保存安排",Palette.CARD_HIGH,Palette.TEXT);
+        Button save=button("保存并同步",Palette.EXERCISE,Palette.TEXT);
         planActions.addView(saveLocal,weight()); planActions.addView(save,weight()); planEditorPanel.addView(planActions);
         planCard.addView(planEditorPanel);
 
@@ -160,19 +161,29 @@ public class MainActivity extends Activity {
         // even exist. Four state-blind buttons were a prototype leftover — pressing 开始 mid-run
         // or 继续 while idle only produced STATE_MISMATCH errors.
         controlCard = card();
-        controlCard.addView(text("训练", 24, true, Color.BLACK));
-        liveState=text("未在训练",15,true,Color.DKGRAY);controlCard.addView(liveState);
-        liveTime=text("--:--",46,true,Color.rgb(24,27,25));liveTime.setFontFeatureSettings("tnum");controlCard.addView(liveTime);
-        liveMeta=text("连接手表后显示实时数据",14,false,Color.DKGRAY);controlCard.addView(liveMeta);
+        controlCard.addView(text("训练", 24, true, Palette.TEXT));
+        // Fitness-style hero: the active clock sits inside a gradient progress ring that fills
+        // as plan stages complete.
+        FrameLayout ringBox=new FrameLayout(this);
+        liveRing=new ActivityRing(this);
+        ringBox.addView(liveRing,new FrameLayout.LayoutParams(dp(176),dp(176),Gravity.CENTER));
+        LinearLayout ringCenter=new LinearLayout(this);ringCenter.setOrientation(LinearLayout.VERTICAL);ringCenter.setGravity(Gravity.CENTER);
+        liveTime=text("--:--",28,true,Palette.TEXT);liveTime.setFontFeatureSettings("tnum");liveTime.setGravity(Gravity.CENTER);
+        liveState=text("未在训练",13,true,Palette.TEXT_DIM);liveState.setGravity(Gravity.CENTER);
+        ringCenter.addView(liveTime);ringCenter.addView(liveState);
+        ringBox.addView(ringCenter,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
+        LinearLayout.LayoutParams ringBoxParams=new LinearLayout.LayoutParams(-1,dp(196));ringBoxParams.topMargin=dp(4);
+        controlCard.addView(ringBox,ringBoxParams);
+        liveMeta=text("连接手表后显示实时数据",14,false,Palette.TEXT_DIM);liveMeta.setGravity(Gravity.CENTER_HORIZONTAL);controlCard.addView(liveMeta);
         liveActions=new LinearLayout(this);controlCard.addView(liveActions);
         rebuildLiveActions("idle");
-        controlCard.addView(text("操作即时发送到手表 · 训练状态每 5 秒刷新",12,false,Color.GRAY));
+        TextView controlHint=text("操作即时发送到手表 · 训练状态每 5 秒刷新",12,false,Palette.TEXT_DIM);controlHint.setGravity(Gravity.CENTER_HORIZONTAL);controlCard.addView(controlHint);
 
-        historyCard = card(); historyCard.addView(text("训练历史", 22, true, Color.BLACK));
-        historySummary = text("连接后读取", 14, false, Color.DKGRAY); historyCard.addView(historySummary);
+        historyCard = card(); historyCard.addView(text("训练历史", 22, true, Palette.TEXT));
+        historySummary = text("连接后读取", 14, false, Palette.TEXT_DIM); historyCard.addView(historySummary);
         historyList = new LinearLayout(this); historyList.setOrientation(LinearLayout.VERTICAL); historyCard.addView(historyList);
-        sleepCard = card(); sleepCard.addView(text("系统睡眠", 22, true, Color.BLACK));
-        sleepSummary = text("连接后读取手表系统睡眠", 14, false, Color.DKGRAY); sleepCard.addView(sleepSummary);
+        sleepCard = card(); sleepCard.addView(text("系统睡眠", 22, true, Palette.TEXT));
+        sleepSummary = text("连接后读取手表系统睡眠", 14, false, Palette.TEXT_DIM); sleepCard.addView(sleepSummary);
         sleepList = new LinearLayout(this); sleepList.setOrientation(LinearLayout.VERTICAL); sleepCard.addView(sleepList);
 
         FrameLayout content=new FrameLayout(this);
@@ -182,10 +193,10 @@ public class MainActivity extends Activity {
 
         // Real bottom navigation: destinations stay put while content scrolls beneath them. The
         // old tab chips lived inside the scroll and drifted away with the content.
-        LinearLayout nav=new LinearLayout(this);nav.setBackgroundColor(Color.WHITE);nav.setElevation(dp(6));
+        LinearLayout nav=new LinearLayout(this);nav.setBackgroundColor(Palette.NAV);
         nav.setPadding(dp(10),dp(6),dp(10),dp(6)+bottomInset);
-        navItems=new Button[]{button("计划",Color.TRANSPARENT,Color.DKGRAY),button("训练",Color.TRANSPARENT,Color.DKGRAY),
-                button("历史",Color.TRANSPARENT,Color.DKGRAY),button("睡眠",Color.TRANSPARENT,Color.DKGRAY)};
+        navItems=new Button[]{button("计划",Color.TRANSPARENT,Palette.TEXT_DIM),button("训练",Color.TRANSPARENT,Palette.TEXT_DIM),
+                button("历史",Color.TRANSPARENT,Palette.TEXT_DIM),button("睡眠",Color.TRANSPARENT,Palette.TEXT_DIM)};
         for(int i=0;i<navItems.length;i++){final int section=i;navItems[i].setOnClickListener(v->{showSection(section);if(section==3)loadSleep();});nav.addView(navItems[i],weight());}
         shell.addView(nav);
         setContentView(shell);
@@ -221,8 +232,8 @@ public class MainActivity extends Activity {
         sleepScroll.setVisibility(section==3?View.VISIBLE:View.GONE);
         if(section==0)showPlanLibrary();
         for(int i=0;i<navItems.length;i++){boolean selected=i==section;
-            navItems[i].setBackground(rounded(selected?Color.rgb(28,31,29):Color.TRANSPARENT,16));
-            navItems[i].setTextColor(selected?Color.WHITE:Color.DKGRAY);
+            navItems[i].setBackground(rounded(selected?Palette.CARD_HIGH:Color.TRANSPARENT,16));
+            navItems[i].setTextColor(selected?Palette.MOVE:Palette.TEXT_DIM);
             navItems[i].setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);}
         liveHandler.removeCallbacks(livePoller);
         if(section==1)liveHandler.post(livePoller);
@@ -232,11 +243,11 @@ public class MainActivity extends Activity {
         if(statusDot==null)return;
         int color;
         switch(snapshot.state){
-            case CONNECTED_BLE_LAN:case CONNECTED_BLE:color=Color.rgb(76,175,80);break;
-            case CONNECTED_LAN:color=Color.rgb(38,166,154);break;
-            case BLUETOOTH_DISABLED:case UNPAIRED:color=Color.rgb(211,47,47);break;
-            case SCANNING:case CONNECTING_BLE:case DISCOVERING_SERVICES:case SUBSCRIBING:case AUTHENTICATING:case BACKOFF:color=Color.rgb(245,158,11);break;
-            default:color=Color.GRAY;
+            case CONNECTED_BLE_LAN:case CONNECTED_BLE:color=Palette.GREEN;break;
+            case CONNECTED_LAN:color=Palette.STAND;break;
+            case BLUETOOTH_DISABLED:case UNPAIRED:color=Palette.RED;break;
+            case SCANNING:case CONNECTING_BLE:case DISCOVERING_SERVICES:case SUBSCRIBING:case AUTHENTICATING:case BACKOFF:color=Palette.ORANGE;break;
+            default:color=Palette.TEXT_DIM;
         }
         statusDot.setBackground(rounded(color,10));
     }
@@ -251,10 +262,10 @@ public class MainActivity extends Activity {
         if(liveActions==null||state.equals(liveActionsState))return;
         liveActionsState=state;
         liveActions.removeAllViews();
-        if("RUNNING".equals(state)){addLiveAction("暂停","pause",Color.rgb(232,234,229),Color.BLACK);addLiveAction("结束","stop",Color.rgb(255,226,226),Color.rgb(170,30,30));}
-        else if("PAUSED".equals(state)){addLiveAction("继续","resume",Color.rgb(124,203,43),Color.BLACK);addLiveAction("结束","stop",Color.rgb(255,226,226),Color.rgb(170,30,30));}
-        else if("PREPARING".equals(state)){addLiveAction("结束准备","stop",Color.rgb(232,234,229),Color.BLACK);}
-        else {addLiveAction("开始训练","start",Color.rgb(124,203,43),Color.BLACK);}
+        if("RUNNING".equals(state)){addLiveAction("暂停","pause",Palette.CARD_HIGH,Palette.TEXT);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
+        else if("PAUSED".equals(state)){addLiveAction("继续","resume",Palette.EXERCISE,Palette.TEXT);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
+        else if("PREPARING".equals(state)){addLiveAction("结束准备","stop",Palette.CARD_HIGH,Palette.TEXT);}
+        else {addLiveAction("开始训练","start",Palette.EXERCISE,Palette.TEXT);}
     }
 
     private void addLiveAction(String label,String action,int bg,int fg){
@@ -279,8 +290,9 @@ public class MainActivity extends Activity {
         if(liveState==null)return;
         if(workout==null){
             rebuildLiveActions("idle");
+            if(liveRing!=null)liveRing.set(0f,Palette.MOVE,Palette.ORANGE);
             liveState.setText(error!=null?"无法读取手表状态":"未在训练");
-            liveState.setTextColor(Color.DKGRAY);
+            liveState.setTextColor(Palette.TEXT_DIM);
             liveTime.setText("--:--");
             liveMeta.setText(error!=null?"请检查连接后重试":"在手表上开始，或点击下方按钮远程开始当前安排");
             return;
@@ -289,7 +301,7 @@ public class MainActivity extends Activity {
         rebuildLiveActions(state);
         boolean paused="PAUSED".equals(state);
         liveState.setText("PREPARING".equals(state)?"准备中":paused?"已暂停":("COMPLETED".equals(workout.optString("planState"))?"自由记录中":"训练中"));
-        liveState.setTextColor(paused?Color.rgb(245,158,11):Color.rgb(56,142,60));
+        liveState.setTextColor(paused?Palette.YELLOW:Palette.GREEN);
         liveTime.setText(PhoneFormat.duration(workout.optLong("activeDurationMs")));
         StringBuilder meta=new StringBuilder(PhoneFormat.distance(workout.optDouble("distanceMeters",0)));
         long avgPace=workout.optLong("avgPaceSecondsPerKm");
@@ -299,6 +311,11 @@ public class MainActivity extends Activity {
         int stageCount=workout.optInt("stageCount");
         if(stageCount>0)meta.append(" · ").append(workout.optString("stageName")).append(" ").append(workout.optInt("stageNumber")).append("/").append(stageCount);
         liveMeta.setText(meta.toString());
+        if(liveRing!=null){
+            boolean planDone="COMPLETED".equals(workout.optString("planState"));
+            float fraction=planDone?1f:stageCount>0?(workout.optInt("stageNumber")-1f)/stageCount:0f;
+            liveRing.set(fraction,Palette.MOVE,Palette.ORANGE);
+        }
     }
 
     private void discoverWatch() {
@@ -431,17 +448,17 @@ public class MainActivity extends Activity {
         planList.removeAllViews();
         for (int index=0; index<stages.size(); index++) {
             final int position=index; JSONObject stage=stages.get(index);
-            LinearLayout stageCard=card(); stageCard.setPadding(dp(14),dp(10),dp(14),dp(10));
+            LinearLayout stageCard=cardHigh(); stageCard.setPadding(dp(14),dp(10),dp(14),dp(10));
             LinearLayout row=new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
             String kind=stage.optString("kind"), unit=stage.optString("unit"); int target=stage.optInt("target");
-            TextView label=text((position+1)+"  "+kindName(kind),17,true,Color.BLACK); row.addView(label,new LinearLayout.LayoutParams(0,dp(48),1));
+            TextView label=text((position+1)+"  "+kindName(kind),17,true,Palette.TEXT); row.addView(label,new LinearLayout.LayoutParams(0,dp(48),1));
             EditText value=input(""); value.setText(String.valueOf(target)); value.setInputType(android.text.InputType.TYPE_CLASS_NUMBER); row.addView(value,new LinearLayout.LayoutParams(dp(90),dp(48)));
-            Button unitButton=button("DISTANCE".equals(unit)?"距离 · 米":"时间 · 秒",Color.rgb(232,234,229),Color.BLACK);unitButton.setTextSize(13); row.addView(unitButton,new LinearLayout.LayoutParams(dp(105),dp(48)));
+            Button unitButton=button("DISTANCE".equals(unit)?"距离 · 米":"时间 · 秒",Palette.CARD_HIGH,Palette.TEXT);unitButton.setTextSize(13); row.addView(unitButton,new LinearLayout.LayoutParams(dp(105),dp(48)));
             stageCard.addView(row);
             LinearLayout actions=new LinearLayout(this);
-            Button up=button("上移",Color.rgb(238,240,236),Color.BLACK);
-            Button down=button("下移",Color.rgb(238,240,236),Color.BLACK);
-            Button delete=button("删除阶段",Color.rgb(255,226,226),Color.rgb(170,30,30));
+            Button up=button("上移",Palette.CARD_HIGH,Palette.TEXT);
+            Button down=button("下移",Palette.CARD_HIGH,Palette.TEXT);
+            Button delete=button("删除阶段",Palette.FILL_DANGER,Palette.RED);
             up.setEnabled(position>0); down.setEnabled(position<stages.size()-1);
             actions.addView(up,weight());actions.addView(down,weight());actions.addView(delete,weight());
             stageCard.addView(actions);
@@ -561,23 +578,23 @@ public class MainActivity extends Activity {
     private void renderSavedPlans(){
         if(savedPlanList==null)return; savedPlanList.removeAllViews(); JSONObject library=PhonePlanLibrary.load(this);JSONArray plans=library.optJSONArray("plans");
         if(plans==null)plans=new JSONArray();
-        if(plans.length()==0)savedPlanList.addView(text("还没有安排。先新建训练计划，再点击“添加安排”。",14,false,Color.DKGRAY));
+        if(plans.length()==0)savedPlanList.addView(text("还没有安排。先新建训练计划，再点击“添加安排”。",14,false,Palette.TEXT_DIM));
         JSONArray groups=library.optJSONArray("groups");java.util.HashSet<String> rendered=new java.util.HashSet<>();
         if(groups!=null)for(int groupIndex=0;groupIndex<groups.length();groupIndex++){
             JSONObject group=groups.optJSONObject(groupIndex);if(group==null)continue;String groupId=group.optString("id");
             int arrangementCount=0;for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&groupId.equals(item.optString("groupId")))arrangementCount++;}
-            LinearLayout planBlock=card();planBlock.setPadding(dp(15),dp(14),dp(15),dp(14));planBlock.setBackground(rounded(Color.rgb(248,250,246),22));
+            LinearLayout planBlock=card();planBlock.setPadding(dp(15),dp(14),dp(15),dp(14));planBlock.setBackground(rounded(Palette.CARD_DEEP,22));
             LinearLayout titleRow=new LinearLayout(this);titleRow.setGravity(Gravity.CENTER_VERTICAL);
-            TextView header=text(group.optString("name"),19,true,Color.rgb(28,31,29));header.setSingleLine(false);titleRow.addView(header,new LinearLayout.LayoutParams(0,-2,1));
-            TextView count=text(arrangementCount+" 个安排",12,false,Color.DKGRAY);count.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);titleRow.addView(count,new LinearLayout.LayoutParams(dp(82),dp(38)));
+            TextView header=text(group.optString("name"),19,true,Palette.TEXT);header.setSingleLine(false);titleRow.addView(header,new LinearLayout.LayoutParams(0,-2,1));
+            TextView count=text(arrangementCount+" 个安排",12,false,Palette.TEXT_DIM);count.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);titleRow.addView(count,new LinearLayout.LayoutParams(dp(82),dp(38)));
             planBlock.addView(titleRow);
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);
-            Button addDay=button("＋ 添加安排",Color.rgb(190,255,72),Color.BLACK);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(46),1));
-            Button rename=button("设置",Color.rgb(232,234,229),Color.BLACK);actions.addView(rename,new LinearLayout.LayoutParams(dp(72),dp(46)));
-            Button delete=button("删除",Color.rgb(255,232,232),Color.rgb(150,35,35));actions.addView(delete,new LinearLayout.LayoutParams(dp(72),dp(46)));
+            Button addDay=button("＋ 添加安排",Palette.EXERCISE,Palette.TEXT);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(46),1));
+            Button rename=button("设置",Palette.CARD_HIGH,Palette.TEXT);actions.addView(rename,new LinearLayout.LayoutParams(dp(72),dp(46)));
+            Button delete=button("删除",Palette.FILL_DANGER,Palette.RED);actions.addView(delete,new LinearLayout.LayoutParams(dp(72),dp(46)));
             planBlock.addView(actions,new LinearLayout.LayoutParams(-1,dp(54)));
             addDay.setOnClickListener(v->newPlanInGroup(group));rename.setOnClickListener(v->showGroupNameDialog(group,group.optString("name")));delete.setOnClickListener(v->confirmDeleteGroup(group));
-            if(arrangementCount==0){TextView empty=text("暂无安排 · 点击上方按钮添加第1天",13,false,Color.GRAY);empty.setGravity(Gravity.CENTER);empty.setBackground(rounded(Color.rgb(238,241,235),14));planBlock.addView(empty,new LinearLayout.LayoutParams(-1,dp(48)));}
+            if(arrangementCount==0){TextView empty=text("暂无安排 · 点击上方按钮添加第1天",13,false,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setBackground(rounded(Palette.CARD_HIGH,14));planBlock.addView(empty,new LinearLayout.LayoutParams(-1,dp(48)));}
             for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&groupId.equals(item.optString("groupId"))){addSavedPlanRow(planBlock,library,item);rendered.add(item.optString("id"));}}
             LinearLayout.LayoutParams blockParams=margin();blockParams.topMargin=dp(10);savedPlanList.addView(planBlock,blockParams);
         }
@@ -588,11 +605,11 @@ public class MainActivity extends Activity {
         String id=item.optString("id");LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(0,dp(5),0,0);
         JSONArray savedStages=item.optJSONArray("stages");int count=savedStages==null?0:savedStages.length();boolean selected=id.equals(library.optString("selectedPlanId"));
         String requirement=item.optString("requirement").trim();String summary=count+" 项训练内容"+(requirement.isEmpty()?"":" · "+requirement);
-        LinearLayout open=new LinearLayout(this);open.setOrientation(LinearLayout.VERTICAL);open.setPadding(dp(14),dp(9),dp(12),dp(9));open.setBackground(rounded(selected?Color.rgb(220,248,183):Color.WHITE,16));
-        TextView name=text((selected?"✓  ":"")+item.optString("name"),16,true,Color.rgb(28,31,29));open.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
-        TextView detail=text(summary,12,false,Color.DKGRAY);detail.setSingleLine(true);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);open.addView(detail,new LinearLayout.LayoutParams(-1,dp(26)));
+        LinearLayout open=new LinearLayout(this);open.setOrientation(LinearLayout.VERTICAL);open.setPadding(dp(14),dp(9),dp(12),dp(9));open.setBackground(rounded(selected?Palette.FILL_SELECTED:Palette.CARD_HIGH,16));
+        TextView name=text((selected?"✓  ":"")+item.optString("name"),16,true,Palette.TEXT);open.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
+        TextView detail=text(summary,12,false,Palette.TEXT_DIM);detail.setSingleLine(true);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);open.addView(detail,new LinearLayout.LayoutParams(-1,dp(26)));
         row.addView(open,new LinearLayout.LayoutParams(0,dp(76),1));
-        Button remove=button("删除",Color.rgb(255,235,235),Color.rgb(160,36,36));LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(66),dp(76));rp.leftMargin=dp(6);row.addView(remove,rp);
+        Button remove=button("删除",Palette.FILL_DANGER,Palette.RED);LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(66),dp(76));rp.leftMargin=dp(6);row.addView(remove,rp);
         open.setOnClickListener(v->openSavedPlan(item));remove.setOnClickListener(v->deleteSavedPlan(id));parent.addView(row);
     }
 
@@ -624,13 +641,13 @@ public class MainActivity extends Activity {
         historyList.removeAllViews(); historySummary.setText(array.length()+" 次训练 · 点击查看地图轨迹与完整数据");
         for(int i=0;i<array.length();i++){
             JSONObject record=array.optJSONObject(i); if(record==null)continue;
-            LinearLayout row=card(); row.setPadding(dp(16),dp(14),dp(16),dp(14));
-            TextView date=text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.optLong("startedAt"))),15,true,Color.BLACK);
+            LinearLayout row=cardHigh(); row.setPadding(dp(16),dp(14),dp(16),dp(14));
+            TextView date=text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.optLong("startedAt"))),15,true,Palette.TEXT_DIM);
             row.addView(date);
             long duration=record.optLong("durationMs"); double meters=record.optDouble("distanceMeters");
-            TextView primary=text(PhoneFormat.distance(meters)+"  ·  "+PhoneFormat.duration(duration)+"  ·  "+PhoneFormat.pace(duration,meters),17,true,Color.rgb(28,31,29));
+            TextView primary=text(PhoneFormat.distance(meters)+"  ·  "+PhoneFormat.duration(duration)+"  ·  "+PhoneFormat.pace(duration,meters),17,true,Palette.TEXT);
             row.addView(primary);
-            TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+record.optInt("routePointCount")+" 个轨迹点",13,false,Color.DKGRAY);
+            TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+record.optInt("routePointCount")+" 个轨迹点",13,false,Palette.TEXT_DIM);
             row.addView(secondary);
             row.setOnClickListener(v->runIo(()->{try{String detail=watchConnection.requestBlocking("GET","/v1/history/"+android.net.Uri.encode(record.optString("id")),"",20_000L);runOnUiThread(()->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",detail)));}catch(Exception error){runOnUiThread(()->connection.setText("读取训练详情失败："+error.getMessage()));}}));
             LinearLayout.LayoutParams params=margin(); params.setMargins(0,dp(10),0,0); historyList.addView(row,params);
@@ -664,11 +681,11 @@ public class MainActivity extends Activity {
             }
             int duration=record.optInt("totalDurationMinutes");
             int score=record.optInt("sleepScore"),spo2=record.optInt("spo2AveragePercent");
-            LinearLayout row=card();row.setPadding(dp(16),dp(12),dp(16),dp(12));
-            row.addView(text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(start)),15,true,Color.BLACK));
-            row.addView(text(PhoneFormat.minutesHuman(duration)+" · 评分 "+(score>0?score:"--")+" · 平均血氧 "+(spo2>0?spo2+"%":"--"),16,true,Color.rgb(28,31,29)));
+            LinearLayout row=cardHigh();row.setPadding(dp(16),dp(12),dp(16),dp(12));
+            row.addView(text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(start)),15,true,Palette.TEXT_DIM));
+            row.addView(text(PhoneFormat.minutesHuman(duration)+" · 评分 "+(score>0?score:"--")+" · 平均血氧 "+(spo2>0?spo2+"%":"--"),16,true,Palette.TEXT));
             String sessionLabel=sessionCount>1?" · "+sessionCount+" 段睡眠":"";
-            row.addView(text("深睡 "+PhoneFormat.minutesHuman(deep)+" · REM "+PhoneFormat.minutesHuman(rem)+" · "+stageCount+" 个阶段"+sessionLabel,13,false,Color.DKGRAY));
+            row.addView(text("深睡 "+PhoneFormat.minutesHuman(deep)+" · REM "+PhoneFormat.minutesHuman(rem)+" · "+stageCount+" 个阶段"+sessionLabel,13,false,Palette.TEXT_DIM));
             LinearLayout.LayoutParams params=margin();params.topMargin=dp(10);sleepList.addView(row,params);
         }
     }
@@ -681,11 +698,12 @@ public class MainActivity extends Activity {
     } }); }
     interface Throwing{void run()throws Exception;}
     private String kindName(String kind){return "WALK".equals(kind)?"快走":"REST".equals(kind)?"休息":"跑步";}
-    private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(rounded(Color.WHITE,22));v.setElevation(dp(1));return v;}
+    private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(rounded(Palette.CARD,22));return v;}
+    private LinearLayout cardHigh(){LinearLayout v=card();v.setBackground(rounded(Palette.CARD_HIGH,18));return v;}
     private LinearLayout.LayoutParams margin(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(16);return p;}
     private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(52),1);p.setMargins(dp(3),dp(6),dp(3),dp(6));return p;}
     private TextView text(String s,int sp,boolean bold,int color){TextView v=new TextView(this);v.setText(s);v.setTextSize(sp);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);v.setTypeface(null,bold?Typeface.BOLD:Typeface.NORMAL);v.setPadding(0,dp(5),0,dp(5));return v;}
-    private EditText input(String hint){EditText v=new EditText(this);v.setHint(hint);v.setTextSize(16);v.setSingleLine(true);v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Color.rgb(239,241,237),14));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(54));p.topMargin=dp(7);v.setLayoutParams(p);return v;}
+    private EditText input(String hint){EditText v=new EditText(this);v.setHint(hint);v.setTextSize(16);v.setSingleLine(true);v.setTextColor(Palette.TEXT);v.setHintTextColor(Palette.HINT);v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD_HIGH,14));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(54));p.topMargin=dp(7);v.setLayoutParams(p);return v;}
     private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setBackground(rounded(bg,16));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
     private GradientDrawable rounded(int color,int radius){GradientDrawable shape=new GradientDrawable();shape.setColor(color);shape.setCornerRadius(dp(radius));return shape;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
