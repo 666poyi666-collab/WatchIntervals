@@ -78,7 +78,13 @@ public class HistoryActivity extends Activity {
         return row;
     }
 
-    private void showDetail(WorkoutRecord record) {
+    private void showDetail(WorkoutRecord summaryRecord) {
+        // The list rows carry index summaries only. The derived cards — splits, best pace,
+        // heart-rate range, climb — and the route map are recomputed from the sample files, so
+        // opening a record from the list used to show a bare summary while the same record
+        // opened from the home pager (record_id intent -> find) showed everything.
+        WorkoutRecord loaded = HistoryStore.find(this, summaryRecord.id);
+        WorkoutRecord record = loaded != null ? loaded : summaryRecord;
         selected = record;
         LinearLayout page = base();
         page.addView(header("训练详情", this::showList));
@@ -144,7 +150,9 @@ public class HistoryActivity extends Activity {
 
     private LinearLayout detailCard(String title){LinearLayout card=Ui.card(this);card.addView(Ui.bold(this,title,16,Ui.WHITE),new LinearLayout.LayoutParams(-1,Ui.dp(this,30)));return card;}
     private View detailLine(String label,String value){return detailLine(label,value,Ui.WHITE);}
-    private View detailLine(String label,String value,int valueColor){LinearLayout row=new LinearLayout(this);TextView left=Ui.text(this,label,13,Ui.MUTED);TextView right=Ui.bold(this,value,14,valueColor);right.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);row.addView(left,new LinearLayout.LayoutParams(0,Ui.dp(this,34),1));row.addView(right,new LinearLayout.LayoutParams(Ui.dp(this,180),Ui.dp(this,34)));return row;}
+    // Value wraps, label takes the rest: a fixed 180dp value column squeezed the label to ~40dp
+    // on the 378px canvas and every two-digit split read as "10 公…".
+    private View detailLine(String label,String value,int valueColor){LinearLayout row=new LinearLayout(this);TextView left=Ui.text(this,label,13,Ui.MUTED);TextView right=Ui.bold(this,value,14,valueColor);right.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);row.addView(left,new LinearLayout.LayoutParams(0,Ui.dp(this,34),1));row.addView(right,new LinearLayout.LayoutParams(-2,Ui.dp(this,34)));return row;}
     private LinearLayout.LayoutParams sectionParams(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=Ui.dp(this,8);return p;}
 
     private LinearLayout base() {
