@@ -134,7 +134,7 @@ git diff --check
 - BLE-005 手机半场通过：`cmd bluetooth_manager disable` 关闭小米蓝牙后手表 `dumpsys bluetooth_manager` 转 `STATE_DISCONNECTED`；重新 enable 后 12 秒内恢复 `STATE_CONNECTED`，全程无重新配对。注意该指标含系统级配对链路，应用会话证据以日志与业务请求为准。
 - BLE-005 手表半场未执行：OWW221 构建不实现 `cmd bluetooth_manager`/`svc bluetooth` shell 命令，蓝牙设置页无开关（在快捷面板），为避免把日常佩戴设备置于蓝牙关闭态，留待手动测试。
 - BLE-003 手表半场通过：关闭手表 Activity（回表盘）后 8765 `/v1/health` 仍返回 401 门禁存活。
-- BLE-003 手机半场记录到设计内的两段式恢复：`am force-stop` 后进程死亡；shell 发送 `WATCHDOG` 广播可拉起进程，但 RCVR 态 `startForegroundService` 被系统拒绝（W 级日志自捕获，符合 PhoneBootReceiver 注释预期），服务启动推迟到 `setExactAndAllowWhileIdle` 闹钟（携临时白名单豁免）；`dumpsys alarm` 确认 u0a325 闹钟挂起。闹钟投递后的完整恢复见下一条目。
+- BLE-003 手机半场记录到设计内的两段式恢复：`am force-stop` 后进程死亡；shell 发送 `WATCHDOG` 广播可拉起进程，但 RCVR 态 `startForegroundService` 被系统拒绝（W 级日志自捕获，符合 PhoneBootReceiver 注释预期），服务启动推迟到 `setExactAndAllowWhileIdle` 闹钟（携临时白名单豁免）；`dumpsys alarm` 确认 u0a325 闹钟挂起。闹钟投递后的完整恢复证据不完整：21:40 投递窗口的 logcat 已被系统噪声轮转覆盖，保留的最早痕迹是 21:53 安装 0.21.0 时系统强停了一个正在运行的 `PhonePlanBridgeService`（21:28 基线时 8766 已死、该服务两次 FGS 启动均被拒），但 8766 宿主 `PhoneCompanionService` 直到重装都未再出现——闹钟可能只拉起了部分服务，也可能 ServiceRecord 是残留。实验窗口被重装破坏，结论按未证处理，需重跑：force-stop 后 15 分钟内不触碰设备、立即抓取 logcat。另注意：install -r 会随 force-stop 取消看门狗闹钟，重装后的冷状态需要一次应用启动才能重新武装整条自愈链。
 
 ### 0.19.0 小米手机 API 与独立 MCP 补测（2026-07-26）
 
