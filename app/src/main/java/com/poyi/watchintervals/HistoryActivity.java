@@ -65,12 +65,12 @@ public class HistoryActivity extends Activity {
         row.setBackground(Ui.background(this, Ui.PANEL, 18));
         LinearLayout headline = new LinearLayout(this);
         headline.setGravity(Gravity.CENTER_VERTICAL);
-        TextView value = Ui.numeral(this, formatDistance(record.distanceMeters), 22, Ui.WHITE);
+        TextView value = Ui.numeral(this, Format.distance(record.distanceMeters), 22, Ui.WHITE);
         headline.addView(value, new LinearLayout.LayoutParams(0, -2, 1));
         TextView when = Ui.text(this, new SimpleDateFormat("HH:mm", Locale.CHINA).format(new Date(record.startedAt)), Ui.LABEL, Ui.MUTED);
         headline.addView(when, new LinearLayout.LayoutParams(-2, -2));
         row.addView(headline, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
-        TextView data = Ui.text(this, formatDuration(record.durationMs) + " · " + record.steps + " 步"
+        TextView data = Ui.text(this, Format.duration(record.durationMs) + " · " + record.steps + " 步"
                 + (record.averageHeartRate > 0 ? " · " + record.averageHeartRate + " bpm" : ""), Ui.LABEL, Ui.MUTED);
         row.addView(data, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
         row.setClickable(true); row.setFocusable(true); row.setOnClickListener(v -> showDetail(record));
@@ -92,16 +92,16 @@ public class HistoryActivity extends Activity {
         // Same colour semantics as the live training page, so the summary reads as a continuation
         // of the workout rather than an unrelated report.
         LinearLayout metricsCard = Ui.card(this); LinearLayout metrics = new LinearLayout(this);
-        addMetric(metrics, "距离", formatDistance(record.distanceMeters), Ui.WHITE);
-        addMetric(metrics, "用时", formatDuration(record.durationMs), Ui.YELLOW);
+        addMetric(metrics, "距离", Format.distance(record.distanceMeters), Ui.WHITE);
+        addMetric(metrics, "用时", Format.duration(record.durationMs), Ui.YELLOW);
         addMetric(metrics, "步数", record.steps + "", Ui.CYAN);
         metricsCard.addView(metrics, new LinearLayout.LayoutParams(-1, Ui.dp(this, 58)));
         LinearLayout metrics2 = new LinearLayout(this);
         addMetric(metrics2, "平均心率", record.averageHeartRate > 0 ? record.averageHeartRate + " bpm" : "--",
                 record.averageHeartRate > 0 ? Ui.RED : Ui.MUTED);
-        double pace = record.distanceMeters > 0 ? record.durationMs * 1000d / record.distanceMeters : 0;
-        addMetric(metrics2, "平均配速", pace > 0 ? formatDuration((long)pace) + "/km" : "--",
-                pace > 0 ? Ui.LIME : Ui.MUTED);
+        double paceSecondsPerKm = record.distanceMeters > 0 ? record.durationMs / record.distanceMeters : 0;
+        addMetric(metrics2, "平均配速", paceSecondsPerKm > 0 ? SpeedFusion.formatPace(paceSecondsPerKm) : "--",
+                paceSecondsPerKm > 0 ? Ui.LIME : Ui.MUTED);
         if(record.steps>0&&record.durationMs>=30_000)addMetric(metrics2,"平均步频",Math.round(record.steps*60_000d/record.durationMs)+" spm",Ui.WHITE);
         metricsCard.addView(metrics2, new LinearLayout.LayoutParams(-1, Ui.dp(this, 58)));page.addView(metricsCard);
 
@@ -117,11 +117,11 @@ public class HistoryActivity extends Activity {
 
         try {
             org.json.JSONObject json=record.toJson();
-            if(json.has("bestPaceSecondsPerKm")){LinearLayout card=detailCard("配速表现");card.addView(detailLine("最佳瞬时配速",formatDuration(json.optLong("bestPaceSecondsPerKm")*1000L)+" /km"));page.addView(card,sectionParams());}
-            org.json.JSONArray splits=json.optJSONArray("splits");if(splits!=null&&splits.length()>0){LinearLayout card=detailCard("分段");for(int i=0;i<splits.length();i++){org.json.JSONObject split=splits.getJSONObject(i);card.addView(detailLine(split.optInt("index")+" 公里",formatDuration(split.optLong("durationMs"))+"  ·  "+formatDuration(split.optLong("paceSecondsPerKm")*1000L)+" /km"));}page.addView(card,sectionParams());}
+            if(json.has("bestPaceSecondsPerKm")){LinearLayout card=detailCard("配速表现");card.addView(detailLine("最佳瞬时配速",SpeedFusion.formatPace(json.optLong("bestPaceSecondsPerKm"))));page.addView(card,sectionParams());}
+            org.json.JSONArray splits=json.optJSONArray("splits");if(splits!=null&&splits.length()>0){LinearLayout card=detailCard("分段");for(int i=0;i<splits.length();i++){org.json.JSONObject split=splits.getJSONObject(i);card.addView(detailLine(split.optInt("index")+" 公里",Format.duration(split.optLong("durationMs"))+"  ·  "+SpeedFusion.formatPace(split.optLong("paceSecondsPerKm"))));}page.addView(card,sectionParams());}
             if(json.has("heartRateRange")){org.json.JSONObject range=json.getJSONObject("heartRateRange");LinearLayout card=detailCard("心率");card.addView(detailLine("平均心率",record.averageHeartRate+" bpm"));card.addView(detailLine("实测范围",range.optInt("min")+"–"+range.optInt("max")+" bpm"));page.addView(card,sectionParams());}
-            if(json.has("elevationGainMeters")){LinearLayout card=detailCard("海拔");card.addView(detailLine("累计爬升",json.optDouble("elevationGainMeters")+" m"));page.addView(card,sectionParams());}
-            org.json.JSONArray stages=json.optJSONArray("stageResults");if(stages!=null&&stages.length()>0){LinearLayout card=detailCard("训练阶段");for(int i=0;i<stages.length();i++){org.json.JSONObject stage=stages.getJSONObject(i);card.addView(detailLine(stage.optInt("index")+"  "+stage.optString("name"),formatDuration(stage.optLong("completedAtMs"))));}page.addView(card,sectionParams());}
+            if(json.has("elevationGainMeters")){LinearLayout card=detailCard("海拔");card.addView(detailLine("累计爬升",Math.round(json.optDouble("elevationGainMeters"))+" m"));page.addView(card,sectionParams());}
+            org.json.JSONArray stages=json.optJSONArray("stageResults");if(stages!=null&&stages.length()>0){LinearLayout card=detailCard("训练阶段");for(int i=0;i<stages.length();i++){org.json.JSONObject stage=stages.getJSONObject(i);card.addView(detailLine(stage.optInt("index")+"  "+stage.optString("name"),Format.duration(stage.optLong("completedAtMs"))));}page.addView(card,sectionParams());}
         } catch(Exception ignored) {}
         TextView delete = Ui.action(this, "删除本次记录", 15, Ui.WHITE, Ui.RED);
         LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 48));
@@ -159,8 +159,6 @@ public class HistoryActivity extends Activity {
         row.addView(cell, new LinearLayout.LayoutParams(0, -1, 1));
     }
 
-    private String formatDistance(double meters) { return meters < 1000 ? Math.round(meters) + " m" : String.format(Locale.CHINA, "%.2f km", meters / 1000d); }
-    private String formatDuration(long millis) { long seconds = millis / 1000; return String.format(Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60); }
     private String dayLabel(long timestamp) {
         Calendar target = Calendar.getInstance();
         target.setTimeInMillis(timestamp);

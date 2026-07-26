@@ -448,7 +448,7 @@ public class TrainingActivity extends Activity {
         stageCounter.setText(String.format(Locale.CHINA, "第 %d/%d 项", s.stageNumber, s.stageCount));
         if (s.planCompleted) {
             remainingLabel.setText("计划已完成");
-            remaining.setText(formatDuration(Math.max(0, s.activeMillis)));
+            remaining.setText(Format.duration(Math.max(0, s.activeMillis)));
             stageProgress.setText("继续记录中 · 手动结束后保存");
             hideStopConfirmation();
         } else if (s.waitingForGps && !s.paused) {
@@ -470,7 +470,7 @@ public class TrainingActivity extends Activity {
         String clockText = new java.text.SimpleDateFormat("HH:mm", Locale.CHINA).format(new java.util.Date());
         Ui.setTextIfChanged(trainClock, clockText);
         Ui.setTextIfChanged(extraClock, clockText);
-        Ui.setTextIfChanged(distance, formatDistance(s.totalMeters));
+        Ui.setTextIfChanged(distance, Format.distance(s.totalMeters));
         Ui.setTextIfChanged(pace, formatCurrentPace(s));
         boolean paceLive = Double.isFinite(s.currentSpeedMps) && s.currentSpeedMps >= SpeedFusion.MOVING_THRESHOLD_MPS;
         pace.setTextColor(paceLive ? accent : Ui.MUTED);
@@ -481,7 +481,7 @@ public class TrainingActivity extends Activity {
         Ui.setTextIfChanged(heart, s.heartRate > 0 ? String.valueOf(s.heartRate) : "--");
         heart.setTextColor(s.live.heartRateZone > 0 ? Ui.ZONE_COLORS[s.live.heartRateZone - 1] : Ui.MUTED);
         zoneBar.set(s.live.heartRateZone);
-        Ui.setTextIfChanged(duration, formatDuration(s.activeMillis));
+        Ui.setTextIfChanged(duration, Format.duration(s.activeMillis));
         // Secondary data screen.
         Ui.setTextIfChanged(cadence, s.live.cadenceSpm > 0 ? String.valueOf(s.live.cadenceSpm) : "--");
         Ui.setTextIfChanged(speed, paceLive ? String.format(Locale.CHINA, "%.1f", s.currentSpeedMps * 3.6d) : "--");
@@ -493,8 +493,8 @@ public class TrainingActivity extends Activity {
         maybeShowSplit(s);
         Ui.setTextIfChanged(controlState, s.paused ? "已暂停" : s.planCompleted ? "自由记录中" : "训练中");
         controlState.setTextColor(s.paused ? Ui.AMBER : accent);
-        Ui.setTextIfChanged(controlDuration, formatDuration(s.activeMillis));
-        Ui.setTextIfChanged(controlSummary, formatDistance(s.totalMeters)
+        Ui.setTextIfChanged(controlDuration, Format.duration(s.activeMillis));
+        Ui.setTextIfChanged(controlSummary, Format.distance(s.totalMeters)
                 + (s.heartRate > 0 ? " · " + s.heartRate + " bpm" : ""));
         // The route view rasterises every point; only feed it while its page can actually be seen.
         if (routeView != null && workoutPager != null && workoutPager.getCurrentItem() == ROUTE_PAGE) {
@@ -503,7 +503,7 @@ public class TrainingActivity extends Activity {
         if (routeSummary != null) {
             int points = Math.min(s.routeLatitudes.length, s.routeLongitudes.length);
             routeSummary.setText(points > 0
-                    ? formatDistance(s.totalMeters) + " · " + points + " 个轨迹点 · " + formatDuration(s.activeMillis)
+                    ? Format.distance(s.totalMeters) + " · " + points + " 个轨迹点 · " + Format.duration(s.activeMillis)
                     : "等待有效定位轨迹 · 步数仍会准确记录");
         }
         updateGpsStatus(s);
@@ -560,11 +560,6 @@ public class TrainingActivity extends Activity {
         return "请到开阔户外";
     }
 
-    private String formatDistance(double meters) {
-        if (meters < 1000) return Math.round(meters) + " m";
-        return String.format(Locale.CHINA, "%.2f km", meters / 1000d);
-    }
-
     /** Minutes per kilometre, the reading runners actually pace by. */
     private String formatCurrentPace(WorkoutService.Snapshot s) {
         // A bare dash beats "--'--\"" as a placeholder: the prime marks read as broken glyphs at
@@ -588,16 +583,12 @@ public class TrainingActivity extends Activity {
         if (s.unit == Stage.Unit.DISTANCE) {
             return String.format(Locale.CHINA, "本阶段 %d / %s%s", Math.round(s.stageProgressValue), stageTargetText(s), s.usingStepDistance ? " · 步数估距" : "");
         }
-        return "本阶段 " + formatDuration((long)s.stageProgressValue) + " / " + stageTargetText(s);
+        return "本阶段 " + Format.duration((long)s.stageProgressValue) + " / " + stageTargetText(s);
     }
 
     private String stageTargetText(WorkoutService.Snapshot s) {
         if (s.unit == Stage.Unit.DISTANCE) return s.stageTarget >= 1000 && s.stageTarget % 1000 == 0 ? (s.stageTarget / 1000) + " km" : s.stageTarget + " m";
-        return formatDuration(s.stageTarget * 1000L);
-    }
-
-    private String formatDuration(long millis) {
-        long seconds = millis / 1000; return String.format(Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60);
+        return Format.duration(s.stageTarget * 1000L);
     }
 
     private void confirmStop() {

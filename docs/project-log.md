@@ -306,3 +306,11 @@
 - 计划页按离线选择器重构（b084a96）后，`StageEditorActivity` 已无任何调用方，仅剩 Manifest 声明；产品方向是阶段编辑收敛到手机端与 MCP（REQ-PLAN-005/006）。
 - 删除 `StageEditorActivity.java` 与 Manifest 声明；架构文档手表 UI 清单、需求场景表、REQ-PLAN-001/REQ-UI-001 验收口径同步去掉手表编辑页。
 - 上一轮"StageEditorActivity 仍是旧版式"的遗留项就此关闭：不是翻新死界面，而是移除。
+
+## 2026-07-26：手表时长进位与配速记法统一（BUG-026）
+
+- 巡检发现三处专业性硬伤：手表端三个 Activity 各自持有 `mm:ss` 封顶的时长格式化——75 分钟长跑主计时显示 `75:32`（手机端同场训练已正确显示 `1:15:32`）；历史详情配速 `05:32/km` 与训练页 `5'32"` 记法割裂；累计爬升把 `optDouble` 原始小数直接拼进界面。
+- 新增纯 Java `Format`（`duration` 超时进位 `h:mm:ss`、`distance`），与 `SpeedFusion.formatPace` 同理由保持 android-free 可上 JVM 单测；三个 Activity 的私有副本删除。
+- 手表历史配速（平均/最佳/分段）统一 `SpeedFusion.formatPace`；1 公里分段的 `/km` 后缀属冗余信息，删除；爬升取整米。
+- 新增 `FormatTest`（5 组用例：进位边界、钳制、距离小数）；`:app:assembleDebug`、`:app:testDebugUnitTest` 通过。
+- 未覆盖：`1:15:32` 七字符在训练页 52dp 主计时与圆环中心 48dp 的实际渲染宽度待真机截图核对（手表当前离线）。

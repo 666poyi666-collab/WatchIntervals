@@ -245,6 +245,15 @@
 - 处理：`BootReceiver` 增加 `WATCHDOG` 动作；`setExactAndAllowWhileIdle` 一次性精确闹钟每次投递自续 15 分钟链。实测本机 ColorOS 会静默丢弃第三方 `setInexactRepeating`（uid 不入 alarm 表），精确闹钟可注册。
 - 验证：`am force-stop` 后 8765 不可达；触发 `WATCHDOG` 广播进程重建、`/v1/health` 恢复 401；`dumpsys alarm` 可见下一发闹钟挂起。
 
+### BUG-026：手表时长超过 1 小时不进位，配速记法三处不一致
+
+- 状态：Fixed
+- 严重度：P2
+- 影响：手表 0.20.0 及更早
+- 现象：手表端 `TrainingActivity`/`HistoryActivity`/`MainActivity` 各自持有 `mm:ss` 封顶的时长格式化，75 分钟长跑主计时显示 `75:32`，而手机端同一场训练显示 `1:15:32`；历史详情配速为 `05:32/km`、训练页为 `5'32"`、手机为 `5:32 /公里`，同一产品三种记法；历史详情累计爬升直接拼接 `optDouble` 原始小数。
+- 处理：新增纯 Java `Format.duration/distance`（超过 1 小时进位 `h:mm:ss`，与手机端一致），三个 Activity 删除本地副本；手表历史配速统一改用 `SpeedFusion.formatPace` 的 `5'32"` 专业记法（1 公里分段的 `/km` 后缀冗余，删除）；爬升四舍五入到整米。
+- 验证：新增 `FormatTest` 覆盖进位、边界与钳制；`:app:testDebugUnitTest`、`assembleDebug` 通过。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。
