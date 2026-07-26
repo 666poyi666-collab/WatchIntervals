@@ -77,16 +77,12 @@ public class MainActivity extends Activity {
         scroll.setVerticalScrollBarEnabled(false);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 10));
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 8), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 6));
         root.setBackgroundColor(Ui.BLACK);
 
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = Ui.bold(this, "步序", 24, Ui.WHITE);
-        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 36), 1));
-        clock = Ui.numeral(this, "", 16, Ui.MUTED); clock.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        header.addView(clock, new LinearLayout.LayoutParams(Ui.dp(this, 74), Ui.dp(this, 36)));
-        root.addView(header);
+        // Stock-sports top bar: bold app title left, white clock right.
+        TextView title = Ui.bold(this, "步序", 22, Ui.WHITE);
+        clock = Ui.topBar(this, root, title);
 
         // Editorial block on plain black. The old version boxed everything into one giant card
         // with five competing centred text styles — the main "home-made" tell of the app.
@@ -105,14 +101,17 @@ public class MainActivity extends Activity {
         root.addView(planDetails, new LinearLayout.LayoutParams(0, 0));
 
         root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
+        // Glowing primary disc, as on the stock prepare screen.
+        android.widget.FrameLayout startBox = new android.widget.FrameLayout(this);
+        startBox.addView(Ui.glow(this, Ui.YELLOW, 82),
+                new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 152), Ui.dp(this, 152), Gravity.CENTER));
         start = Ui.bold(this, "开始", 26, Ui.BLACK);
         start.setGravity(Gravity.CENTER);
         start.setBackground(Ui.ovalAction(this, Ui.YELLOW));
         start.setClickable(true);
         start.setFocusable(true);
-        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(Ui.dp(this, 108), Ui.dp(this, 108));
-        startParams.gravity = Gravity.CENTER_HORIZONTAL;
-        root.addView(start, startParams);
+        startBox.addView(start, new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 112), Gravity.CENTER));
+        root.addView(startBox, new LinearLayout.LayoutParams(-1, Ui.dp(this, 156)));
         root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
 
         sensorStatus = Ui.text(this, "", Ui.LABEL, Ui.MUTED); sensorStatus.setGravity(Gravity.CENTER);
@@ -132,6 +131,9 @@ public class MainActivity extends Activity {
         // the right, so a leftward finger drag reveals it pixel-for-pixel.
         pagesList.add(scroll); pagesList.add(buildHistoryPagerPage()); pagesList.add(buildPlanPagerPage());
         WatchPagerLayout pager = new WatchPagerLayout(this); for(View page:pagesList)pager.addView(page); pager.setCurrentItem(0, false);
+        // Watch-wide convention: dragging right past the first page leaves the app (back to the
+        // dial). The workout pager deliberately does not register this.
+        pager.setOnExitListener(this::finish);
         setContentView(pager);
     }
 

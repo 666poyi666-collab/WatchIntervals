@@ -33,13 +33,22 @@ final class Ui {
     static final int GREEN = Color.rgb(70, 226, 129);
 
     // One type scale instead of per-screen magic numbers, so headings and labels line up across
-    // the home, training, plan and history pages.
+    // the home, training, plan and history pages. Figure sizes are measured off the stock
+    // HeySports workout screen (378px captures / 1.35 canvas scale).
     static final float DISPLAY = 44f;
     static final float TITLE = 22f;
     static final float HEADLINE = 17f;
     static final float BODY = 13f;
     static final float LABEL = 11f;
     static final float CAPTION = 9.5f;
+    /** Stock sports app: the leading elapsed-time figure. */
+    static final float FIGURE_HERO = 52f;
+    /** Stock sports app: every other metric figure on the workout page. */
+    static final float FIGURE = 38f;
+    /** Inline unit/label that trails a figure at its baseline. */
+    static final float FIGURE_LABEL = 15f;
+    /** Page side padding. The stock app runs nearly edge-to-edge. */
+    static final float PAGE_MARGIN = 14f;
 
     private Ui() {}
 
@@ -149,6 +158,52 @@ final class Ui {
         view.setCompoundDrawablesWithIntrinsicBounds(drawableRes, 0, 0, 0);
         view.setCompoundDrawableTintList(ColorStateList.valueOf(foreground));
         view.setContentDescription(description);
+        return view;
+    }
+
+    /**
+     * Metric line in the stock sports idiom: a big figure with its unit/label trailing the
+     * baseline ("0 公里", "--'--" 配速"), not pushed to the far edge. Returns the figure view;
+     * the label view is returned via {@code labelOut[0]} when the caller needs to update it.
+     */
+    static TextView figureLine(Context context, LinearLayout parent, String initial, String label,
+                               int color, float figureSize, float rowHeight, TextView[] labelOut) {
+        LinearLayout row = new LinearLayout(context);
+        // Baseline alignment keeps the small label sitting on the figure's baseline.
+        TextView value = numeral(context, initial, figureSize, color);
+        row.addView(value, new LinearLayout.LayoutParams(-2, -2));
+        TextView caption = text(context, label, FIGURE_LABEL, MUTED);
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(-2, -2);
+        captionParams.leftMargin = dp(context, 6);
+        row.addView(caption, captionParams);
+        if (labelOut != null && labelOut.length > 0) labelOut[0] = caption;
+        parent.addView(row, new LinearLayout.LayoutParams(-1, dp(context, rowHeight)));
+        return value;
+    }
+
+    /** Top bar shared by every page: small title left, live clock right, stock-sports style. */
+    static TextView topBar(Context context, LinearLayout parent, TextView titleView) {
+        LinearLayout bar = new LinearLayout(context);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.addView(titleView, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView clock = numeral(context, "", 20, WHITE);
+        clock.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        bar.addView(clock, new LinearLayout.LayoutParams(dp(context, 64), -1));
+        parent.addView(bar, new LinearLayout.LayoutParams(-1, dp(context, 34)));
+        return clock;
+    }
+
+    /** Soft radial glow behind a primary action disc, as on the stock start button. */
+    static View glow(Context context, int color, float radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.OVAL);
+        drawable.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        drawable.setGradientRadius(dp(context, radiusDp));
+        drawable.setColors(new int[]{
+                Color.argb(80, Color.red(color), Color.green(color), Color.blue(color)),
+                Color.argb(0, Color.red(color), Color.green(color), Color.blue(color))});
+        View view = new View(context);
+        view.setBackground(drawable);
         return view;
     }
 

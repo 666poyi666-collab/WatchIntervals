@@ -188,10 +188,13 @@ public class MainActivity extends Activity {
                 nsdManager.resolveService(info, new NsdManager.ResolveListener() {
                     public void onResolveFailed(NsdServiceInfo service, int code) { resolving=false; }
                     public void onServiceResolved(NsdServiceInfo service) {
-                        String address = service.getHost() == null ? "" : service.getHost().getHostAddress();
+        String address = service.getHost() == null ? "" : service.getHost().getHostAddress();
                         String credential = watchConnection.identity().lanCredential();if(credential.isEmpty())credential=code.getText().toString().trim();final String pairing=credential;
                         if (address.isEmpty()) { resolving=false; return; }
-                        if (pairing.length() != 6) {
+                        // The six-digit rule only applies to a first-time pairing code typed by the
+                        // user. A paired phone holds a long-term LAN credential whose length is
+                        // never 6, and checking it here told paired users to re-enter a code.
+                        if (!watchConnection.identity().isPaired() && pairing.length() != 6) {
                             resolving=false;
                             runOnUiThread(() -> { host.setText(address); connection.setText("已发现手表，请输入配对码"); });
                             stopDiscovery(); return;
@@ -236,7 +239,14 @@ public class MainActivity extends Activity {
         runIo(() -> {
             String pairing=code.getText().toString().trim();if(!watchConnection.identity().isPaired()&&pairing.length()!=6)throw new IllegalArgumentException("请输入手表上的 6 位配对码");
             watchConnection.configurePairing(pairing);watchConnection.configureLan(host.getText().toString().trim(),pairing);
-            watchConnection.connect().get(25,java.util.concurrent.TimeUnit.SECONDS);
+            // BLE is preferred but not required: with a verified LAN transport the request layer
+            // routes around a failed connect on its own. Blocking the whole sync on connect()
+            // was why history stayed on "连接后读取" while the MCP chain over LAN worked fine.
+            try{watchConnection.connect().get(25,java.util.concurrent.TimeUnit.SECONDS);}
+            catch(Exception bleError){
+                if(!watchConnection.snapshot().lanAvailable)
+                    throw new IllegalStateException("蓝牙连接失败，且局域网不可达；请靠近手表或连接同一 Wi-Fi",bleError);
+            }
             JSONObject status = new JSONObject(watchConnection.requestBlocking("GET","/v1/status","",20_000L));
             String expected=getSharedPreferences("connection",MODE_PRIVATE).getString("watch_device_id","");String actual=status.optString("deviceId");if(!expected.isEmpty()&&!expected.equals(actual))throw new IllegalStateException("发现的设备身份与已配对手表不一致");
             if(expected.isEmpty()&&!actual.isEmpty())getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",actual).apply();
@@ -527,7 +537,13 @@ public class MainActivity extends Activity {
     private String formatDistance(double meters){return meters<1000?Math.round(meters)+" 米":String.format(Locale.CHINA,"%.2f 公里",meters/1000d);}
     private String formatDuration(long millis){long total=Math.max(0,millis/1000),hours=total/3600,minutes=(total%3600)/60,seconds=total%60;return hours>0?String.format(Locale.CHINA,"%d:%02d:%02d",hours,minutes,seconds):String.format(Locale.CHINA,"%02d:%02d",minutes,seconds);}
     private String formatPace(long millis,double meters){if(meters<1||millis<=0)return "-- /公里";long seconds=Math.round(millis/1000d*1000d/meters);return String.format(Locale.CHINA,"%d:%02d /公里",seconds/60,seconds%60);}
-    private void runIo(Throwing action){ connection.setText("正在同步…"); io.execute(()->{ try{action.run();}catch(Exception error){runOnUiThread(()->connection.setText("连接失败："+error.getMessage()));} }); }
+    private void runIo(Throwing action){ connection.setText("正在同步…"); io.execute(()->{ try{action.run();}catch(Exception error){
+        // ExecutionException and friends often carry a null message; surface the cause instead
+        // of the literal text "null".
+        Throwable cause=error; while(cause.getCause()!=null&&cause.getMessage()==null)cause=cause.getCause();
+        String reason=cause.getMessage()!=null?cause.getMessage():cause.getClass().getSimpleName();
+        runOnUiThread(()->connection.setText("连接失败："+reason));
+    } }); }
     interface Throwing{void run()throws Exception;}
     private String kindName(String kind){return "WALK".equals(kind)?"快走":"REST".equals(kind)?"休息":"跑步";}
     private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(rounded(Color.WHITE,22));v.setElevation(dp(1));return v;}

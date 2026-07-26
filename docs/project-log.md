@@ -276,3 +276,15 @@
 - `:app:testDebugUnitTest`、`:phone:testDebugUnitTest` 通过；`assembleDebug` 通过。
 - 同轮补齐次级页面：历史列表（首页速览与完整页）改为距离优先行、时间戳右侧灰阶；详情摘要卡沿用训练页语义色（距离白/用时黄/步数青/心率红/配速绿）；`Ui.backButton()` 统一圆形返回按钮；计划页标题行与灰阶说明对齐新版式。真机核对通过，详情页暗色地图在真实瓦片上近黑底、注记可读。
 - 未覆盖：StageEditorActivity 仍是旧版式（当前入口已弱化，编辑主要在手机端）；配速主读数的实跑效果仍待户外验证。
+
+
+## 2026-07-26：以系统运动软件为基准的整体重构与双端功能调通
+
+- 参考采集：真机截取 HeySports 主页、SportPrepareActivity 与 SportDetailActivity 运动中页面，量出贴边边距、顶栏（左标题+右白色大时钟）、超大黄色计时、数字+内联标签、大行距的版式规格，作为 `Ui.FIGURE_*`/`PAGE_MARGIN` 的依据。
+- 手表界面：核心页完全转写系统版式（figureLine 数字+基线标签）；预备页对齐系统准备页（GPS 顶部居中、发光开始圆）；首页/预备页开始圆加径向辉光；步数移至阶段环页。
+- 滑动逻辑：`WatchPagerLayout` 增加未阻尼手指跟踪 + 边缘 1/3 阻尼显示；第 0 页右滑越过阈值触发 `OnExitListener`。首页注册退出（右滑回表盘，真机验证 focus 变为 launcher）；训练页不注册（真机验证右滑只回弹不退出）。第一版把阻尼直接叠进累计量导致 280px 手指位移只剩 9px、且本机 fling 阈值偏高，改为虚拟位移 + 原始位移判定后通过。
+- 手机功能调通（真机在线，未用模拟器备选）：同步走通 BLE 失败→LAN 兜底，状态「蓝牙连接 · LAN 加速」，当前安排 day1·减肥 与 10 条历史读回；睡眠 8 条系统记录正常；修复 BUG-023/024。
+- 手表自愈：复现 OWW221 空闲回收导致 8765/mDNS/BLE 全部消失；`BootReceiver` 看门狗上线（BUG-025）。实测本机 ColorOS 静默丢弃第三方 `setInexactRepeating`（uid 不进 alarm 表），改用 `setExactAndAllowWhileIdle` 一次性自续后注册成功；`am force-stop` → WATCHDOG 广播 → 进程重建、`/v1/health` 401 恢复。
+- 干扰处理：采样期间随心一听/focuslink 反复抢占前台，音乐应用临时 `pm disable-user` 后已恢复 `enabled`；测试流程改为每步校验 `mCurrentFocus` 再操作。
+- 验证：`:app:testDebugUnitTest`、`:phone:testDebugUnitTest`、双模块 `assembleDebug`、MCP pytest 12 项、`git diff --check` 全部通过；手表五个页面与手机四个标签页真机截图核对。
+- 未覆盖：pager 触感（阻尼系数/阈值）未经户外汗手实测；手表看门狗 15 分钟自续链依赖闹钟投递，deep doze 下的实际间隔未做整夜观测；手机聊天等第三方应用抢前台导致的采样中断与产品无关。

@@ -57,6 +57,7 @@ public class WatchBridgeService extends Service {
                 .setSmallIcon(R.drawable.ic_launcher).setContentTitle("步序连接服务")
                 .setContentText("手机与电脑可同步训练数据").setOngoing(true).build();
         startForeground(73, notification);
+        BootReceiver.schedule(this);
         workers.execute(this::serve);
         registerNsd();
     }

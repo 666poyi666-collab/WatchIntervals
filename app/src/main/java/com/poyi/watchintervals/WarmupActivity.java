@@ -76,32 +76,30 @@ public class WarmupActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 12));
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 8), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 10));
         root.setBackgroundColor(Ui.BLACK);
 
-        LinearLayout top = new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = Ui.bold(this, "户外跑", 22, Ui.WHITE);
-        top.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 34), 1));
-        gpsStatus = Ui.text(this, "● GPS 准备中", 10, Ui.AMBER);
-        gpsStatus.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        top.addView(gpsStatus, new LinearLayout.LayoutParams(Ui.dp(this, 118), Ui.dp(this, 34)));
-        root.addView(top);
+        // Stock prepare screen order: GPS state centred on top, one plan title, glowing start.
+        gpsStatus = Ui.text(this, "● GPS 准备中", Ui.LABEL, Ui.AMBER);
+        gpsStatus.setGravity(Gravity.CENTER);
+        root.addView(gpsStatus, new LinearLayout.LayoutParams(-1, Ui.dp(this, 26)));
 
-        Stage first = stages.get(0);
         TextView stageTitle = Ui.bold(this, PlanStore.name(this), 25, Ui.WHITE);
         stageTitle.setGravity(Gravity.CENTER);
-        root.addView(stageTitle, new LinearLayout.LayoutParams(-1, Ui.dp(this, 32)));
-        sourceSummary = Ui.text(this, "正在检测记录来源", 11, Ui.MUTED);
+        root.addView(stageTitle, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
+        sourceSummary = Ui.text(this, "正在检测记录来源", Ui.LABEL, Ui.MUTED);
         sourceSummary.setGravity(Gravity.CENTER);
         root.addView(sourceSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 18)));
 
+        android.widget.FrameLayout startBox = new android.widget.FrameLayout(this);
+        startBox.addView(Ui.glow(this, Ui.YELLOW, 82),
+                new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 146), Ui.dp(this, 146), Gravity.CENTER));
         startButton = Ui.bold(this, "开始", 26, Ui.BLACK);
         startButton.setGravity(Gravity.CENTER);
         startButton.setBackground(Ui.ovalAction(this, Ui.YELLOW));
-        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 112));
-        startParams.gravity = Gravity.CENTER_HORIZONTAL;
-        root.addView(startButton, startParams);
+        startBox.addView(startButton,
+                new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 110), Ui.dp(this, 110), Gravity.CENTER));
+        root.addView(startBox, new LinearLayout.LayoutParams(-1, Ui.dp(this, 148)));
 
         LinearLayout readiness = new LinearLayout(this);
         readiness.setGravity(Gravity.CENTER);
@@ -109,14 +107,14 @@ public class WarmupActivity extends Activity {
         gpsValue = readinessCell(readiness, "定位");
         stepsValue = readinessCell(readiness, "步数");
         heartValue = readinessCell(readiness, "心率");
-        root.addView(readiness, new LinearLayout.LayoutParams(-1, Ui.dp(this, 52)));
+        root.addView(readiness, new LinearLayout.LayoutParams(-1, Ui.dp(this, 48)));
         root.addView(new TextView(this), new LinearLayout.LayoutParams(-1, 0, 1));
 
         directStart = Ui.text(this, "定位未完成也可开始，运动后自动补充轨迹", 11, Ui.MUTED);
         directStart.setGravity(Gravity.CENTER);
-        root.addView(directStart, new LinearLayout.LayoutParams(-1, Ui.dp(this, 30)));
+        root.addView(directStart, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
         TextView back = Ui.action(this, "训练设置", 16, Ui.WHITE, Ui.PANEL);
-        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 44));
+        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 42));
         backParams.topMargin = Ui.dp(this, 6);
         root.addView(back, backParams);
 
@@ -149,15 +147,9 @@ public class WarmupActivity extends Activity {
     private void refreshUi() {
         if (service == null) return;
         WorkoutService.Snapshot s = service.snapshot();
-        boolean ready = service != null;
-        startButton.setText("开始训练");
-        startButton.setTextColor(ready ? Ui.BLACK : Ui.WHITE);
-        startButton.setBackground(Ui.ovalAction(this, ready ? Ui.YELLOW : Ui.PANEL_ACTIVE));
-        startButton.setClickable(ready);
-        startButton.setEnabled(ready);
-        startButton.setFocusable(ready);
-        startButton.setContentDescription("开始训练");
-        directStart.setVisibility(View.VISIBLE);
+        // The disc is styled once at build time; recreating its ripple background on every 500 ms
+        // tick restarted the press animation and wasted a layout pass. Reaching this method at
+        // all means the service is bound, which is the only start precondition.
         updateSystemExercise(s);
         updateGps(s);
         updateSteps(s);
