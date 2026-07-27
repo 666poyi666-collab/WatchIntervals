@@ -398,10 +398,10 @@ public class PhonePlanBridgeService extends Service {
     private JSONObject syncToWatch() {
         try {
             String host = getSharedPreferences("connection", MODE_PRIVATE).getString("host", "");
-            String code = getSharedPreferences("connection", MODE_PRIVATE).getString("code", "");
             if (PhoneSyncOutbox.size(this) == 0)
                 PhoneSyncOutbox.enqueueLibrary(this, PhonePlanLibrary.load(this), "upsert", "library");
             WatchConnectionManager connection = WatchConnectionManager.get(this);
+            String code = connection.identity().pairingCode();
             if (!connection.identity().isPaired() && code.length() != 6)
                 return object("state", "pending", "reason", "watch_not_configured");
             connection.configurePairing(code);
@@ -481,9 +481,10 @@ public class PhonePlanBridgeService extends Service {
     }
 
     private boolean validPairingCode(String presented) {
-        String legacyCode = getSharedPreferences("connection", MODE_PRIVATE).getString("code", "");
-        String pairedLanCredential = getSharedPreferences("watch_identity", MODE_PRIVATE)
-                .getString("lan_credential", "");
+        com.poyi.watchintervals.phone.connection.WatchIdentityStore identity =
+                WatchConnectionManager.get(this).identity();
+        String legacyCode = identity.pairingCode();
+        String pairedLanCredential = identity.lanCredential();
         return BootstrapCredentialValidator.matches(presented, legacyCode, pairedLanCredential);
     }
 

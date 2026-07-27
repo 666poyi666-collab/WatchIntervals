@@ -24,8 +24,10 @@ public class PhoneBootReceiver extends BroadcastReceiver {
     private static final long WATCHDOG_INTERVAL_MILLIS = AlarmManager.INTERVAL_FIFTEEN_MINUTES;
 
     @Override public void onReceive(Context context, Intent intent) {
+        if (intent == null || !Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
         startServices(context);
         schedule(context);
+        EncryptedWatchSyncWorker.schedule(context.getApplicationContext());
     }
 
     static void startServices(Context context) {
@@ -52,7 +54,7 @@ public class PhoneBootReceiver extends BroadcastReceiver {
     static void schedule(Context context) {
         AlarmManager alarms = context.getSystemService(AlarmManager.class);
         if (alarms == null) return;
-        Intent intent = new Intent(context, PhoneBootReceiver.class).setAction(ACTION_WATCHDOG);
+        Intent intent = new Intent(context, PhoneWatchdogReceiver.class).setAction(ACTION_WATCHDOG);
         PendingIntent pending = PendingIntent.getBroadcast(context, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         long triggerAt = SystemClock.elapsedRealtime() + WATCHDOG_INTERVAL_MILLIS;

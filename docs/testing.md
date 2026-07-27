@@ -1,7 +1,7 @@
 # 测试与发布门禁
 
 状态：维护中  
-基线：2026-07-27
+基线：2026-07-28
 
 ## 1. 测试原则
 
@@ -13,7 +13,7 @@
 
 ```powershell
 .\gradlew.bat test lint :app:assembleDebug :phone:assembleDebug
-python -m unittest discover -s mcp\tests -v
+.\mcp\.venv\Scripts\python.exe -m pytest mcp\tests -q
 git diff --check
 ```
 
@@ -21,7 +21,7 @@ git diff --check
 - 修改训练引擎：验证开始、暂停、继续、停止、自动阶段推进、完成只保存一次。
 - 修改传感器：验证 GPS、步数、心率各自单独可用和切换恢复。
 - 修改 API/MCP：验证 401、错误 JSON、超时、手机不在线、手表不在线和正常路径。
-- 修改手机云同步：验证 ACCESS_KEY/SYNC_KEY 隔离、六个快照 shape、部分数据面失败、电脑关机等价场景与 stale 语义。
+- 修改手机云同步：验证 `SyncEnvelopeV1` schema/hash、AES-GCM AAD/nonce、pull-first bootstrap、ACK/materialize/cursor 原子提交、显式 tombstone、冲突双方保留、恢复/批准包错误密钥负测、凭据泄漏扫描和旧 `/sync/push` 410；旧快照测试仅作为 0.21.1 历史证据。
 - 修改 Tunnel：执行 `powershell -File mcp/tests/test_persistent_tunnel.ps1`，再执行 API-011 真机/重启验证。
 - 修改 UI：至少检查 378×496 截图和点击区域。
 
@@ -87,6 +87,10 @@ git diff --check
 | PT-013 | BLE 定位中继 | 训练中每 2–5 秒发送带 sequence/TTL 的手机定位，断联不补发旧点 |
 | PT-014 | BLE 控制 | start/pause/resume/stop 经 BLE；重复 commandId 返回首次结果且不反转状态 |
 | PT-015 | 手机直连云端 | 关闭全部 Windows MCP/Tunnel/watchdog 服务后由手机上行；Watch Cloud MCP 六个快照均为 `source=phone`，ChatGPT 可读最近训练/睡眠/计划 |
+| PT-016 | 加密根密钥恢复 | 首台设备显式初始化并导出恢复包；清除应用数据/使用新 device token 后导入，错误恢复密钥失败且不改变现有 root，正确密钥先 pull 后恢复相同计划/训练摘要 |
+| PT-017 | 已授权设备批准 | 新设备生成批准请求，已授权设备确认后返回批准包；非目标 deviceId、非当前 request nonce、过期或篡改包均拒绝，正确包只可导入当前请求 |
+| PT-018 | V2 PC-off 三轮 | 停止 Windows 全部本地服务；第二真实设备分别新建/更新/删除，手机在前台、后台 Doze、重启后三种条件自动 catch-up；验证 exactly-once、冲突、tombstone、outbox 和 cursor 单调 |
+| PT-019 | 凭据迁移与备份边界 | 从 0.21.1 覆盖安装后 pairing/LAN/Gateway token 自动迁到 Keystore 密文且连接不中断；备份/设备迁移不含受保护 prefs；第三方显式/隐式 watchdog 广播不能拉起服务，系统开机和 app-private alarm 仍可恢复 |
 
 ## 5. MCP/API 回归
 
@@ -111,6 +115,15 @@ git diff --check
 | API-017 | `/healthz`、`/readyz`、`/metrics` 与 `/mcp` 仅监听 `127.0.0.1:8768`；手机离线只使业务调用降级 |
 | API-018 | 手机 API Bearer Token 错误返回 401；mDNS 发现身份不匹配时拒绝固定新端点；日志不包含令牌、IP 或正文 |
 | API-019 | Watch Cloud MCP 只暴露 7 个快照/同步概览工具，不包含本机训练控制工具；设备离线时返回最后快照并带 `stale`/`lastSyncAt`，不报告伪在线 |
+| API-020 | `/sync/v2/exchange` 只接受 protocol 2 / envelope 1、产品 `watch`、token 自带 deviceId、严格 cursor、UUID opId 和符合 AAD hash 的 plan/workout 密文；plaintext `payload`、错误 nonce、未知实体、超限页均拒绝 |
+| API-021 | mutation 重放返回相同 ACK；revision conflict 保留 current/candidate；基础设施故障不留下孤立 reservation、假 ACK 或已推进 cursor；workout 第二次写入返回 immutable conflict |
+| API-022 | `/sync/push` 和 `/sync/v1/exchange` 按迁移策略拒绝；V2 device token 不能访问 MCP，OAuth token 不能访问 exchange；日志、D1、MCP 响应和 APK 扫描不到 token、根密钥、plaintext payload、原始轨迹/心率/睡眠 |
+
+### Phone 0.22.0 加密 V2 本地门禁（2026-07-28）
+
+- `EncryptedWatchSyncTest` 覆盖稳定 JSON/AAD、AES-GCM 往返与篡改、严格 cursor、ACK/outbox/cursor 同提交、revision conflict 双候选留存。
+- `WatchSyncKeyPackagesTest` 覆盖恢复包正确/错误密钥，以及 RSA-OAEP + AES-GCM 设备批准的目标绑定与过期拒绝；`PhonePlanLibrarySyncFormatTest` 覆盖 schema 2→3 和显式 tombstone。
+- `:phone:testDebugUnitTest` 与 `:phone:assembleDebug` 已通过；这不是 Android Keystore 真机、staging 或 PC-off 证据，PT-016 至 PT-018 和 API-020 至 API-022 仍开放。
 
 ### 0.21.1 手机直连云端与 ChatGPT 验收（2026-07-27）
 
@@ -191,6 +204,7 @@ git diff --check
 5. `PlanLibraryStore`/`PhonePlanLibrary` 迁移、revision、选择与删除。
 6. 手表 8765 与手机 8766 的协议契约测试。
 7. 手机 `MutationGuardTest` 覆盖重复、ID 复用、旧 revision 和旧客户端兼容；API-015 的进程终止场景仍需仪器/真机测试。
+8. 加密同步故障注入：SharedPreferences commit 失败、ACK 丢失、change 解密失败、cursor 回退、冲突容量满、WorkManager 进程终止和恢复包/批准包重放。
 
 ## 7. 发布门禁
 
@@ -199,6 +213,7 @@ git diff --check
 - 两个模块从干净构建成功，无新增编译警告。
 - P0/P1 开放缺陷为 0；例外必须在 Release notes 明示并由维护者接受。
 - 与改动相关的真机和 API 用例通过，结果记录到 `project-log.md`。
+- 加密云同步必须同时匹配实现提交、staging deployment revision、远端探测、PT-016 至 PT-018 真实设备证据和 project manifest；缺任一项时保持 `supportsPcOff=false`。
 - `versionCode`、`versionName` 与 CHANGELOG 一致。
 - APK 使用预期签名；debug 包标记为 prerelease。
 - 计算并记录两个 APK 的 SHA-256。

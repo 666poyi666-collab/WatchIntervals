@@ -310,6 +310,26 @@
 - 现象：旧“步序运动”连接必须经过 Windows Watch MCP、Tunnel 和手机 8766；电脑关机后连接器整体不可用，即使手机和手表仍在线也无法读取最近训练、睡眠或计划。
 - 处理：Phone 0.21.1 增加独立 `SYNC_KEY` 的 HTTPS 快照上行，把六个只读数据面直接同步到 Watch Cloud MCP；ChatGPT 改接云端 MCP，云端只提供快照读取与同步概览，不冒充本机训练控制。
 - 验证：停止全部本机 MCP/Tunnel/watchdog 服务后云端工具仍返回手机来源快照；ChatGPT 新连接扫描到 7 个云端工具且无 4 个训练控制工具。互联网、Cloudflare 或手机上行不可用时返回最后快照及 stale 元数据。
+- 后续：该证据只证明 0.21.1 旧快照链路；因明文快照不满足端到端加密和双向 catch-up，Phone 0.22.0 已在本地替换为 REQ-SYNC-012 至 014。旧证据不能用于把 V2 标记为完成。
+
+### BUG-033：旧云快照与隐式根密钥会泄露明文或造成密文空间分叉
+
+- 状态：Fixed，待 staging/真机验证
+- 严重度：P1
+- 影响：Phone 0.21.1 快照实现及 Phone 0.22.0 首个加密同步草案
+- 现象：`/sync/push` 上传可由云端直接读取的状态、计划、训练和睡眠摘要；首个 V2 草案在根密钥缺失时自动生成随机 key，重装或第二设备会得到另一把 key，随后无法解密既有 change，重新保存 token 还会无条件清除旧 root。本地计划列表暂时缺项也会被推断为远端删除。
+- 根因：快照模型没有端到端密钥生命周期、双向 outbox/cursor 和显式 tombstone；初版迁移把“有 token”误当成“已授权获得同一根密钥”。
+- 处理：移除 `CloudSnapshotPayload`，`CloudSnapshotSync` 只转入 `/sync/v2/exchange`；token/root 用 Android Keystore 包装，根密钥只允许显式初始化、离线恢复或当前一次性设备批准；换 root 清空 state 后 pull-first；计划库升为 schema 3 显式 tombstone；conflict 保留双方；生产默认拒绝 `/sync/push` 和 plaintext V1 数据路由。
+- 验证：`EncryptedWatchSyncTest`、`WatchSyncKeyPackagesTest`、`PhonePlanLibrarySyncFormatTest` 与 Phone debug 编译通过；Worker 新增旧 V1 默认 410 负测。Android Keystore 真机、staging revision、三轮 PC-off 与 crash/Doze 故障注入尚未完成，因此不标记 Verified。
+
+### BUG-034：两端敏感数据可被 Auto Backup，公开 watchdog 可被第三方触发
+
+- 状态：Fixed，待真机验证
+- 严重度：P1
+- 影响：Watch/Phone 0.21.x 及以前
+- 现象：BLE pairing secret、LAN credential 与 Gateway API token 以 plaintext SharedPreferences 保存；两模块允许默认 Auto Backup，手机计划和手表训练/轨迹也可能进入系统备份。同一个 `exported=true` receiver 同时接收系统开机和自定义 watchdog action，其他应用可发送后者反复拉起前台服务。
+- 处理：新增通用 Android Keystore AES-GCM envelope，首次读取原子迁移 pairing/LAN/Gateway token；配对码不再写入 `connection.xml`；两模块 `allowBackup=false`，Phone 另保留细粒度 exclusion 作为防御纵深；两端开机 receiver 只接收受保护 `BOOT_COMPLETED`，app watchdog 均拆到 `exported=false` receiver。
+- 验证：Phone JVM/assemble 门禁通过；仍需覆盖安装迁移、错误 Keystore、Auto Backup/设备迁移清单、外部广播拒绝和 reboot/watchdog 真机回归。
 
 ## 2. 已修复/历史项
 

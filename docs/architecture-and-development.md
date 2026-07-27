@@ -44,7 +44,7 @@
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
 | 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS |
 | 手机伴侣 | `WatchConnectionManager`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继 |
-| 手机云同步 | `CloudSnapshotSync`、`CloudSnapshotPayload`、`CloudSyncCredentials` | 直接向 Watch Cloud MCP 上行六个只读快照；与 ChatGPT MCP 访问密钥隔离 |
+| 手机云同步 | `EncryptedWatchSync`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials`、`WatchSyncKeyPackages` | `SyncEnvelopeV1` 加密双向 exchange、持久 outbox/cursor/conflict、Keystore 凭据、恢复包与后台恢复；`CloudSnapshotSync` 仅保留兼容入口 |
 | MCP | `mcp/src/watch_mcp` | 独立 Watch MCP；只通过手机 8766 业务门面访问本项目 |
 
 ## 3. 核心状态和不变量
@@ -61,21 +61,28 @@
 6. 恢复会话必须兼容旧检查点；损坏检查点应清除或跳过坏字段，不阻塞新训练。
 7. 缺失/过期的心率显示为未知，不能沿用无限期旧值。
 8. checkpoint 是轨迹和心率文件的提交边界；恢复累计值前必须截断 offset 后的完整或损坏尾行，不能保留未被统计确认的样本。
+9. 云同步首次启动或根密钥变化后必须先完成 pull bootstrap，再允许本地 mutation push；不得以默认计划覆盖既有远端 revision。
+10. 本地列表暂时缺项不代表删除；只有与计划库同次提交的显式 tombstone 可以生成 delete mutation。
+11. 远端 change 解密/materialize、ACK 删除 outbox、冲突留存和 cursor 推进必须在同一份持久状态提交成功后才生效。
+12. 设备 token、OAuth token 与根同步密钥三者用途隔离；云端、MCP、日志和迁移代码均不得获得未包装根密钥。
 
 ## 4. 数据和存储
 
 | 数据 | 位置 | 当前 schema/上限 | 说明 |
 | --- | --- | --- | --- |
 | 当前计划 | SharedPreferences `plans` | 阶段 JSON 数组 | 含名称、分组、要求 |
-| 多计划库 | SharedPreferences `plan_library_v2` | schema 2 | 手机为主库，手表保留同步副本 |
+| 多计划库 | SharedPreferences `plan_library_v2` | schema 3 | 手机为主库；新增显式 `deletedPlanIds` tombstone，缺项不再推断删除 |
 | 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入；恢复时按已确认 offset 截断尾部 |
 | 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
 | BLE 身份 | SharedPreferences `watch_identity` / `bridge` | 稳定设备 ID + 过渡六位码 | 当前仅为 debug 认证；正式密钥与挑战响应关联 `BUG-015` |
+| 手机敏感凭据 | SharedPreferences 密文 + Android Keystore `poyi.watchintervals.phone.secrets.v1` | BLE pairing secret、LAN credential、短期 pairing code、Gateway API token | 旧 plaintext 字段首次读取时原子迁移；解密/迁移失败时不签发替代 token、不删除旧值 |
 | Watch MCP 数据 | `%ProgramData%/Poyi/WatchMcp` | 已验证手机身份、DPAPI 密文、独立服务日志 | 不保存固定 IP、明文令牌或其他项目数据 |
 | Watch Tunnel 凭据 | `%ProgramData%/Poyi/WatchMcp` | DPAPI LocalMachine + Watch 专属 Tunnel ID | Runtime Key 不写入仓库、命令行和日志 |
-| 手机云同步配置 | SharedPreferences `cloud_snapshot_sync` | HTTPS `/sync/push` + 独立 `SYNC_KEY` | debug 配置由用户/开发流程注入；密钥不写入 APK、仓库或日志 |
+| 手机加密同步 | SharedPreferences `encrypted_watch_sync_v1` + Android Keystore | `/sync/v2/exchange`、`SyncEnvelopeV1`、严格 `c<base36>` cursor | endpoint/deviceId 为非密字段；device token、根密钥由不可导出 Keystore key 包装；state 持久保存 entity/outbox/conflict/flight/cursor |
 
 任何 schema 变更都要：提升 schema 版本、保留向后读取、增加迁移/损坏数据测试、更新本表与 CHANGELOG。
+
+Watch 与 Phone manifest 均设置 `allowBackup=false`，避免训练/轨迹、计划和凭据进入系统云备份；Phone 仍以 Auto Backup / device-transfer exclusion 逐项排除同步 state、旧云配置、BLE/LAN/Gateway 凭据、LAN outbox、运行时连接状态和幂等缓存，作为 OEM 行为差异下的防御纵深。Keystore 私钥本身不可导出；跨设备同步 root 只能走恢复包或设备批准包。两端 boot receiver 对外只接收系统保护的 `BOOT_COMPLETED`，自定义 watchdog 使用显式 PendingIntent 指向各自 `exported=false` receiver，第三方应用不能用公开广播反复拉起服务。
 
 ## 5. 距离与传感器策略
 
@@ -128,11 +135,17 @@
 
 手机同时广播 `_watchintervals-phone._tcp.`。`/v1/status` 返回稳定 `phoneDeviceId` 与 `protocolVersion`；Windows Watch MCP 只把 IP 当运行时端点，旧地址失败后通过 mDNS 发现并校验身份。
 
-### 手机直连云端快照
+### 手机端到端加密云同步
 
-Phone 0.21.1 在计划桥服务启动、前台同步完成或用户保存云配置后调用 `CloudSnapshotSync`。它分别读取手表状态、训练历史、睡眠和手机计划库，构造与本机 Watch MCP 读工具兼容的六个 JSON 快照，并以 `POST /sync/push` 上行。任一数据面读取失败时省略该数据面，云端保留上一次有效快照；上行失败只记录错误类型，不阻断 BLE/LAN 本地功能。
+Phone 0.22.0 将 `CloudSnapshotSync` 收口为兼容调用入口，实际数据面由 `EncryptedWatchSync` 负责。唯一 canonical 路由为 HTTPS `POST /sync/v2/exchange`；请求包含 protocol 2 / envelope 1、产品 `watch`、设备身份、严格 base36 cursor 和最多 25 条加密 mutation。计划、保留分组与选择状态的 `sync:library` 元数据实体、以及 `/v1/history` 返回的训练摘要在设备上用 AES-256-GCM 加密；AAD 固定绑定产品、实体类型/ID、目标 revision、操作和 key version。原始轨迹、逐点心率、睡眠、第三方凭据和诊断正文不进入该数据面。
 
-上行只接受 HTTPS、固定 `/sync/push` 路径和至少 32 位的独立 `SYNC_KEY`。ChatGPT 使用 capability-path `ACCESS_KEY`，两者用途和权限严格分离。当前云端为只读镜像：设备离线时返回最后快照及 stale 元数据，不提供开始、暂停、继续或结束训练工具。
+本地 `state` 在一次 SharedPreferences `commit()` 中保存实体、加密 outbox、flight lease、冲突副本、projection 待办和 cursor。网络前先提交 outbox；服务端 ACK 与 change 均验证 schema、UUID、revision、AAD hash、nonce 和 page 上限。change 成功解密后，materialize、ACK 移除、projection 待办和 cursor 推进一次提交；随后把计划 projection 幂等写入 schema 3 计划库，成功后才清除待办。崩溃或 projection 失败会在下一次同步开始前重放，不能静默吞掉。revision conflict 将本地加密 candidate 留在 outbox 的 `conflict` 状态，并保存远端候选，禁止自动覆盖。训练实体为 immutable；计划删除只读取计划库 schema 3 的显式 tombstone，绝不扫描“缺少的本地计划”来推断远端删除。
+
+根同步密钥不会由网络或 token 派生。设备 token 和根密钥分别由 Android Keystore AES key 包装；更换同一 deviceId 的旋转 token 保留根密钥，更换 deviceId 或确认 root fingerprint 变化时先把旧 state 隔离备份，再清空 active state。缺少根密钥时同步保持未就绪，不会静默生成新密钥。首台空白空间必须由用户显式初始化；已有空间通过 PBKDF2-HMAC-SHA256（310,000 次）恢复包，或由已授权设备针对目标 3072-bit Android Keystore RSA 公钥生成 10 分钟一次性混合加密批准包。批准包绑定 target deviceId、一次性 nonce、公钥 fingerprint 和有效期；相同 root fingerprint 的恢复保留现有 state，不同 root 才重新执行 pull-first bootstrap。
+
+`EncryptedWatchSyncWorker` 使用网络约束、指数退避的一次性恢复任务和 15 分钟唯一周期任务，覆盖断网、Doze、进程回收与重启。未配置 token/根密钥时任务成功退出且不会形成无限重试。旧 `/sync/push` 和 plaintext snapshot 只保留历史记录；旧 `SYNC_KEY` 会被删除且不迁移为 V2 设备 token，旧路由的目标行为为 410。
+
+当前证据只覆盖本地 JVM、Android 编译与 Worker 合同。尚未部署 staging、未验证 Android Keystore 真机恢复/批准、未执行三轮 PC-off，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
 
 `POST /v1/auth/token` 用于一次性签发独立 Watch MCP Bearer Token。未迁移设备可使用当前 6 位配对码 bootstrap；完成安全 BLE 配对且旧码已清除的设备，使用已配对长期 LAN 凭据 bootstrap。签发请求仍要求 UUID `requestId` 与 `expectedRevision`，重复请求返回首次 token，旧 revision 或已有 token 的新请求返回 409。token 不写入日志、仓库或命令行。
 

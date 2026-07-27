@@ -12,23 +12,39 @@ import java.util.UUID;
 /** Canonical phone-side training plan library. */
 final class PhonePlanLibrary {
     private static final String PREF = "plan_library_v2", KEY = "snapshot";
-    private static final int SCHEMA = 2;
+    private static final int SCHEMA = 3;
     private PhonePlanLibrary() {}
 
     static synchronized JSONObject load(Context context) {
+        android.content.SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         try {
-            String raw = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY, null);
+            String raw = preferences.getString(KEY, null);
             if (raw != null) return normalize(new JSONObject(raw));
-        } catch (Exception ignored) {}
+        } catch (Exception corrupted) {
+            String raw = preferences.getString(KEY, null);
+            if (raw != null && !preferences.edit().putString(
+                    "corrupt_snapshot_backup_" + System.currentTimeMillis(), raw).commit()) {
+                throw new IllegalStateException("plan_library_corrupt_backup_failed", corrupted);
+            }
+        }
         JSONObject library = migrate(context); save(context, library); return library;
     }
 
     static synchronized JSONObject save(Context context, JSONObject source) {
         try {
             JSONObject normalized = normalize(source);
-            context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY, normalized.toString()).commit();
+            if (!context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                    .putString(KEY, normalized.toString()).commit()) {
+                throw new IllegalStateException("plan_library_commit_failed");
+            }
             return normalized;
         } catch (Exception error) { throw new IllegalArgumentException(error); }
+    }
+
+    static synchronized JSONObject saveAndSync(Context context, JSONObject source) {
+        JSONObject saved = save(context, source);
+        EncryptedWatchSync.syncAsync(context);
+        return saved;
     }
 
     static synchronized JSONObject upsert(Context context, JSONObject profile) throws Exception {
@@ -46,15 +62,22 @@ final class PhonePlanLibrary {
         }
         if (!replaced) result.put(item);
         library.put("plans", result).put("revision", nextRevision(library));
-        return save(context, library);
+        removeSyncDelete(library, id);
+        JSONObject saved = save(context, library);
+        EncryptedWatchSync.syncAsync(context);
+        return saved;
     }
 
     static synchronized JSONObject deletePlan(Context context, String id) throws Exception {
         JSONObject library = load(context); JSONArray source = library.getJSONArray("plans"), result = new JSONArray();
-        for (int i = 0; i < source.length(); i++) { JSONObject item = source.optJSONObject(i); if (item != null && !id.equals(item.optString("id"))) result.put(item); }
+        boolean found = false;
+        for (int i = 0; i < source.length(); i++) { JSONObject item = source.optJSONObject(i); if (item != null && !id.equals(item.optString("id"))) result.put(item); else if (item != null) found = true; }
         library.put("plans", result).put("revision", System.currentTimeMillis());
         if (id.equals(library.optString("selectedPlanId"))) library.put("selectedPlanId", result.length() == 0 ? "" : result.getJSONObject(0).optString("id"));
-        return save(context, library);
+        if (found && validPlanId(id)) markSyncDelete(library, id);
+        JSONObject saved = save(context, library);
+        if (found) EncryptedWatchSync.syncAsync(context);
+        return saved;
     }
 
     static synchronized JSONObject select(Context context, String id) throws Exception {
@@ -62,7 +85,8 @@ final class PhonePlanLibrary {
         JSONArray plans = library.getJSONArray("plans");
         for (int i = 0; i < plans.length(); i++) if (id.equals(plans.getJSONObject(i).optString("id"))) found = true;
         if (!found) throw new IllegalArgumentException("plan_not_found");
-        library.put("selectedPlanId", id).put("revision", nextRevision(library)); return save(context, library);
+        library.put("selectedPlanId", id).put("revision", nextRevision(library));
+        JSONObject saved = save(context, library); EncryptedWatchSync.syncAsync(context); return saved;
     }
 
     static synchronized JSONObject createGroup(Context context, String name) throws Exception {
@@ -70,7 +94,8 @@ final class PhonePlanLibrary {
         JSONObject library = load(context); JSONArray groups = library.getJSONArray("groups");
         for (int i = 0; i < groups.length(); i++) if (clean.equals(groups.getJSONObject(i).optString("name"))) return groups.getJSONObject(i);
         JSONObject group = new JSONObject().put("id", UUID.randomUUID().toString()).put("name", clean).put("sortOrder", groups.length());
-        groups.put(group); library.put("revision", System.currentTimeMillis()); save(context, library); return group;
+        groups.put(group); library.put("revision", System.currentTimeMillis()); save(context, library);
+        EncryptedWatchSync.syncAsync(context); return group;
     }
 
     static synchronized JSONObject renameGroup(Context context, String id, String name) throws Exception {
@@ -78,7 +103,8 @@ final class PhonePlanLibrary {
         JSONObject library = load(context); JSONArray groups = library.getJSONArray("groups"); JSONObject found = null;
         for (int i = 0; i < groups.length(); i++) if (id.equals(groups.getJSONObject(i).optString("id"))) { found = groups.getJSONObject(i); found.put("name", clean); }
         if (found == null) throw new IllegalArgumentException("group_not_found");
-        library.put("revision", System.currentTimeMillis()); save(context, library); return found;
+        library.put("revision", System.currentTimeMillis()); save(context, library);
+        EncryptedWatchSync.syncAsync(context); return found;
     }
 
     static synchronized JSONObject deleteGroup(Context context, String id) throws Exception {
@@ -87,13 +113,100 @@ final class PhonePlanLibrary {
         if (!found) throw new IllegalArgumentException("group_not_found");
         String fallback = ensureGroup(groups, "我的计划"); JSONArray plans = library.getJSONArray("plans");
         for (int i = 0; i < plans.length(); i++) if (id.equals(plans.getJSONObject(i).optString("groupId"))) plans.getJSONObject(i).put("groupId", fallback);
-        library.put("groups", groups).put("revision", System.currentTimeMillis()); return save(context, library);
+        library.put("groups", groups).put("revision", System.currentTimeMillis());
+        JSONObject saved = save(context, library); EncryptedWatchSync.syncAsync(context); return saved;
     }
 
     static String groupName(JSONObject library, String groupId) {
         JSONArray groups = library.optJSONArray("groups"); if (groups != null) for (int i = 0; i < groups.length(); i++) {
             JSONObject group = groups.optJSONObject(i); if (group != null && groupId.equals(group.optString("id"))) return group.optString("name");
         } return "我的计划";
+    }
+
+    /** Metadata is a reserved encrypted plan entity; it never contains credentials or telemetry. */
+    static JSONObject syncMetadata(JSONObject library) throws Exception {
+        return new JSONObject().put("syncEntity", "plan_library")
+                .put("schemaVersion", SCHEMA)
+                .put("groups", new JSONArray(library.getJSONArray("groups").toString()))
+                .put("selectedPlanId", library.optString("selectedPlanId"));
+    }
+
+    static Set<String> pendingSyncDeletes(JSONObject library) {
+        Set<String> result = new HashSet<>();
+        JSONArray values = library.optJSONArray("deletedPlanIds");
+        if (values == null) return result;
+        for (int index = 0; index < values.length(); index++) {
+            JSONObject item = values.optJSONObject(index);
+            String id = item == null ? values.optString(index, "") : item.optString("id");
+            if (validPlanId(id)) result.add(id);
+        }
+        return result;
+    }
+
+    static synchronized JSONObject upsertFromSync(Context context, JSONObject profile) throws Exception {
+        String id = profile.optString("id");
+        if (!validPlanId(id)) throw new IllegalArgumentException("invalid_plan_id");
+        JSONObject library = load(context);
+        JSONArray groups = library.getJSONArray("groups");
+        String groupName = profile.optString("group", "我的计划").trim();
+        if (groupName.isEmpty()) groupName = "我的计划";
+        String suppliedGroupId = profile.optString("groupId");
+        String groupId = validPlanId(suppliedGroupId)
+                ? ensureGroupWithId(groups, suppliedGroupId, groupName)
+                : ensureGroup(groups, groupName);
+        JSONObject item = new JSONObject(profile.toString());
+        item.remove("group");
+        item.put("id", id).put("groupId", groupId)
+                .put("updatedAt", Math.max(1, profile.optLong("updatedAt", System.currentTimeMillis())))
+                .put("revision", Math.max(1, profile.optLong("revision", 1)));
+        JSONArray source = library.getJSONArray("plans");
+        JSONArray plans = new JSONArray();
+        boolean replaced = false;
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject existing = source.optJSONObject(index);
+            if (existing != null && id.equals(existing.optString("id"))) {
+                plans.put(item);
+                replaced = true;
+            } else if (existing != null) plans.put(existing);
+        }
+        if (!replaced) plans.put(item);
+        library.put("plans", plans).put("revision", nextRevision(library));
+        removeSyncDelete(library, id);
+        return save(context, library);
+    }
+
+    static synchronized JSONObject deletePlanFromSync(Context context, String id) throws Exception {
+        if (!validPlanId(id)) throw new IllegalArgumentException("invalid_plan_id");
+        JSONObject library = load(context);
+        JSONArray source = library.getJSONArray("plans");
+        JSONArray plans = new JSONArray();
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject item = source.optJSONObject(index);
+            if (item != null && !id.equals(item.optString("id"))) plans.put(item);
+        }
+        library.put("plans", plans).put("revision", nextRevision(library));
+        if (id.equals(library.optString("selectedPlanId"))) {
+            library.put("selectedPlanId", plans.length() == 0 ? "" : plans.getJSONObject(0).optString("id"));
+        }
+        return save(context, library);
+    }
+
+    static synchronized JSONObject applySyncMetadata(Context context, JSONObject metadata)
+            throws Exception {
+        if (!"plan_library".equals(metadata.optString("syncEntity")) ||
+                !(metadata.opt("groups") instanceof JSONArray)) {
+            throw new IllegalArgumentException("invalid_plan_library_metadata");
+        }
+        JSONObject library = load(context);
+        library.put("groups", new JSONArray(metadata.getJSONArray("groups").toString()))
+                .put("selectedPlanId", metadata.optString("selectedPlanId"))
+                .put("revision", nextRevision(library));
+        return save(context, library);
+    }
+
+    static synchronized void confirmSyncDelete(Context context, String id) throws Exception {
+        JSONObject library = load(context);
+        if (removeSyncDelete(library, id)) save(context, library);
     }
 
     private static JSONObject migrate(Context context) {
@@ -113,7 +226,9 @@ final class PhonePlanLibrary {
             JSONArray fartlek = new JSONArray(); for (int i = 0; i < 6; i++) { fartlek.put(stage("RUN", "TIME", 120)); fartlek.put(stage("WALK", "TIME", 60)); }
             addTemplate(groups, plans, "变速训练", "法特莱克跑", "快跑 2 分钟，快走恢复 1 分钟，连续完成 6 组。", fartlek, now);
             String selected = plans.length() == 0 ? "" : plans.getJSONObject(0).optString("id");
-            return normalize(new JSONObject().put("schemaVersion", SCHEMA).put("revision", now).put("groups", groups).put("plans", plans).put("selectedPlanId", selected));
+            return normalize(new JSONObject().put("schemaVersion", SCHEMA).put("revision", now)
+                    .put("groups", groups).put("plans", plans).put("selectedPlanId", selected)
+                    .put("deletedPlanIds", new JSONArray()));
         } catch (Exception error) { return new JSONObject(); }
     }
 
@@ -135,14 +250,66 @@ final class PhonePlanLibrary {
                     .put("updatedAt", plan.optLong("updatedAt", System.currentTimeMillis())).put("revision", Math.max(1, plan.optLong("revision", 1))));
         }
         String selected = source.optString("selectedPlanId"); if (!planIds.contains(selected) && plans.length() > 0) selected = plans.getJSONObject(0).optString("id");
+        JSONArray deletedPlanIds = new JSONArray();
+        JSONArray sourceDeletes = source.optJSONArray("deletedPlanIds");
+        Set<String> seenDeletes = new HashSet<>();
+        if (sourceDeletes != null) for (int index = 0; index < sourceDeletes.length(); index++) {
+            JSONObject item = sourceDeletes.optJSONObject(index);
+            String id = item == null ? sourceDeletes.optString(index, "") : item.optString("id");
+            if (!validPlanId(id) || planIds.contains(id) || !seenDeletes.add(id)) continue;
+            long deletedAt = item == null ? System.currentTimeMillis()
+                    : Math.max(1, item.optLong("deletedAt", System.currentTimeMillis()));
+            deletedPlanIds.put(new JSONObject().put("id", id).put("deletedAt", deletedAt));
+        }
         return new JSONObject().put("schemaVersion", SCHEMA).put("revision", Math.max(1, source.optLong("revision", System.currentTimeMillis())))
-                .put("groups", groups).put("plans", plans).put("selectedPlanId", selected);
+                .put("groups", groups).put("plans", plans).put("selectedPlanId", selected)
+                .put("deletedPlanIds", deletedPlanIds);
+    }
+
+    static JSONObject normalizeForTesting(JSONObject source) throws Exception {
+        return normalize(new JSONObject(source.toString()));
     }
 
     private static String ensureGroup(JSONArray groups, String name) throws Exception {
         String clean = name == null || name.trim().isEmpty() ? "我的计划" : name.trim();
         for (int i = 0; i < groups.length(); i++) { JSONObject item = groups.getJSONObject(i); if (clean.equals(item.optString("name"))) return item.optString("id"); }
         String id = stableId("group", clean); groups.put(new JSONObject().put("id", id).put("name", clean).put("sortOrder", groups.length())); return id;
+    }
+    private static String ensureGroupWithId(JSONArray groups, String id, String name) throws Exception {
+        for (int index = 0; index < groups.length(); index++) {
+            JSONObject group = groups.getJSONObject(index);
+            if (id.equals(group.optString("id"))) {
+                if (!name.isEmpty()) group.put("name", name);
+                return id;
+            }
+        }
+        groups.put(new JSONObject().put("id", id).put("name", name)
+                .put("sortOrder", groups.length()));
+        return id;
+    }
+    private static void markSyncDelete(JSONObject library, String id) throws Exception {
+        if (pendingSyncDeletes(library).contains(id)) return;
+        JSONArray values = library.optJSONArray("deletedPlanIds");
+        if (values == null) { values = new JSONArray(); library.put("deletedPlanIds", values); }
+        values.put(new JSONObject().put("id", id).put("deletedAt", System.currentTimeMillis()));
+    }
+    private static boolean removeSyncDelete(JSONObject library, String id) throws Exception {
+        JSONArray source = library.optJSONArray("deletedPlanIds");
+        if (source == null) return false;
+        JSONArray retained = new JSONArray();
+        boolean removed = false;
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject item = source.optJSONObject(index);
+            String candidate = item == null ? source.optString(index, "") : item.optString("id");
+            if (id.equals(candidate)) removed = true;
+            else if (item != null) retained.put(item);
+        }
+        if (removed) library.put("deletedPlanIds", retained);
+        return removed;
+    }
+    private static boolean validPlanId(String id) {
+        return id != null && id.matches("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$") &&
+                !EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID.equals(id);
     }
     private static void addTemplate(JSONArray groups, JSONArray plans, String group, String name, String requirement, JSONArray stages, long now) throws Exception {
         for (int i = 0; i < plans.length(); i++) if (name.equals(plans.getJSONObject(i).optString("name"))) return;

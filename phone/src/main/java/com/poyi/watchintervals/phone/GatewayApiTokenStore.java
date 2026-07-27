@@ -18,13 +18,15 @@ final class GatewayApiTokenStore {
 
     private static final String PREFS = "gateway_api_auth";
     private static final String TOKEN = "token";
+    private static final String TOKEN_CIPHERTEXT = "token_ciphertext";
+    private static final String TOKEN_NONCE = "token_nonce";
     private static final String REVISION = "revision";
     private static final String ISSUE_REQUEST_ID = "issue_request_id";
 
     private GatewayApiTokenStore() {}
 
     static boolean matches(Context context, String presented) {
-        String expected = preferences(context).getString(TOKEN, "");
+        String expected = loadToken(context);
         if (expected == null || expected.isEmpty() || presented == null || presented.isEmpty()) return false;
         return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8));
     }
@@ -34,7 +36,10 @@ final class GatewayApiTokenStore {
         SharedPreferences values = preferences(context);
         long actualRevision = values.getLong(REVISION, 0L);
         String previousRequestId = values.getString(ISSUE_REQUEST_ID, "");
-        String token = values.getString(TOKEN, "");
+        String token = loadToken(context);
+        if (token.isEmpty() && (values.contains(TOKEN) || values.contains(TOKEN_CIPHERTEXT))) {
+            return error(500, "token_unavailable");
+        }
         if (requestId.equals(previousRequestId) && token != null && !token.isEmpty()) {
             return success(token, actualRevision, true);
         }
@@ -44,8 +49,12 @@ final class GatewayApiTokenStore {
         new SecureRandom().nextBytes(random);
         token = Base64.encodeToString(random, Base64.NO_WRAP | Base64.NO_PADDING | Base64.URL_SAFE);
         long nextRevision = actualRevision + 1L;
-        boolean saved = values.edit().putString(TOKEN, token).putLong(REVISION, nextRevision)
-                .putString(ISSUE_REQUEST_ID, requestId).commit();
+        AndroidSecretStore.EncryptedValue encrypted;
+        try { encrypted = AndroidSecretStore.encrypt(token, tokenAad()); }
+        catch (Exception failure) { return error(500, "token_encryption_failed"); }
+        boolean saved = values.edit().putString(TOKEN_CIPHERTEXT, encrypted.ciphertext)
+                .putString(TOKEN_NONCE, encrypted.nonce).remove(TOKEN)
+                .putLong(REVISION, nextRevision).putString(ISSUE_REQUEST_ID, requestId).commit();
         if (!saved) return error(500, "token_persistence_failed");
         return success(token, nextRevision, false);
     }
@@ -55,6 +64,23 @@ final class GatewayApiTokenStore {
     private static SharedPreferences preferences(Context context) {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
+
+    private static synchronized String loadToken(Context context) {
+        SharedPreferences values = preferences(context);
+        String decrypted = AndroidSecretStore.decrypt(values.getString(TOKEN_CIPHERTEXT, ""),
+                values.getString(TOKEN_NONCE, ""), tokenAad());
+        if (decrypted != null && !decrypted.isEmpty()) return decrypted;
+        String legacy = values.getString(TOKEN, "");
+        if (legacy == null || legacy.isEmpty()) return "";
+        try {
+            AndroidSecretStore.EncryptedValue encrypted = AndroidSecretStore.encrypt(legacy, tokenAad());
+            if (!values.edit().putString(TOKEN_CIPHERTEXT, encrypted.ciphertext)
+                    .putString(TOKEN_NONCE, encrypted.nonce).remove(TOKEN).commit()) return "";
+            return legacy;
+        } catch (Exception failure) { return ""; }
+    }
+
+    private static String tokenAad() { return "watch-gateway-api-token-v1"; }
 
     private static IssueResult success(String token, long revision, boolean duplicate) {
         try {

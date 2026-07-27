@@ -71,11 +71,11 @@ public class MainActivity extends Activity {
         watchConnection.observe(connectionObserver);
         android.content.SharedPreferences preferences = getSharedPreferences("connection", MODE_PRIVATE);
         host.setText(preferences.getString("host", ""));
-        if(watchConnection.identity().isPaired()){code.setText("");code.setHint("已完成安全配对");}else code.setText(preferences.getString("code", ""));
+        if(watchConnection.identity().isPaired()){code.setText("");code.setHint("已完成安全配对");}else code.setText(watchConnection.identity().pairingCode());
         CloudSyncCredentials.Config cloud = CloudSyncCredentials.load(this);
         cloudEndpoint.setText(cloud.endpoint);
         cloudKey.setText("");
-        if (cloud.configured()) cloudKey.setHint("已配置独立上行密钥");
+        if (cloud.configured()) cloudKey.setHint("已安全保存设备 token");
         provisionCloudFromIntent(getIntent());
         watchConnection.configurePairing(code.getText().toString().trim());
         watchConnection.configureLan(host.getText().toString().trim(),code.getText().toString().trim());
@@ -120,14 +120,16 @@ public class MainActivity extends Activity {
         Button discover=button("连接手表",Palette.CARD_HIGH,Palette.TEXT);
         Button connect=button("立即同步",Palette.EXERCISE,Palette.TEXT);
         connectActions.addView(discover,weight());connectActions.addView(connect,weight());setupPanel.addView(connectActions);
-        setupPanel.addView(text("云端快照",14,true,Palette.TEXT));
-        cloudEndpoint=input("https://…/sync/push");
+        setupPanel.addView(text("加密云同步",14,true,Palette.TEXT));
+        cloudEndpoint=input("https://…/sync/v2/exchange");
         cloudEndpoint.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        cloudKey=input("独立 SYNC_KEY（不会写入 APK）");
+        cloudKey=input("设备 token（安全存储，不会写入 APK）");
         cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         setupPanel.addView(cloudEndpoint);setupPanel.addView(cloudKey);
-        Button saveCloud=button("保存并测试云同步",Palette.CARD_HIGH,Palette.TEXT);
+        Button saveCloud=button("保存并测试加密同步",Palette.CARD_HIGH,Palette.TEXT);
         setupPanel.addView(saveCloud);
+        Button manageCloudKeys=button("恢复与设备批准",Palette.CARD_HIGH,Palette.TEXT);
+        setupPanel.addView(manageCloudKeys);
         LinearLayout.LayoutParams setupParams=new LinearLayout.LayoutParams(-1,-2);setupParams.topMargin=dp(6);
         header.addView(setupPanel,setupParams);
         shell.addView(header);
@@ -221,6 +223,7 @@ public class MainActivity extends Activity {
 
         connect.setOnClickListener(v -> syncAll());
         saveCloud.setOnClickListener(v -> saveCloudConfig());
+        manageCloudKeys.setOnClickListener(v -> showCloudKeyMenu());
         discover.setOnClickListener(v -> discoverWatch());
         addRun.setOnClickListener(v -> addStage("RUN", "DISTANCE", 1000));
         addWalk.setOnClickListener(v -> addStage("WALK", "DISTANCE", 200));
@@ -410,7 +413,8 @@ public class MainActivity extends Activity {
     }
 
     private void syncAll() {
-        getSharedPreferences("connection", MODE_PRIVATE).edit().putString("host", host.getText().toString().trim()).putString("code", code.getText().toString().trim()).apply();
+        android.content.SharedPreferences.Editor connectionEdit=getSharedPreferences("connection", MODE_PRIVATE).edit().putString("host", host.getText().toString().trim());
+        connectionEdit.remove("code").apply();
         runIo(() -> {
             String pairing=code.getText().toString().trim();if(!watchConnection.identity().isPaired()&&pairing.length()!=6)throw new IllegalArgumentException("请输入手表上的 6 位配对码");
             watchConnection.configurePairing(pairing);watchConnection.configureLan(host.getText().toString().trim(),pairing);
@@ -435,14 +439,19 @@ public class MainActivity extends Activity {
     private void saveCloudConfig() {
         CloudSyncCredentials.Config current = CloudSyncCredentials.load(this);
         String key = cloudKey.getText().toString().trim();
-        if (key.isEmpty()) key = current.syncKey;
+        if (key.isEmpty()) key = current.deviceToken;
         if (!CloudSyncCredentials.save(this, cloudEndpoint.getText().toString(), key)) {
-            Toast.makeText(this, "请输入 HTTPS /sync/push 地址和至少 32 位上行密钥", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "请输入 HTTPS /sync/v2/exchange 地址和有效设备 token", Toast.LENGTH_LONG).show();
             return;
         }
-        cloudKey.setText(""); cloudKey.setHint("已配置独立上行密钥");
-        CloudSnapshotSync.syncAsync(this);
-        Toast.makeText(this, "云同步配置已保存，正在后台测试", Toast.LENGTH_SHORT).show();
+        cloudKey.setText(""); cloudKey.setHint("已安全保存设备 token");
+        if (CloudSyncCredentials.readyForSync(this)) {
+            CloudSnapshotSync.syncAsync(this);
+            Toast.makeText(this, "云同步配置已保存，正在后台测试", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "设备 token 已保存，请初始化或恢复同步密钥", Toast.LENGTH_LONG).show();
+            showCloudKeyMenu();
+        }
     }
 
     private void provisionCloudFromIntent(Intent intent) {
@@ -452,10 +461,145 @@ public class MainActivity extends Activity {
         if (endpoint == null || key == null) return;
         if (CloudSyncCredentials.save(this, endpoint, key)) {
             cloudEndpoint.setText(endpoint); cloudKey.setText("");
-            cloudKey.setHint("已配置独立上行密钥");
+            cloudKey.setHint("已安全保存设备 token");
             intent.removeExtra("poyi_cloud_endpoint"); intent.removeExtra("poyi_cloud_key");
-            CloudSnapshotSync.syncAsync(this);
+            if (CloudSyncCredentials.readyForSync(this)) CloudSnapshotSync.syncAsync(this);
         }
+    }
+
+    private void showCloudKeyMenu() {
+        String[] actions = new String[] {"初始化新加密空间", "导出离线恢复包", "导入离线恢复包",
+                "生成新设备批准请求", "批准新设备", "导入设备批准包"};
+        new android.app.AlertDialog.Builder(this).setTitle("加密同步密钥")
+                .setItems(actions, (dialog, which) -> {
+                    if (which == 0) confirmInitializeCloudRoot();
+                    else if (which == 1) showRecoveryExportDialog();
+                    else if (which == 2) showRecoveryImportDialog();
+                    else if (which == 3) createApprovalRequest();
+                    else if (which == 4) showPackageDialog("批准新设备", "粘贴新设备批准请求",
+                            "生成批准包", value -> shareKeyPackage("步序设备批准包",
+                                    CloudSyncCredentials.approveDeviceRequest(this, value)));
+                    else showPackageDialog("导入设备批准包", "粘贴已授权设备生成的批准包",
+                            "导入", value -> {
+                                CloudSyncCredentials.importDeviceApproval(this, value);
+                                CloudSnapshotSync.syncAsync(this);
+                                Toast.makeText(this, "设备已获得同步密钥，正在拉取远端变更",
+                                        Toast.LENGTH_LONG).show();
+                            });
+                }).show();
+    }
+
+    private void confirmInitializeCloudRoot() {
+        new android.app.AlertDialog.Builder(this).setTitle("初始化新加密空间？")
+                .setMessage("仅用于首台设备或确认远端为空的场景。已有数据应导入恢复包或设备批准包。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认初始化", (dialog, which) -> {
+                    try {
+                        boolean created = CloudSyncCredentials.initializeNewRoot(this);
+                        CloudSnapshotSync.syncAsync(this);
+                        Toast.makeText(this, created ? "新同步密钥已创建，请立即导出离线恢复包"
+                                : "同步密钥已存在，未做覆盖", Toast.LENGTH_LONG).show();
+                    } catch (Exception error) {
+                        Toast.makeText(this, "初始化失败：" + safeCloudError(error), Toast.LENGTH_LONG).show();
+                    }
+                }).show();
+    }
+
+    private void showRecoveryExportDialog() {
+        LinearLayout panel = dialogPanel();
+        EditText first = secretInput("设置至少 16 位离线恢复密钥");
+        EditText second = secretInput("再次输入离线恢复密钥");
+        panel.addView(first); panel.addView(second);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle("导出离线恢复包").setView(panel).setNegativeButton("取消", null)
+                .setPositiveButton("生成", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    String recoveryKey = first.getText().toString();
+                    if (!recoveryKey.equals(second.getText().toString())) {
+                        second.setError("两次输入不一致"); return;
+                    }
+                    try {
+                        String value = CloudSyncCredentials.createRecoveryPackage(this, recoveryKey);
+                        first.setText(""); second.setText(""); dialog.dismiss();
+                        shareKeyPackage("步序离线恢复包", value);
+                    } catch (Exception error) { first.setError(safeCloudError(error)); }
+                }));
+        dialog.show();
+    }
+
+    private void showRecoveryImportDialog() {
+        LinearLayout panel = dialogPanel();
+        EditText encoded = packageInput("粘贴离线恢复包");
+        EditText recoveryKey = secretInput("输入离线恢复密钥");
+        panel.addView(encoded); panel.addView(recoveryKey);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle("导入离线恢复包").setView(panel).setNegativeButton("取消", null)
+                .setPositiveButton("导入", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    try {
+                        CloudSyncCredentials.restoreRecoveryPackage(this,
+                                encoded.getText().toString(), recoveryKey.getText().toString());
+                        encoded.setText(""); recoveryKey.setText(""); dialog.dismiss();
+                        CloudSnapshotSync.syncAsync(this);
+                        Toast.makeText(this, "恢复完成，正在先拉取远端变更", Toast.LENGTH_LONG).show();
+                    } catch (Exception error) { recoveryKey.setError(safeCloudError(error)); }
+                }));
+        dialog.show();
+    }
+
+    private void createApprovalRequest() {
+        try {
+            shareKeyPackage("步序新设备批准请求",
+                    CloudSyncCredentials.createDeviceApprovalRequest(this));
+        } catch (Exception error) {
+            Toast.makeText(this, "生成失败：" + safeCloudError(error), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private interface CloudPackageAction { void run(String value) throws Exception; }
+
+    private void showPackageDialog(String title, String hint, String positive,
+                                   CloudPackageAction action) {
+        EditText input = packageInput(hint);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle(title).setView(input).setNegativeButton("取消", null)
+                .setPositiveButton(positive, null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    try { action.run(input.getText().toString()); input.setText(""); dialog.dismiss(); }
+                    catch (Exception error) { input.setError(safeCloudError(error)); }
+                }));
+        dialog.show();
+    }
+
+    private LinearLayout dialogPanel() {
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(8), dp(20), 0); return panel;
+    }
+
+    private EditText packageInput(String hint) {
+        EditText value = input(hint); value.setSingleLine(false); value.setMinLines(4);
+        value.setMaxLines(8); value.setGravity(Gravity.TOP); return value;
+    }
+
+    private EditText secretInput(String hint) {
+        EditText value = input(hint);
+        value.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); return value;
+    }
+
+    private void shareKeyPackage(String title, String value) {
+        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, title).putExtra(Intent.EXTRA_TEXT, value);
+        startActivity(Intent.createChooser(send, title));
+    }
+
+    private String safeCloudError(Exception error) {
+        String value = error.getMessage();
+        if (value == null || value.isEmpty()) value = error.getClass().getSimpleName();
+        return value.length() > 80 ? value.substring(0, 80) : value;
     }
 
     private void ensureBluetoothConnection(){
@@ -609,7 +753,7 @@ public class MainActivity extends Activity {
     }
 
     private void persistSavedPlans(JSONArray plans){
-        try{JSONObject library=PhonePlanLibrary.load(this);library.put("plans",plans).put("revision",System.currentTimeMillis());PhonePlanLibrary.save(this,library);}catch(Exception ignored){}
+        try{JSONObject library=PhonePlanLibrary.load(this);library.put("plans",plans).put("revision",System.currentTimeMillis());PhonePlanLibrary.saveAndSync(this,library);}catch(Exception ignored){}
     }
 
     private boolean saveLocalPlan(boolean announce){

@@ -444,3 +444,14 @@
 - 关机等价验收：停止本机 9 个 MCP/Tunnel/watchdog 服务，Watch Cloud MCP 仍返回 `source=phone`、`state=synced` 与 2 条训练；测试后服务全部恢复。
 - ChatGPT 删除旧日记/步序连接并改接 Cloudflare MCP：日记为 6 个 UUID CRUD/搜索工具，步序为 7 个快照/同步概览工具，旧的 24 工具本机控制面不再暴露。
 - 最终门禁：Gradle `test lint :app:assembleDebug :phone:assembleDebug` 成功（140 tasks）；Phone `CloudSnapshotPayloadTest` 覆盖完整六面与部分数据面缺失；两个 Cloud Worker 的 TypeScript 检查与 Wrangler dry-run 通过；`git diff --check` 通过。
+
+## 2026-07-28：Phone 0.22.0 加密 V2 本地实现（REQ-SYNC-012 至 014、BUG-033）
+
+- 旧 `CloudSnapshotPayload` 明文快照生成器删除，`CloudSnapshotSync` 仅保留为兼容入口；配置固定 HTTPS `/sync/v2/exchange` 和 `dw1.<deviceId>.<secret>` 设备 token，旧 `/sync/push` 凭据删除且不升级。
+- 新增 `EncryptedWatchSync`：稳定 `opId`、严格 base36 cursor、AES-256-GCM/AAD、持久 entity/outbox/flight/conflict、ACK 与 materialize 同提交、revision 单调、显式 tombstone 和最多 100 页 catch-up。首次/换 root 清空 state 后只读 bootstrap，完成 pull 才 stage 本地 mutation。
+- 计划库升为 schema 3，用户删除与库内容同次提交到 `deletedPlanIds`；扫描本地列表不再推断删除。计划分组和选择写入保留 ID `sync:library` 的加密元数据实体；远端 apply 使用不递增业务 revision 的专用 projection，避免回声循环。
+- 新增 Android Keystore 凭据/root 包装与 `WatchSyncKeyPackages`。根密钥不再静默生成：首台空白空间需用户显式初始化；离线恢复包使用 PBKDF2-HMAC-SHA256 310,000 次 + AES-GCM；设备批准使用目标 3072-bit Keystore RSA-OAEP 包装临时 AES key，再以 AES-GCM 包装 root payload，绑定 deviceId、当前一次性 nonce、公钥 fingerprint 和 10 分钟有效期。
+- 新增恢复与批准 UI、网络约束一次性重试和 15 分钟唯一周期 WorkManager；未配置 token/root 时不会形成无限后台重试。Worker 本地源码将 `/sync/push` replacement 改为 V2，并把 plaintext `/sync/v1/exchange`、`/sync/v1/status` 设为生产默认 410；旧处理器只可由 `ALLOW_LEGACY_SYNC_V1=contract-test-only` 在隔离合同测试打开。
+- 持久化复核继续修复 `BUG-034`：BLE pairing/LAN 和 Gateway API token 从 plaintext SharedPreferences 首次读取时迁入 Android Keystore AES-GCM；两模块禁用 Auto Backup，Phone 另保留逐项 exclusion；两端公开 boot receiver 不再接受自定义 watchdog，app-private alarm 改投递到 `exported=false` receiver。损坏 sync state/计划库以及 root/device 切换前的 state 均先保留本地隔离备份，不再静默丢弃。
+- 远端计划不再以 `catch ignored` 写 projection：接受的 plan change 与 cursor 同时进入 `projectionPending`，同步 state 落盘后再幂等更新计划库并清队列；崩溃、commit 失败或无效 metadata 会在下次网络前重放/阻断，避免 cursor 已前进而 UI 永久漏数据。
+- 自动化：新增 `EncryptedWatchSyncTest`、`WatchSyncKeyPackagesTest`、`PhonePlanLibrarySyncFormatTest`；完整 `gradlew test lint :app:assembleDebug :phone:assembleDebug` 为 140 tasks 成功，Watch MCP pytest 为 12 passed，Watch Worker `npm test` 为 48 tests 全通过，平台 `-ManifestStrict` 为 6 个有效 manifest、0 contract/registry gap。错误的 unittest 命令会得到 0 tests，测试文档已改为项目 venv 的 pytest。本批次尚未执行 staging、远端迁移、真实手机 Keystore/分享流程、Doze/boot、第二设备或 PC-off 测试，也未部署任何 Cloudflare 资源；manifest 继续保持 `supportsPcOff=false`。
