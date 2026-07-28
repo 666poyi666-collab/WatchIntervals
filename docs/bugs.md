@@ -1,20 +1,20 @@
 # 缺陷与技术债台账
 
 状态：维护中  
-基线：2026-07-25
+基线：2026-07-28
 
 严重度：P0 数据损坏/训练核心不可用；P1 核心行为错误或高风险；P2 有降级路径；P3 体验或维护问题。状态使用 `Open`、`In Progress`、`Fixed`、`Verified`、`Won't Fix`。
 
 ## 1. 开放项
 
-### BUG-001：缺少自动化测试
+### BUG-001：自动化测试覆盖仍不完整
 
-- 状态：Open
+- 状态：In Progress
 - 严重度：P1
 - 影响：所有当前版本
-- 现象：`app` 和 `phone` 仅有 `src/main`，没有 `test`/`androidTest`；训练状态和数据迁移依赖人工回归。
+- 现象：Phone 已有加密 V2、恢复包和 schema 迁移 JVM 测试；Watch `app` 核心训练状态、传感器和数据迁移仍缺自动化，Android Keystore/WorkManager 也未做真机或 instrumentation 验证。
 - 风险：传感器切换、暂停、恢复和历史 schema 修改容易产生回归。
-- 处理：按 `testing.md` 第 6 节依次建立纯 Java、Robolectric/仪器和 API 契约测试。
+- 处理：按 `testing.md` 的建议清单继续建立 Watch 纯 Java、Robolectric/仪器、WorkManager/Keystore 和 API 契约测试。
 - 关闭条件：核心状态机、编解码和协议在 CI 中自动执行。
 
 ### BUG-002：pause/resume API 实际采用 toggle，调用不幂等
@@ -92,6 +92,16 @@
 - 根因：Quick Tunnel 只适合临时调试，不提供稳定连接标识。
 - 修复：改用 OpenAI Secure MCP Tunnel 固定 Tunnel ID；Runtime Key 使用 Windows DPAPI CurrentUser 加密，计划任务在登录后启动守护脚本，客户端退出后 5 秒重连。
 - 关闭条件：完成一次 Tunnel 绑定，重启电脑后 `check_persistent_chatgpt_tunnel.ps1` 显示 `Online=True`，ChatGPT 无需修改连接即可调用 `watch_status` 和 `summarize_sleep`。
+
+### BUG-010：加密 V2 同步缺少发布级环境验收
+
+- 状态：Open
+- 严重度：P1（只阻断 V2 候选发布，不影响当前局域网主流程）
+- 影响：未发布 Phone 加密 V2 同步候选
+- 现象：AES-GCM/outbox/cursor/ACK、schema 3 tombstone/projection、Keystore 包装和 WorkManager 已有 JVM/构建门禁，但本阶段明确不含配置 UI、staging、Android Keystore 真机、Doze/重启和三轮 PC-off 验收。
+- 风险：不能证明 OEM Keystore 生命周期、后台调度恢复、设备吊销后的真机终态，以及电脑关闭时的端到端收敛。
+- 处理：在独立发布阶段补 provisioning surface，并执行 `testing.md` 的 SYNC-006 至 SYNC-010；保留 `supportsPcOff=false` 等价发布声明直至全部通过。
+- 关闭条件：staging 合同、恢复/批准、token revoke、Doze/重启及三轮 PC-off 均有脱敏证据，且用户明确接受开放问题。
 
 ## 2. 已修复/历史项
 

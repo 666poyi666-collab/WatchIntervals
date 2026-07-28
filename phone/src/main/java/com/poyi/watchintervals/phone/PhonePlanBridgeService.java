@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.IBinder;
 import org.json.JSONArray;
@@ -33,7 +34,9 @@ public class PhonePlanBridgeService extends Service {
         notifications.createNotificationChannel(new NotificationChannel(CHANNEL, "计划与 MCP 同步", NotificationManager.IMPORTANCE_MIN));
         Notification notification = new Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("训练计划同步已开启").setContentText("手机计划库可供手表与 MCP 使用").build();
-        startForeground(63, notification); workers.execute(this::serve);
+        startForeground(63, notification);
+        EncryptedWatchSync.syncAsync(this);
+        workers.execute(this::serve);
     }
 
     private void serve() {
@@ -98,8 +101,14 @@ public class PhonePlanBridgeService extends Service {
         try {
             String host=getSharedPreferences("connection",MODE_PRIVATE).getString("host","");String code=getSharedPreferences("connection",MODE_PRIVATE).getString("code","");
             if(host.isEmpty()||code.isEmpty())return new JSONObject().put("state","pending").put("reason","watch_not_configured");
-            new WatchClient(host,code).put("/v1/plan-library",PhonePlanLibrary.load(this).toString());return new JSONObject().put("state","synced").put("host",host);
+            pushCurrentLibraryToWatch(this);return new JSONObject().put("state","synced").put("host",host);
         } catch(Exception error){try{return new JSONObject().put("state","pending").put("reason",error.getMessage());}catch(Exception ignored){return new JSONObject();}}
+    }
+    static void pushCurrentLibraryToWatch(Context context) throws Exception {
+        String host=context.getSharedPreferences("connection",MODE_PRIVATE).getString("host","");
+        String code=context.getSharedPreferences("connection",MODE_PRIVATE).getString("code","");
+        if(host.isEmpty()||code.isEmpty())throw new IllegalStateException("watch_not_configured");
+        new WatchClient(host,code).put("/v1/plan-library",PhonePlanLibrary.load(context).toString());
     }
     private String tail(String path){return path.substring(path.lastIndexOf('/')+1);}
     private void respond(Socket socket,int status,String body)throws Exception{byte[] data=body.getBytes(StandardCharsets.UTF_8);String reason=status==200?"OK":status==400?"Bad Request":status==401?"Unauthorized":"Not Found";String header="HTTP/1.1 "+status+" "+reason+"\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+data.length+"\r\nConnection: close\r\n\r\n";OutputStream out=socket.getOutputStream();out.write(header.getBytes(StandardCharsets.US_ASCII));out.write(data);out.flush();}

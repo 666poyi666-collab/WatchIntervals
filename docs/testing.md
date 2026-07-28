@@ -1,11 +1,11 @@
 # 测试与发布门禁
 
 状态：维护中  
-基线：2026-07-25
+基线：2026-07-28
 
 ## 1. 测试原则
 
-本项目的高风险区域不是页面能否打开，而是长时间状态、传感器切换、后台运行和跨设备同步。测试分为纯逻辑、Android 集成、模拟器界面、手表真机、手机真机和 MCP 契约六层。当前仓库尚无自动化测试源码，这是 `BUG-001`。
+本项目的高风险区域不是页面能否打开，而是长时间状态、传感器切换、后台运行和跨设备同步。测试分为纯逻辑、Android 集成、模拟器界面、手表真机、手机真机和 MCP 契约六层。Phone 已有加密 V2/恢复包/schema JVM 测试，Watch 核心与 Android 生命周期覆盖仍不足，继续关联 `BUG-001`。
 
 ## 2. 每次提交最小检查
 
@@ -18,6 +18,7 @@ git diff --check
 - 修改训练引擎：验证开始、暂停、继续、停止、自动阶段推进、完成只保存一次。
 - 修改传感器：验证 GPS、步数、心率各自单独可用和切换恢复。
 - 修改 API/MCP：验证 401、错误 JSON、超时、手机不在线、手表不在线和正常路径。
+- 修改加密 V2：验证 canonical cursor、safe-integer revision、AES-GCM AAD、outcome 全覆盖、ACK/outbox/cursor 原子提交、conflict 双方留存、显式 tombstone/projection 重放和 401 terminal retry。
 - 修改 Tunnel：执行 `powershell -File mcp/tests/test_persistent_tunnel.ps1`，再执行 API-011 真机/重启验证。
 - 修改 UI：至少检查 378×496 截图和点击区域。
 
@@ -53,6 +54,23 @@ git diff --check
 | PT-006 | 定位中继 | 授权后前台服务运行，手表接收并过滤位置 |
 | PT-007 | 重启恢复 | 手机重启后计划桥服务恢复，计划库不丢失 |
 | PT-008 | 睡眠页 | 授权后显示时长、评分、血氧、深睡、REM 和阶段数量；未授权时有明确提示 |
+
+### 加密 V2 同步
+
+| ID | 层级 | 验证 |
+| --- | --- | --- |
+| SYNC-001 | JVM | stable JSON/AAD、AES-256-GCM 往返及错误 AAD 拒绝 |
+| SYNC-002 | JVM | cursor 只接受 canonical `c<base36>`，revision 接受 JS safe integer long 且拒绝小数/溢出 |
+| SYNC-003 | JVM | 每条 leased mutation 必须 exactly-one ACK/conflict；缺 outcome 不推进 cursor |
+| SYNC-004 | JVM | delete ACK 与 projection 待办同一 state commit；schema 2 迁移为空 tombstone，只有显式缺席 ID 生成 delete；remote delete 必须命中 root 加密 metadata ledger |
+| SYNC-005 | JVM | conflict 保留本地候选与解密远端候选，不能自动覆盖手机计划库；训练 projection 使用 allowlist 排除 route/逐点心率/未知字段并散列 envelope ID |
+| SYNC-006 | staging | `/sync/v2/exchange` 合同、分页、重放、revision conflict、workout immutable、401 revoke |
+| SYNC-007 | 真机 | Keystore 首装/升级/锁屏/失效、恢复包、设备批准、不同 root/deviceId 隔离 |
+| SYNC-008 | 真机 | WorkManager 在断网、Doze、重启和进程回收后 catch-up；前台与 Worker 不并发覆盖 state |
+| SYNC-009 | PC-off | 电脑关闭期间手机产生计划/训练摘要，恢复网络后 exactly-once 收敛；连续执行三轮 |
+| SYNC-010 | 安全 | APK/repo secret scan、Auto Backup/device-transfer 排除、401 后 token 仅在持久清除成功时终止 retry |
+
+本轮收敛只允许执行 JVM、lint、APK 构建和静态安全检查，不部署、不使用 ADB/真机，也不启动云端服务；因此 SYNC-006 至 SYNC-010 中需要 staging/真机/PC-off 的部分保持未覆盖并关联 `BUG-010`。
 
 ## 5. MCP/API 回归
 

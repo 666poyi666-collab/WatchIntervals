@@ -29,12 +29,15 @@
 - Android 13+ 会在首次训练前请求通知权限，确保前台训练通知可见
 - 最多 200 条完整训练历史，包含距离、实际步数、平均心率、计划和轨迹点；手表端可查看详情、轨迹和删除记录
 - 独立 `phone` 伴侣 App：局域网 mDNS 自动发现、六位码配对；本地计划库支持新建、命名、分组、保存、再次编辑和同步，训练控制与历史分区显示
+- `phone` 内置未发布的加密 V2 同步闭环：计划、计划库元数据和训练摘要使用 AES-256-GCM，持久保存 outbox/cursor/conflict/projection，并由 WorkManager 在联网后补偿；本阶段不包含配置 UI
 - 手表首页按页面方向进入训练历史和训练计划；训练数据为第一页，实时轨迹固定在其右侧页，并支持双向跟手返回
 - 手表 `8765` 配对 API 与电脑本地 stdio MCP，可由 ChatGPT 查询计划/记录/完整轨迹并开始、暂停、继续或结束训练
 
 ## 手机伴侣与本地 MCP
 
 当前传输以同一局域网直连为主，使用 `_watchintervals._tcp.` mDNS 自动发现；这比 BLE 更适合连续同步完整轨迹，BLE 保留为后续无 Wi-Fi 时的发现/兜底通道。手表首页显示六位配对码。远程启动训练需要允许后台定位，应用会在首次本地开始训练时单独请求该权限。
+
+加密 V2 云同步当前仅是本地 QA 候选：canonical 路由为 HTTPS `POST /sync/v2/exchange`，device token 与同步 root 由 Android Keystore 包装，删除只接受显式 tombstone。当前没有随本阶段交付 provisioning UI，也没有 staging、Keystore 真机、Doze/重启或 PC-off 验收证据，因此不得描述为已发布或已具备 PC-off 能力。
 
 ```powershell
 gradle :app:assembleDebug :phone:assembleDebug
