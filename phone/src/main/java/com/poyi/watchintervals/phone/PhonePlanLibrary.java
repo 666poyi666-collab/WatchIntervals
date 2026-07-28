@@ -44,6 +44,9 @@ final class PhonePlanLibrary {
     static synchronized JSONObject upsert(Context context, JSONObject profile) throws Exception {
         JSONObject library = load(context); JSONArray source = library.getJSONArray("plans"), result = new JSONArray();
         String id = profile.optString("id"); if (id.isEmpty()) id = UUID.randomUUID().toString();
+        if (EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID.equals(id)) {
+            throw new IllegalArgumentException("reserved_plan_id");
+        }
         String groupName = profile.optString("group", "我的计划").trim(); if (groupName.isEmpty()) groupName = "我的计划";
         String groupId = ensureGroup(library.getJSONArray("groups"), groupName);
         JSONObject item = new JSONObject(profile.toString()).put("id", id).put("groupId", groupId); item.remove("group");
@@ -225,7 +228,10 @@ final class PhonePlanLibrary {
             confirmed.put(value.put("acknowledged", true)
                     .put("confirmedAt", System.currentTimeMillis()));
         }
-        if (changed) save(context, library.put("deletedPlanIds", confirmed));
+        if (changed) {
+            save(context, library.put("deletedPlanIds", confirmed));
+            EncryptedWatchSync.syncAsync(context);
+        }
     }
 
     private static JSONObject migrate(Context context) {
@@ -263,7 +269,12 @@ final class PhonePlanLibrary {
             JSONObject plan = sourcePlans.optJSONObject(i); if (plan == null || plan.optString("name").trim().isEmpty()) continue;
             JSONArray stages = plan.optJSONArray("stages"); if (stages == null || stages.length() == 0) continue;
             String groupId = plan.optString("groupId"); if (!groupIds.contains(groupId)) groupId = ensureGroup(groups, plan.optString("group", "我的计划"));
-            String id = plan.optString("id"); if (id.isEmpty()) id = UUID.randomUUID().toString(); if (!planIds.add(id)) continue;
+            String id = plan.optString("id");
+            if (id.isEmpty()) id = UUID.randomUUID().toString();
+            else if (EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID.equals(id)) {
+                id = stableId("plan", "reserved:" + i + ":" + plan.optString("name"));
+            }
+            if (!planIds.add(id)) continue;
             JSONObject normalizedPlan = new JSONObject(plan.toString()); normalizedPlan.remove("group");
             plans.put(normalizedPlan.put("id", id).put("groupId", groupId)
                     .put("updatedAt", plan.optLong("updatedAt", System.currentTimeMillis())).put("revision", Math.max(1, plan.optLong("revision", 1))));

@@ -241,6 +241,32 @@ public class EncryptedWatchSyncTest {
                 .getJSONObject(0).getString("state"));
     }
 
+    @Test public void acknowledgementMismatchRollsBackEveryInMemoryChange() throws Exception {
+        JSONObject first = leasedMutation("first", "lease-mismatch");
+        JSONObject second = leasedMutation("second", "lease-mismatch");
+        JSONObject state = EncryptedWatchSync.Store.fresh()
+                .put("bootstrapComplete", true)
+                .put("outbox", new JSONArray().put(first).put(second))
+                .put("entities", new JSONObject()
+                        .put("plan\u0000first", localEntity("first"))
+                        .put("plan\u0000second", localEntity("second")));
+        EncryptedWatchSync.Store store = EncryptedWatchSync.Store.forTesting(state);
+        JSONObject valid = acknowledgement(first, "first");
+        JSONObject mismatched = acknowledgement(second, "wrong-entity");
+        JSONObject response = response(new JSONArray().put(valid).put(mismatched),
+                new JSONArray(), new JSONArray(), "c1");
+
+        assertThrows(IllegalStateException.class,
+                () -> store.apply(response, "lease-mismatch", List.of()));
+        JSONObject committed = store.snapshotForTesting();
+        assertTrue(committed.isNull("cursor"));
+        assertEquals(2, committed.getJSONArray("outbox").length());
+        assertEquals(0, committed.getJSONObject("entities")
+                .getJSONObject("plan\u0000first").getInt("confirmedRevision"));
+        assertEquals("inflight", committed.getJSONArray("outbox")
+                .getJSONObject(0).getString("state"));
+    }
+
     @Test public void planDeleteRequiresRootAuthenticatedMetadataTombstone() throws Exception {
         JSONObject entities = new JSONObject();
         assertFalse(EncryptedWatchSync.hasAuthenticatedPlanDelete(entities, "plan-delete"));
@@ -266,6 +292,28 @@ public class EncryptedWatchSyncTest {
                 .put("changedAt", "2026-07-28T00:00:00.000Z")
                 .put("originDeviceId", DEVICE_ID)
                 .put("operationId", mutation.getString("opId"));
+    }
+
+    private static JSONObject leasedMutation(String entityId, String leaseId) throws Exception {
+        JSONObject mutation = EncryptedWatchSync.mutation(root(), "plan", entityId, 0,
+                "upsert", new JSONObject().put("name", entityId));
+        return mutation.put("localFingerprint", entityId + "-fingerprint")
+                .put("state", "inflight").put("leaseId", leaseId)
+                .put("leaseExpiresAt", 99_999L).put("attemptCount", 0)
+                .put("createdAt", 1L).put("updatedAt", 1L).put("error", JSONObject.NULL);
+    }
+
+    private static JSONObject localEntity(String entityId) throws Exception {
+        return new JSONObject().put("entityType", "plan").put("entityId", entityId)
+                .put("confirmedRevision", 0).put("confirmedFingerprint", JSONObject.NULL)
+                .put("deleted", false).put("payload", new JSONObject().put("name", entityId));
+    }
+
+    private static JSONObject acknowledgement(JSONObject mutation, String entityId)
+            throws Exception {
+        return new JSONObject().put("outcome", "acknowledged")
+                .put("opId", mutation.getString("opId")).put("entityType", "plan")
+                .put("entityId", entityId).put("operation", "upsert").put("revision", 1);
     }
 
     private static JSONObject response(JSONArray acknowledgements, JSONArray conflicts,

@@ -19,7 +19,7 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 基线日期 | 2026-07-28 |
+| 基线日期 | 2026-07-25 |
 | 手表应用 | `app`，`com.poyi.watchintervals`，`0.17.0`（27） |
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.10.1`（11） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |

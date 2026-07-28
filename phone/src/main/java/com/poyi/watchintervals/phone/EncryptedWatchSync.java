@@ -863,6 +863,19 @@ final class EncryptedWatchSync {
         synchronized ApplyResult apply(JSONObject response, String leaseId,
                                        List<MaterializedChange> changes)
                 throws Exception {
+            JSONObject committedState = state;
+            state = new JSONObject(committedState.toString());
+            try {
+                return applyCopy(response, leaseId, changes);
+            } catch (Exception failure) {
+                state = committedState;
+                throw failure;
+            }
+        }
+
+        private ApplyResult applyCopy(JSONObject response, String leaseId,
+                                      List<MaterializedChange> changes)
+                throws Exception {
             JSONObject entities = state.getJSONObject("entities");
             JSONArray outbox = state.getJSONArray("outbox");
             JSONArray nextOutbox = new JSONArray();
@@ -989,8 +1002,9 @@ final class EncryptedWatchSync {
                 projectionKeys.add(pending.getString(index));
             }
             projectionKeys.sort(Comparator.comparingInt(entityKey ->
-                    entityKey.equals(key("plan", PLAN_LIBRARY_ENTITY_ID)) ? 0 : 1));
+                    entityKey.equals(key("plan", PLAN_LIBRARY_ENTITY_ID)) ? 1 : 0));
             JSONArray deferred = new JSONArray();
+            List<String> confirmedDeletes = new ArrayList<>();
             boolean projected = false;
             for (String entityKey : projectionKeys) {
                 JSONObject entity = entities.optJSONObject(entityKey);
@@ -1011,12 +1025,15 @@ final class EncryptedWatchSync {
                         continue;
                     }
                     PhonePlanLibrary.deletePlanFromSync(applicationContext, entityId);
-                    PhonePlanLibrary.confirmSyncDelete(applicationContext, entityId);
+                    confirmedDeletes.add(entityId);
                 } else {
                     PhonePlanLibrary.upsertFromSync(applicationContext,
                             entity.getJSONObject("payload"));
                 }
                 projected = true;
+            }
+            for (String entityId : confirmedDeletes) {
+                PhonePlanLibrary.confirmSyncDelete(applicationContext, entityId);
             }
             state.put("projectionPending", deferred);
             if (projected) state.put("watchProjectionPending", true);

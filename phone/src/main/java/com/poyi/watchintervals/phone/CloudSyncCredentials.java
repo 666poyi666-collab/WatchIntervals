@@ -56,7 +56,6 @@ final class CloudSyncCredentials {
     private static final String ROOT_FINGERPRINT = "root_fingerprint";
     private static final String APPROVAL_REQUEST_NONCE = "approval_request_nonce";
     private static final String APPROVAL_REQUEST_EXPIRES_AT = "approval_request_expires_at";
-    private static final String LEGACY_PREFS = "cloud_snapshot_sync";
     private static final String KEY_ALIAS = "poyi.watchintervals.encrypted-sync.v1";
     private static final String TRANSFER_KEY_ALIAS = "poyi.watchintervals.encrypted-sync.transfer.v1";
     private static final String SYNC_STATE = "state";
@@ -98,9 +97,6 @@ final class CloudSyncCredentials {
             }
             boolean saved = editor.commit();
             if (saved) {
-                // A legacy upload-only secret must never become a bidirectional device credential.
-                context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE).edit()
-                        .remove("sync_key").remove("endpoint").apply();
                 if (deviceChanged) deleteTransferKey();
                 if (readyForSync(context)) EncryptedWatchSyncWorker.schedule(context);
                 else EncryptedWatchSyncWorker.cancel(context);

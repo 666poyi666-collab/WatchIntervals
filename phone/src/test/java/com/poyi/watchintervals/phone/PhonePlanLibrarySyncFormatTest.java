@@ -47,4 +47,16 @@ public class PhonePlanLibrarySyncFormatTest {
         assertTrue(metadata.getJSONArray("deletedPlanIds").getJSONObject(0)
                 .getBoolean("acknowledged"));
     }
+
+    @Test public void reservedMetadataIdIsRemappedDuringNormalization() throws Exception {
+        JSONObject plan = new JSONObject().put("id", EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID)
+                .put("name", "旧计划").put("group", "我的计划")
+                .put("stages", new JSONArray().put(new JSONObject()
+                        .put("kind", "RUN").put("unit", "TIME").put("target", 60)));
+        JSONObject normalized = PhonePlanLibrary.normalizeForTesting(new JSONObject()
+                .put("groups", new JSONArray()).put("plans", new JSONArray().put(plan))
+                .put("selectedPlanId", EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID));
+        assertFalse(EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID.equals(
+                normalized.getJSONArray("plans").getJSONObject(0).getString("id")));
+    }
 }
