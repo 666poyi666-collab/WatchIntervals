@@ -162,6 +162,41 @@ final class WorkoutFileStore implements AutoCloseable {
         readHeart(new File(directory, HEART), times, values, Integer.MAX_VALUE);
     }
 
+    static final class HeartWindow {
+        final ArrayList<Long> times = new ArrayList<>();
+        final ArrayList<Integer> values = new ArrayList<>();
+    }
+
+    /** Streams the file while retaining only the latest valid samples for a bounded live chart. */
+    HeartWindow readRecentHeart(int maximum) {
+        return readRecentHeart(new File(directory, HEART), maximum);
+    }
+
+    static HeartWindow readRecentHeart(File file, int maximum) {
+        HeartWindow window = new HeartWindow();
+        if (maximum <= 0) return window;
+        if (!file.isFile()) return window;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(file), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                try {
+                    JSONObject item = new JSONObject(line);
+                    int value = item.optInt("value");
+                    long time = item.optLong("time");
+                    if (value < 25 || value > 240 || time <= 0) continue;
+                    window.times.add(time);
+                    window.values.add(value);
+                    if (window.values.size() > maximum) {
+                        window.times.remove(0);
+                        window.values.remove(0);
+                    }
+                } catch (Exception ignored) { /* Ignore a damaged trailing line. */ }
+            }
+        } catch (Exception ignored) {}
+        return window;
+    }
+
     synchronized void discard() {
         try { close(); } catch (Exception ignored) {}
         deleteTree(directory);

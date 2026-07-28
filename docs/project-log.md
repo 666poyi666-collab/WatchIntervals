@@ -455,3 +455,45 @@
 - 持久化复核继续修复 `BUG-034`：BLE pairing/LAN 和 Gateway API token 从 plaintext SharedPreferences 首次读取时迁入 Android Keystore AES-GCM；两模块禁用 Auto Backup，Phone 另保留逐项 exclusion；两端公开 boot receiver 不再接受自定义 watchdog，app-private alarm 改投递到 `exported=false` receiver。损坏 sync state/计划库以及 root/device 切换前的 state 均先保留本地隔离备份，不再静默丢弃。
 - 远端计划不再以 `catch ignored` 写 projection：接受的 plan change 与 cursor 同时进入 `projectionPending`，同步 state 落盘后再幂等更新计划库并清队列；崩溃、commit 失败或无效 metadata 会在下次网络前重放/阻断，避免 cursor 已前进而 UI 永久漏数据。
 - 自动化：新增 `EncryptedWatchSyncTest`、`WatchSyncKeyPackagesTest`、`PhonePlanLibrarySyncFormatTest`；完整 `gradlew test lint :app:assembleDebug :phone:assembleDebug` 为 140 tasks 成功，Watch MCP pytest 为 12 passed，Watch Worker `npm test` 为 48 tests 全通过，平台 `-ManifestStrict` 为 6 个有效 manifest、0 contract/registry gap。错误的 unittest 命令会得到 0 tests，测试文档已改为项目 venv 的 pytest。本批次尚未执行 staging、远端迁移、真实手机 Keystore/分享流程、Doze/boot、第二设备或 PC-off 测试，也未部署任何 Cloudflare 资源；manifest 继续保持 `supportsPcOff=false`。
+
+## 2026-07-29：手表端全界面 Apple Watch 运动视觉重构（REQ-UI-007）
+
+- 用户以高密度户外跑步仪表截图重新确认方向：主页交互结构不变，但手表端每一屏都要进入同一 Apple Watch 运动视觉体系。本轮严格保留主页三屏横向 pager、训练五屏顺序、默认综合仪表页、训练中防退出、长按结束与二次确认，以及 `WorkoutService` 的唯一状态所有权。
+- `Ui` 升级为统一视觉层：AMOLED 纯黑、Apple 中性灰阶、exercise 绿/配速蓝/时间黄/热量橙/心率红语义色、宽体表格数字、状态胶囊、代码自绘跑者图标、指标单元和真实心率趋势。没有引入 Apple 字体或 SF Symbols 资产；无有效心率时曲线保持空白，不生成装饰性假数据。
+- 主页三屏、计划选择/详情/确认、准备与倒计时、训练控制/综合仪表/训练数据/阶段/轨迹、公里分段/阶段切换/结束确认、历史列表/详情全部重排。综合仪表按参考图同屏呈现计时、距离、当前配速、心率、步频、热量、累计爬升、心率区间与趋势；平均/最高等统计移到相邻训练数据页，既提高首屏密度也不删除 REQ-DATA-014 字段。
+- OWW221 378×496 覆盖安装并逐屏截图：主页三屏、长计划列表、计划详情、准备、训练五屏、结束确认、历史列表与含真实心率样本的历史详情均无文字/底部安全区/按钮裁切；无 GPS、无心率和无轨迹分支保持真实降级。临时启动的零距离 UI 测试记录已立即删除，历史恢复原有 2 条。
+- 本地门禁：`gradlew test lint :app:assembleDebug :phone:assembleDebug` 共 140 tasks 成功；`WorkoutFileStoreTest` 新增最近 48 个真实心率样本流式恢复用例；Markdown 本地链接与 `git diff --check` 通过。未覆盖户外移动轨迹、实时佩戴心率、权限拒绝、倒计时逐帧和极端系统字体，发布前仍按 WT-001/005/012/018/020 补测。
+
+## 2026-07-29：跑者图形与运动级交互性能第二轮（REQ-UI-008、BUG-035）
+
+- 用户复核首轮真机后指出两个直接问题：关节式跑者小图标仍显得怪且丑，页面滑动和轨迹显示仍有掉帧。本轮不改变主页三屏、训练五屏和默认综合仪表 index 1，只处理图形品质、触摸反馈与渲染负载。
+- 对 OWW221 上 `com.heytap.wearable.sports` 4.0.79 系统运动应用做本地静态比对：`TossViewPager` 使用 paging touch slop、quintic ease-out 和相邻页保留；系统跑者是粗实心轮廓；`RecordTrailView` 复用 Paint、预计算坐标后批量画线，重地图在形成轨迹画面后可移除。项目只采用这些实现原则，没有复制厂商 path、图片、字体、坐标或反编译代码，APK/JADX 产物继续留在临时目录且不进入 Git。
+- `Ui.WorkoutGlyph` 改为前倾躯干、加权圆帽四肢的独立实心剪影，删除干扰轮廓的速度线；所有真实操作统一 0.94 按压缩放、回弹和触觉反馈。准备页 3-2-1-GO 每拍重新缩放入场并触发 clock-tick 触觉，不再只是静态换字。
+- `WatchPagerLayout` 改用 quintic ease-out、paging touch slop 和约 210–267 ms 吸附；页码固定在玻璃底部，由连续滚动进度驱动位置和拉伸。吸附中触摸会接管仍有明显余量的运动，接近终点则完成当前吸附，避免点击子控件后永久停在半页。首页三张低频静态页只在空闲预热相邻层；训练五页不做整页缓存。
+- 训练的 1 Hz UI tick 在拖动/吸附期间延期，停稳后补快照，并只更新当前可见页；隐藏轨迹页调用 `snapshot(false)`，不再每秒复制两组完整坐标数组。`HeartTrace` 对相同样本短路，渐变只在尺寸变化时重建；首页历史速览限制最近 4 条，避免恢复前台时最多创建 200 行。
+- `WorkoutRouteView` 改为轨迹页停稳后才创建/恢复地图，离页暂停；折线、起终点 Marker 与位图只建一次，前缀一致时增量追加新点，镜头最多每 5 秒无动画重算。历史详情先显示指标，500 ms 后再激活地图，减少首屏卡顿。
+- 性能证据严格区分阶段：同一主页 280 ms 手势旧版为 562 帧、289 jank（51.42%）、P50 16 ms、P90 34 ms；中间优化版为 563 帧、205 jank（36.41%）、P50 12 ms、P90 29 ms。最终候选暖态主页 `0↔1` 为 592 帧、119 jank（20.10%）、P50 10 ms、P90 22 ms；三屏往返为 619 帧、88 jank（14.22%）、P50 10 ms、P90 18 ms；训练五屏为 619 帧、193 jank（31.18%）、P50 12 ms、P90 23 ms。首轮安装冷启动为 44.29% jank，单独记录为热身成本，不与暖态 A/B 混算。
+- WT-021 真机回归：吸附中点按回到完整训练数据页；主页/训练固定页码跟手，准备倒计时退后台后可重新开始；空轨迹状态和既有 2.43 km 历史路线均可见，测试训练记录已删除，索引恢复 2 条。此处只验证渲染与性能，不代表地图地理呈现已获用户确认。BUG-035 现标记 Verified；户外连续 GNSS、佩戴心率和功耗仍按 WT-005、WT-018、BLE-010 补测。
+
+## 2026-07-29：训练页 378×496 黑下巴修复（REQ-UI-009、BUG-036）
+
+- 真机复核发现综合仪表在 y≈379 后只剩固定页码，约 90–100px 被 weighted 空 View 留成黑下巴；训练数据和阶段页也使用了同类“固定高度内容 + 空撑杆”结构。
+- 综合仪表将剩余高度交给真实心率趋势面板，无样本仅显示佩戴提示；训练数据三行均分剩余高度，阶段环容器弹性伸展。控制页保留上下对称留白，轨迹页保持地图/空状态填满。
+- OWW221 378×496 覆盖安装并逐屏截图，综合仪表内容到 y=469、固定页码 y=483，训练数据和阶段页无裁切或底部空撑杆。补测 0m 训练已删除，历史索引恢复原有 2 条。
+- 完整门禁 `gradlew test lint :app:assembleDebug :phone:assembleDebug` 为 140 tasks 成功；Markdown 文档本地链接与 `git diff --check` 通过。最终 Watch debug APK SHA-256 为 `62F9D92DEC9BC30C10A7FF6EE724504036F270B42F2C63B6D8432DBC2A04728A`。
+
+## 2026-07-29：真实轨迹地图尺度收敛（REQ-UI-010、BUG-037）
+
+- 首次把“地图太大、比例尺缩小”理解成需要缩远，做出 54dp 大留白和 zoom 16.5 候选；用户澄清实际是在河边绕圈，需要跑道/河岸级细节，而当前画面只剩国道高速，该候选随即作废。
+- 复核真实点位和瓦片发现，坐标确实位于源潭河区域；问题是 `style=7` 道路栅格叠加反色灰度滤镜后水体与堤岸被压没。卫星细节层候选能还原地物，但用户明确否决卫星图，因此没有保留。
+- 恢复道路瓦片并使用语义暗色矩阵保留蓝灰河道和浅色细路，按暖色色差额外压暗主干道；后续从系统资源确认历史地图固定 164dp、包络横向 15dp/纵向 25dp、线宽 3dp。当前实现将 230dp 历史卡片收为 164dp，osmdroid 统一取 25dp 包络、zoom 18/18，轨迹为 2.6dp 细线。
+- OWW221 用原有 2.43km、280 点记录生成候选：无卫星影像，路线与起终点完整、坐标未改写、历史保持 2 条；但用户仍明确判定地图错误，因此该候选仅证明轨迹层可见，BUG-037 未关闭。
+- 完整双模块 `test lint assembleDebug` 为 140 tasks 成功；最终 Watch debug APK SHA-256 为 `B55C31DA6212FC3F459C50C2ED23C58ABD5B8678BABBA22BE6A578DB617B6ECA`。
+
+## 2026-07-29：恢复历史轨迹并纠正定位精度结论（REQ-DATA-016、BUG-038）
+
+- 用户指出隐藏历史轨迹是错误处理。复核确认 2.43km 记录的 280 个点虽然标记 `legacy` 且共同携带 125m，但该值缺少“逐点原始 accuracy”还是“旧 schema 迁移默认值”的来源证据，不能据此删掉整条路线。
+- 删除未经户外验证的 35/50m 新门禁和对应测试，恢复既有 200m 获取/150m 连续跟踪边界；历史详情再次把全部原始合法点交给地图。OWW221 覆盖安装后原有 280 点轨迹已恢复，历史仍为 2 条，文件没有被改写。
+- 室内准备页 20 秒观察到 24 个卫星候选，但 GPS provider 的 last location 为 null、position accuracy reports 为 0；因此没有证据宣称当前已低于 35m，也不能用迁移元数据断言硬件达不到。开阔户外真实 fix 仍是 WT-024 的必要条件。
+- 对系统健康服务和运动包继续静态审计：HealthKit 注册的 `ExerciseSessionRecord` 只有时间、运动类型、时长、热量和心率摘要，不含路线；旧路线单独保存在 `sport_gps` 表，经 `ISportAidlInterface2.queryGpsByte(sportId)` 返回。BinderProvider 虽声明 normal permission，但内部还执行调用包签名校验，第三方签名会被 `signature not match` 拒绝。
+- 系统运动路线页使用 Baidu Map SDK 7.5.9 与自定义暗色样式，本应用当前受 Baidu AK 包名/签名绑定限制而使用 AMap 道路瓦片降级。两套 provider、坐标转换和道路层级不同，之前把不一致全部归因于 125m 精度同样不成立；BUG-037/038 保持 In Progress。

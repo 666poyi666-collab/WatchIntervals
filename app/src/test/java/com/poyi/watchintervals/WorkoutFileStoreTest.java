@@ -8,6 +8,7 @@ import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
 import org.junit.Test;
 
 public class WorkoutFileStoreTest {
@@ -55,6 +56,25 @@ public class WorkoutFileStoreTest {
 
         assertEquals(first.getBytes(StandardCharsets.UTF_8).length, offset);
         assertEquals(first, new String(Files.readAllBytes(samples.toPath()), StandardCharsets.UTF_8));
+        WorkoutFileStore.deleteTree(directory);
+    }
+
+    @Test public void recentHeartWindowKeepsOnlyValidLatestLines() throws Exception {
+        File directory = Files.createTempDirectory("workout-store").toFile();
+        File samples = new File(directory, "heart.ndjson");
+        String content = "{\"time\":1,\"value\":80}\n"
+                + "damaged\n"
+                + "{\"time\":2,\"value\":81}\n"
+                + "{\"time\":3,\"value\":82}\n"
+                + "{\"time\":4,\"value\":999}\n"
+                + "{\"time\":5,\"value\":241}\n"
+                + "{\"time\":6,\"value\":24}\n";
+        Files.write(samples.toPath(), content.getBytes(StandardCharsets.UTF_8));
+
+        WorkoutFileStore.HeartWindow window = WorkoutFileStore.readRecentHeart(samples, 2);
+        assertEquals(Arrays.asList(2L, 3L), window.times);
+        assertEquals(Arrays.asList(81, 82), window.values);
+
         WorkoutFileStore.deleteTree(directory);
     }
 }

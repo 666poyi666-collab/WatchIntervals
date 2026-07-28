@@ -48,6 +48,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private static final String CHANNEL = "active_workout";
     private static final int NOTIFICATION_ID = 42;
     private static final String SESSION_PREF = "active_session"; // Legacy schema 2 recovery only.
+    private static final float MAX_GPS_ACQUISITION_ACCURACY_METERS = 200f;
+    private static final float MAX_GPS_TRACKING_ACCURACY_METERS = 150f;
     // Keep acquisition feedback separate from the stricter quality used to add distance.
     // Wearable GNSS often reports a coarse candidate fix before it converges.
     // OWW221's system GPS commonly exposes 100-150 m fixes while the sports
@@ -55,8 +57,6 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     // The previous 60 m gate discarded every real sample, so distance, pace and
     // route all stayed empty.  Accept the wearable fix, then rely on the existing
     // displacement, elapsed-time and speed filters to reject stationary jumps.
-    private static final float MAX_GPS_ACQUISITION_ACCURACY_METERS = 200f;
-    private static final float MAX_GPS_TRACKING_ACCURACY_METERS = 150f;
     private static final float MIN_MOVING_SPEED_MPS = 0.15f;
     private static final float MAX_MOVING_SPEED_MPS = 15f;
     private static final long MAX_LOCATION_GAP_MILLIS = 60_000L;
@@ -68,6 +68,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private static final int MAX_HEART_RATE = 240;
     private static final float DEFAULT_STEP_LENGTH_METERS = 0.72f;
     private static final int MAX_STEP_DELTA = 50;
+    private static final double[] EMPTY_ROUTE = new double[0];
     private final LocalBinder binder = new LocalBinder();
     private ArrayList<Stage> stages = new ArrayList<>();
     private int stageIndex = 0;
@@ -96,6 +97,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private final ArrayList<Location> routePoints = new ArrayList<>();
     private final ArrayList<Long> heartSampleTimes = new ArrayList<>();
     private final ArrayList<Integer> heartSampleValues = new ArrayList<>();
+    /** Last accepted, file-backed heart samples for the live UI; never populated by refresh ticks. */
+    private final ArrayList<Integer> recentHeartRates = new ArrayList<>();
     private final org.json.JSONArray completedStageResults = new org.json.JSONArray();
     private long lastRecordedHeartAt;
     private WorkoutFileStore fileStore;
@@ -391,7 +394,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         latestGpsLocation = null;
         latestGpsLocationIsCached = false;
         routePoints.clear();
-        heartSampleTimes.clear(); heartSampleValues.clear();
+        heartSampleTimes.clear(); heartSampleValues.clear(); recentHeartRates.clear();
         metrics.resetWindow(); speedFusion.reset();
         while (routePointCountBySource.length() > 0) routePointCountBySource.remove(routePointCountBySource.keys().next());
         while (sourceTransitions.length() > 0) sourceTransitions.remove(0);
@@ -479,6 +482,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                 lastDistanceSource=checkpoint.optString("lastDistanceSource");accuracyTotal=checkpoint.optDouble("accuracyTotal");accuracySamples=checkpoint.optInt("accuracySamples");accuracyMinimum=(float)checkpoint.optDouble("accuracyMinimum",Float.MAX_VALUE);accuracyMaximum=(float)checkpoint.optDouble("accuracyMaximum");
                 restoreStageResults(checkpoint.optJSONArray("stageResults") == null ? null : checkpoint.optJSONArray("stageResults").toString());
                 routePoints.clear(); routePoints.addAll(fileStore.readRoutePreview(600));
+                WorkoutFileStore.HeartWindow heartWindow = fileStore.readRecentHeart(48);
+                restoreRecentHeartRates(heartWindow.times, heartWindow.values);
                 liveStats = new LiveWorkoutStats();
                 liveStats.restore(totalMeters, activeMillis);
                 running = true; preparing = false; historySaved = false;
@@ -527,6 +532,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         latestGpsLocationIsCached = false;
         restoreRoute(preferences.getString("route", null));
         restoreHeartSamples(preferences.getString("heart_samples_json", null));
+        restoreRecentHeartRates(heartSampleTimes, heartSampleValues);
         restoreStageResults(preferences.getString("stage_results_json", null));
         planDistanceMeters = totalMeters;
         openNewFileStore();
@@ -536,6 +542,22 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         } catch (Exception error) { android.util.Log.w("WorkoutService", "Legacy checkpoint migration failed", error); }
         getSharedPreferences(SESSION_PREF, MODE_PRIVATE).edit().clear().apply();
         return true;
+    }
+
+    private void restoreRecentHeartRates(java.util.List<Long> times, java.util.List<Integer> values) {
+        recentHeartRates.clear();
+        lastRecordedHeartAt = 0;
+        if (times == null || values == null) return;
+        int count = Math.min(times.size(), values.size());
+        for (int index = 0; index < count; index++) {
+            Integer value = values.get(index);
+            Long time = times.get(index);
+            if (value == null || value < MIN_HEART_RATE || value > MAX_HEART_RATE
+                    || time == null || time <= 0) continue;
+            recentHeartRates.add(value);
+            if (recentHeartRates.size() > 48) recentHeartRates.remove(0);
+            lastRecordedHeartAt = time;
+        }
     }
 
     private void saveSession(boolean force) {
@@ -1179,6 +1201,16 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private Stage currentStage() { return stages.get(Math.min(stageIndex, stages.size() - 1)); }
 
     public synchronized Snapshot snapshot() {
+        return snapshot(true);
+    }
+
+    /**
+     * UI snapshot with optional route materialization. The route can contain hundreds of points;
+     * copying both coordinate arrays every second while the far route page is hidden creates
+     * avoidable allocation and GC pressure on the watch. API/history callers keep the full
+     * {@link #snapshot()} behavior, while the live pager asks for coordinates only when settled.
+     */
+    public synchronized Snapshot snapshot(boolean includeRoute) {
         // A notification/task restore can bind before an inactive service has
         // received ACTION_START. Keep that transient state renderable instead
         // of indexing an empty stage list.
@@ -1201,12 +1233,16 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         int visibleHeartRate = hasFreshHeartRate() ? heartRate : 0;
         boolean heartSensorWarmingUp = heartSensorRegistered && heartSensorStartedElapsed > 0
                 && SystemClock.elapsedRealtime() - heartSensorStartedElapsed <= HEART_RATE_STALE_MILLIS;
-        double[] routeLatitudes = new double[routePoints.size()];
-        double[] routeLongitudes = new double[routePoints.size()];
-        for (int index = 0; index < routePoints.size(); index++) {
-            Location point = routePoints.get(index);
-            routeLatitudes[index] = point.getLatitude();
-            routeLongitudes[index] = point.getLongitude();
+        double[] routeLatitudes = EMPTY_ROUTE;
+        double[] routeLongitudes = EMPTY_ROUTE;
+        if (includeRoute && !routePoints.isEmpty()) {
+            routeLatitudes = new double[routePoints.size()];
+            routeLongitudes = new double[routePoints.size()];
+            for (int index = 0; index < routePoints.size(); index++) {
+                Location point = routePoints.get(index);
+                routeLatitudes[index] = point.getLatitude();
+                routeLongitudes[index] = point.getLongitude();
+            }
         }
         return new Snapshot(stage.name(), stage.unit, stage.target, stageProgressValue, remaining, Math.min(1, progress), Math.min(stageIndex + 1, stages.size()), stages.size(), totalMeters, activeMillis, visibleHeartRate,
                 gpsPermissionGranted, gpsProviderEnabled, gpsUpdatesRegistered, hasTrackableFreshGpsFix(), latestGpsLocationIsCached, waitingForGps, gpsSatelliteCount, gpsSatellitesUsed, lastGpsAccuracyMeters,
@@ -1234,6 +1270,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
 
     private Snapshot.LiveView buildLiveView(int visibleHeartRate) {
         LiveWorkoutStats.Split lastSplit = liveStats.lastSplit();
+        int[] heartTrace = new int[recentHeartRates.size()];
+        for (int index = 0; index < recentHeartRates.size(); index++) heartTrace[index] = recentHeartRates.get(index);
         return new Snapshot.LiveView(
                 LiveWorkoutStats.averagePaceSecondsPerKm(totalMeters, activeMillis),
                 liveStats.cadenceSpm(activeMillis),
@@ -1244,7 +1282,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                 liveStats.splitCount(),
                 lastSplit == null ? 0 : lastSplit.index,
                 lastSplit == null ? 0 : lastSplit.paceSecondsPerKm,
-                liveStats.elevationGainMeters());
+                liveStats.elevationGainMeters(),
+                heartTrace);
     }
 
     private String remainingText() {
@@ -1333,8 +1372,16 @@ public class WorkoutService extends Service implements LocationListener, SensorE
 
     private void recordHeartSample(int value) {
         if (!running || paused || value < MIN_HEART_RATE || value > MAX_HEART_RATE) return;
-        long now = System.currentTimeMillis(); if (now - lastRecordedHeartAt < 1000L) return;
+        long now = System.currentTimeMillis();
+        if (lastRecordedHeartAt > 0
+                && (now < lastRecordedHeartAt || now - lastRecordedHeartAt > HEART_RATE_STALE_MILLIS)) {
+            recentHeartRates.clear();
+            lastRecordedHeartAt = 0;
+        }
+        if (now - lastRecordedHeartAt < 1000L) return;
         lastRecordedHeartAt = now;
+        recentHeartRates.add(value);
+        if (recentHeartRates.size() > 48) recentHeartRates.remove(0);
         try { if (fileStore != null) fileStore.appendHeart(now, value); }
         catch (Exception error) { android.util.Log.w("WorkoutService", "Heart sample append failed", error); }
     }
@@ -1395,10 +1442,11 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             public final int averageHeartRate, maxHeartRate, heartRateZone;
             public final int splitCount, lastSplitIndex, lastSplitPaceSecondsPerKm;
             public final double elevationGainMeters;
+            public final int[] heartRateTrace;
             LiveView(int avgPaceSecondsPerKm, int cadenceSpm, int calories,
                      int averageHeartRate, int maxHeartRate, int heartRateZone,
                      int splitCount, int lastSplitIndex, int lastSplitPaceSecondsPerKm,
-                     double elevationGainMeters) {
+                     double elevationGainMeters, int[] heartRateTrace) {
                 this.avgPaceSecondsPerKm = avgPaceSecondsPerKm;
                 this.cadenceSpm = cadenceSpm;
                 this.calories = calories;
@@ -1409,6 +1457,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
                 this.lastSplitIndex = lastSplitIndex;
                 this.lastSplitPaceSecondsPerKm = lastSplitPaceSecondsPerKm;
                 this.elevationGainMeters = elevationGainMeters;
+                this.heartRateTrace = heartRateTrace == null ? new int[0] : heartRateTrace;
             }
         }
         Snapshot(String stageName, Stage.Unit unit, int stageTarget, double stageProgressValue, long remaining, double progress, int stageNumber, int stageCount, double totalMeters, long activeMillis, int heartRate,

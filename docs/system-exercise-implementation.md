@@ -78,7 +78,7 @@
 
 调用链为：应用客户端配置 -> HealthKit Binder -> `ExerciseService` -> protobuf 请求 -> MCU 通道。系统运动 APK 的页面不是数据源；真正的运动会话由健康服务维护。
 
-系统运动包本身还保留一条旧私有架构路径：它请求 `BIND_HEALTH`、`BIND_CONN`、`BINDER_PROVIDER`、`PROVIDER`、`WRITE_SECURE_SETTINGS` 等系统权限，并直接引用隐藏的 `android.app.wear.McuManager`。`SportPrepareActivity` 入口受 signature 权限 `heytap.wearable.permission.sports.VIEW` 保护，因此第三方包不能通过启动原生页面获得同等访问级别。
+系统运动包本身还保留一条旧私有架构路径：它请求 `BIND_HEALTH`、`BIND_CONN`、`BINDER_PROVIDER`、`PROVIDER`、`WRITE_SECURE_SETTINGS` 等系统权限，并直接引用隐藏的 `android.app.wear.McuManager`。`SportPrepareActivity` 入口受 signature 权限 `heytap.wearable.permission.sports.VIEW` 保护，因此第三方包不能通过启动原生页面获得同等访问级别。旧运动路线不在 HealthKit `ExerciseSessionRecord` 中，而保存在健康服务 Room 表 `sport_gps`（`sport_id/time_stamp/longitude/latitude/speed/state`），系统运动通过 `ISportAidlInterface2.queryGpsByte(sportId)` 读取压缩 protobuf。`com.heytap.wearable.health.binder` 虽使用 normal permission，`BinderProvider.query()` 仍会校验调用包签名，第三方签名会被 `signature not match` 拒绝，不能把这条私有 Binder 当作可用的历史导入接口。
 
 ## 系统运动的定位路径
 

@@ -3,34 +3,46 @@ package com.poyi.watchintervals;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RadialGradient;
+import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.PathInterpolator;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 final class Ui {
     private static final float WATCH_SCALE = 1.35f;
+    private static final PathInterpolator PRESS_IN = new PathInterpolator(.2f, 0f, .2f, 1f);
+    private static final PathInterpolator PRESS_OUT = new PathInterpolator(.33f, 0f, .67f, 1f);
 
     // OWW221 is AMOLED: a pure black background leaves those pixels physically unlit, which both
     // saves panel power on a long run and gives the bezel-less look a real product has. The old
     // near-black (7,9,10) lit every pixel on screen for no visual gain.
     static final int BLACK = Color.rgb(0, 0, 0);
-    static final int PANEL = Color.rgb(19, 21, 24);
-    static final int PANEL_ACTIVE = Color.rgb(32, 35, 39);
-    static final int WHITE = Color.rgb(245, 246, 247);
-    static final int MUTED = Color.rgb(138, 145, 153);
-    static final int LINE = Color.rgb(42, 45, 50);
-    static final int LIME = Color.rgb(190, 255, 71);
-    static final int YELLOW = Color.rgb(255, 215, 52);
-    static final int CYAN = Color.rgb(83, 218, 229);
-    static final int AMBER = Color.rgb(255, 183, 66);
-    static final int RED = Color.rgb(255, 86, 79);
-    static final int GREEN = Color.rgb(70, 226, 129);
+    // Watch workout palette: true-black canvas, Apple's neutral greys and one semantic colour
+    // per metric family. Bright colours are reserved for live data, never used as decoration.
+    static final int PANEL = Color.rgb(28, 28, 30);
+    static final int PANEL_ACTIVE = Color.rgb(44, 44, 46);
+    static final int WHITE = Color.rgb(248, 248, 250);
+    static final int MUTED = Color.rgb(142, 142, 147);
+    static final int LINE = Color.rgb(44, 44, 46);
+    static final int LIME = Color.rgb(184, 255, 47);
+    static final int YELLOW = Color.rgb(255, 214, 10);
+    static final int CYAN = Color.rgb(100, 210, 255);
+    static final int AMBER = Color.rgb(255, 159, 10);
+    static final int RED = Color.rgb(255, 55, 95);
+    static final int GREEN = Color.rgb(48, 209, 88);
 
     // One type scale instead of per-screen magic numbers, so headings and labels line up across
     // the home, training, plan and history pages. Figure sizes are measured off the stock
@@ -85,9 +97,9 @@ final class Ui {
         return view;
     }
 
-    // Roboto Condensed ships with AOSP; on watch dials it is the difference between "settings
-    // screen" and "sports instrument". Falls back to default sans if the vendor stripped it.
-    private static final Typeface NUMERAL_FACE = Typeface.create("sans-serif-condensed", Typeface.BOLD);
+    // A broad tabular face is closer to the legibility of a modern sports watch than condensed
+    // digits. It also keeps punctuation such as 00:18:42 from visually collapsing.
+    private static final Typeface NUMERAL_FACE = Typeface.create("sans-serif", Typeface.BOLD);
 
     /**
      * Big-figure text: condensed bold with tabular digits so a ticking value keeps a fixed width
@@ -161,7 +173,322 @@ final class Ui {
         view.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.argb(45, 255, 255, 255)), background(context, background, 16), null));
         view.setClickable(true);
         view.setFocusable(true);
+        pressable(view);
         return view;
+    }
+
+    /**
+     * Tactile press treatment shared by real actions. The scale animation runs on RenderThread;
+     * it adds physical feedback without forcing a layout pass or allocating a new drawable.
+     */
+    static <T extends View> T pressable(T view) {
+        view.setOnTouchListener((target, event) -> {
+            if (!target.isEnabled()) return false;
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                target.animate().cancel();
+                target.animate().scaleX(0.94f).scaleY(0.94f).alpha(0.90f)
+                        .setDuration(66L)
+                        .setInterpolator(PRESS_IN)
+                        .start();
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                target.animate().cancel();
+                target.animate().scaleX(1f).scaleY(1f).alpha(1f)
+                        .setDuration(150L)
+                        .setInterpolator(PRESS_OUT)
+                        .start();
+                // A pager/ScrollView cancels the child once the gesture becomes navigation.
+                // Confirm only a real in-bounds release, so swiping from a large button does not
+                // feel like an accidental tap.
+                if (action == MotionEvent.ACTION_UP
+                        && event.getX() >= 0f && event.getX() < target.getWidth()
+                        && event.getY() >= 0f && event.getY() < target.getHeight()) {
+                    target.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                }
+            }
+            // Let the View keep ownership of click/long-click and ripple semantics.
+            return false;
+        });
+        return view;
+    }
+
+    /** One-shot entrance for countdown figures and transient workout cards. */
+    static void popIn(View view) {
+        view.animate().cancel();
+        view.setAlpha(0.18f);
+        view.setScaleX(0.72f);
+        view.setScaleY(0.72f);
+        view.setVisibility(View.VISIBLE);
+        view.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(220L).setInterpolator(PRESS_OUT).start();
+    }
+
+    /** Compact live-state chip used beside a page title or GPS readout. */
+    static TextView chip(Context context, String value, int foreground, int background) {
+        TextView view = bold(context, value, LABEL, foreground);
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(dp(context, 10), 0, dp(context, 10), 0);
+        view.setBackground(background(context, background, 14));
+        return view;
+    }
+
+    /**
+     * Apple-style metric cell: semantic label first, large tabular figure below, small unit on
+     * the same baseline. The caller receives the figure so the one-second refresh only updates
+     * the changing value.
+     */
+    static TextView metricCell(Context context, LinearLayout row, String label, String initial,
+                               String unit, int color, float figureSize) {
+        LinearLayout cell = new LinearLayout(context);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        TextView caption = bold(context, label, LABEL, color);
+        cell.addView(caption, new LinearLayout.LayoutParams(-1, dp(context, 18)));
+        LinearLayout figure = new LinearLayout(context);
+        figure.setGravity(Gravity.BOTTOM);
+        TextView value = numeral(context, initial, figureSize, color);
+        figure.addView(value, new LinearLayout.LayoutParams(-2, -1));
+        if (unit != null && !unit.isEmpty()) {
+            TextView suffix = text(context, unit, LABEL, MUTED);
+            LinearLayout.LayoutParams suffixParams = new LinearLayout.LayoutParams(-2, -1);
+            suffixParams.leftMargin = dp(context, 5);
+            figure.addView(suffix, suffixParams);
+        }
+        cell.addView(figure, new LinearLayout.LayoutParams(-1, 0, 1));
+        row.addView(cell, new LinearLayout.LayoutParams(0, -1, 1));
+        return value;
+    }
+
+    /**
+     * Filled runner silhouette, drawn from independent geometry rather than a font or vendor
+     * asset. A solid torso and weighted limbs stay readable at 34dp; the old jointed stick figure
+     * looked broken because every bend had equal visual weight.
+     */
+    static final class WorkoutGlyph extends View {
+        private final Paint disc = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint body = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint limbs = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path torso = new Path();
+        private final Path limbPath = new Path();
+        private final int color;
+        private float left, top, scale;
+
+        WorkoutGlyph(Context context, int color) {
+            super(context);
+            this.color = color;
+            body.setStyle(Paint.Style.FILL);
+            limbs.setStyle(Paint.Style.STROKE);
+            limbs.setStrokeCap(Paint.Cap.ROUND);
+            limbs.setStrokeJoin(Paint.Join.ROUND);
+            // Every current instance sits next to a semantic title or inside an already-labelled
+            // card. Announcing a generic "训练" for the decoration only duplicates TalkBack.
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        private float x(float value) { return left + value * scale; }
+        private float y(float value) { return top + value * scale; }
+
+        @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+            scale = Math.min(width, height);
+            left = (width - scale) / 2f;
+            top = (height - scale) / 2f;
+
+            disc.setShader(new RadialGradient(x(.46f), y(.43f), scale * .52f,
+                    Color.argb(58, Color.red(color), Color.green(color), Color.blue(color)),
+                    Color.argb(12, Color.red(color), Color.green(color), Color.blue(color)),
+                    Shader.TileMode.CLAMP));
+            // Keep the runner a single high-contrast silhouette. A directional gradient looked
+            // muddy at the watch's 34dp sizes and made the feet disappear against the dark disc.
+            body.setShader(null);
+            limbs.setShader(null);
+            body.setColor(color);
+            limbs.setColor(color);
+            limbs.setStrokeWidth(scale * .092f);
+
+            // Forward-leaning torso: broad shoulder, narrow waist and a visible hip weight.
+            torso.reset();
+            torso.moveTo(x(.52f), y(.30f));
+            torso.cubicTo(x(.47f), y(.32f), x(.41f), y(.42f), x(.40f), y(.49f));
+            torso.cubicTo(x(.39f), y(.55f), x(.44f), y(.59f), x(.50f), y(.57f));
+            torso.lineTo(x(.61f), y(.43f));
+            torso.cubicTo(x(.66f), y(.36f), x(.60f), y(.28f), x(.52f), y(.30f));
+            torso.close();
+
+            limbPath.reset();
+            // Rear arm pulls back while the front arm drives forward.
+            limbPath.moveTo(x(.49f), y(.36f));
+            limbPath.lineTo(x(.37f), y(.40f));
+            limbPath.lineTo(x(.27f), y(.51f));
+            limbPath.moveTo(x(.58f), y(.35f));
+            limbPath.lineTo(x(.68f), y(.44f));
+            limbPath.lineTo(x(.79f), y(.34f));
+            // One leg extends behind, the other lifts and reaches forward.
+            limbPath.moveTo(x(.47f), y(.54f));
+            limbPath.lineTo(x(.38f), y(.69f));
+            limbPath.lineTo(x(.24f), y(.80f));
+            limbPath.moveTo(x(.50f), y(.55f));
+            limbPath.lineTo(x(.62f), y(.63f));
+            limbPath.lineTo(x(.79f), y(.61f));
+
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            if (scale <= 0f) return;
+            canvas.drawCircle(getWidth() / 2f, getHeight() / 2f, scale * .48f, disc);
+            canvas.drawPath(limbPath, limbs);
+            canvas.drawPath(torso, body);
+            canvas.drawCircle(x(.62f), y(.21f), scale * .078f, body);
+        }
+    }
+
+    static WorkoutGlyph workoutGlyph(Context context, int color) {
+        return new WorkoutGlyph(context, color);
+    }
+
+    /**
+     * A truthful live heart-rate trace. Samples are added from real service snapshots only;
+     * missing heart data leaves the graph empty instead of drawing a decorative fake waveform.
+     */
+    static final class HeartTrace extends View {
+        private static final int MAX_SAMPLES = 48;
+        private final int[] samples = new int[MAX_SAMPLES];
+        private final int[] scratch = new int[MAX_SAMPLES];
+        private int count;
+        private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint panel = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint guide = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path linePath = new Path();
+        private final Path fillPath = new Path();
+        private boolean pathDirty = true;
+        private boolean expanded;
+
+        HeartTrace(Context context) {
+            super(context);
+            line.setStyle(Paint.Style.STROKE);
+            line.setStrokeWidth(dp(context, 2.4f));
+            line.setStrokeCap(Paint.Cap.ROUND);
+            line.setStrokeJoin(Paint.Join.ROUND);
+            line.setColor(RED);
+            fill.setStyle(Paint.Style.FILL);
+            panel.setColor(Color.rgb(12, 14, 16));
+            guide.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            guide.setTextSize(11f * scale(context));
+        }
+
+        void setExpanded(boolean value) {
+            if (expanded == value) return;
+            expanded = value;
+            pathDirty = true;
+            invalidate();
+        }
+
+        void addSample(int value) {
+            if (value < 25 || value > 240) return;
+            if (count < MAX_SAMPLES) samples[count++] = value;
+            else {
+                System.arraycopy(samples, 1, samples, 0, MAX_SAMPLES - 1);
+                samples[MAX_SAMPLES - 1] = value;
+            }
+            pathDirty = true;
+            invalidate();
+        }
+
+        void setSamples(java.util.List<Integer> values) {
+            if (values == null || values.isEmpty()) { applyScratch(0); return; }
+            int size = values.size();
+            int nextCount = 0;
+            for (int slot = 0; slot < Math.min(MAX_SAMPLES, size); slot++) {
+                int index = Math.min(size - 1,
+                        Math.round(slot * (size - 1f) / Math.max(1, Math.min(MAX_SAMPLES, size) - 1)));
+                Integer value = values.get(index);
+                if (value != null && value >= 25 && value <= 240) scratch[nextCount++] = value;
+            }
+            applyScratch(nextCount);
+        }
+
+        void setSamples(int[] values) {
+            if (values == null || values.length == 0) { applyScratch(0); return; }
+            int size = values.length;
+            int nextCount = 0;
+            for (int slot = 0; slot < Math.min(MAX_SAMPLES, size); slot++) {
+                int index = Math.min(size - 1,
+                        Math.round(slot * (size - 1f) / Math.max(1, Math.min(MAX_SAMPLES, size) - 1)));
+                int value = values[index];
+                if (value >= 25 && value <= 240) scratch[nextCount++] = value;
+            }
+            applyScratch(nextCount);
+        }
+
+        private void applyScratch(int nextCount) {
+            if (nextCount == count) {
+                boolean equal = true;
+                for (int index = 0; index < nextCount; index++) {
+                    if (samples[index] != scratch[index]) { equal = false; break; }
+                }
+                if (equal) return;
+            }
+            if (nextCount > 0) System.arraycopy(scratch, 0, samples, 0, nextCount);
+            count = nextCount;
+            pathDirty = true;
+            invalidate();
+        }
+
+        @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+            fill.setShader(new LinearGradient(0, 0, 0, Math.max(1, height),
+                    Color.argb(90, 255, 55, 95), Color.TRANSPARENT, Shader.TileMode.CLAMP));
+            pathDirty = true;
+        }
+
+        private void rebuildPaths() {
+            linePath.reset();
+            fillPath.reset();
+            pathDirty = false;
+            if (count < 2 || getWidth() <= 0 || getHeight() <= 0) return;
+            int min = samples[0], max = samples[0];
+            for (int index = 1; index < count; index++) {
+                min = Math.min(min, samples[index]);
+                max = Math.max(max, samples[index]);
+            }
+            int spread = Math.max(12, max - min);
+            float top = expanded ? dp(getContext(), 25) : dp(getContext(), 3);
+            float bottom = expanded ? dp(getContext(), 7) : dp(getContext(), 3);
+            float usableHeight = Math.max(1f, getHeight() - top - bottom);
+            for (int index = 0; index < count; index++) {
+                float x = count == 1 ? 0 : index * (getWidth() - 1f) / (count - 1f);
+                float y = top + (max - samples[index] + (spread - (max - min)) / 2f)
+                        * usableHeight / spread;
+                if (index == 0) {
+                    linePath.moveTo(x, y);
+                    fillPath.moveTo(x, getHeight() - bottom);
+                    fillPath.lineTo(x, y);
+                } else {
+                    linePath.lineTo(x, y);
+                    fillPath.lineTo(x, y);
+                }
+            }
+            fillPath.lineTo(getWidth(), getHeight() - bottom);
+            fillPath.close();
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            if (expanded) {
+                float radius = dp(getContext(), 12);
+                canvas.drawRoundRect(0, 0, getWidth(), getHeight(), radius, radius, panel);
+                guide.setColor(MUTED);
+                guide.setTextAlign(Paint.Align.LEFT);
+                canvas.drawText("实时心率趋势", dp(getContext(), 10), dp(getContext(), 17), guide);
+                if (count < 2) {
+                    guide.setColor(Color.rgb(112, 112, 118));
+                    guide.setTextAlign(Paint.Align.RIGHT);
+                    canvas.drawText("佩戴后显示真实曲线",
+                            getWidth() - dp(getContext(), 10), dp(getContext(), 17), guide);
+                }
+            }
+            if (pathDirty) rebuildPaths();
+            if (count < 2) return;
+            canvas.drawPath(fillPath, fill);
+            canvas.drawPath(linePath, line);
+        }
     }
 
     static TextView iconAction(Context context, int drawableRes, String description, int foreground, int background) {
@@ -283,6 +610,7 @@ final class Ui {
         view.setClickable(true);
         view.setFocusable(true);
         view.setContentDescription("返回");
+        pressable(view);
         return view;
     }
 
@@ -416,6 +744,16 @@ final class Ui {
     static void setTextIfChanged(TextView view, CharSequence value) {
         if (view == null || value == null) return;
         if (!value.toString().contentEquals(view.getText())) view.setText(value);
+    }
+
+    /** Avoids invalidating text display lists when a semantic colour has not changed. */
+    static void setTextColorIfChanged(TextView view, int color) {
+        if (view != null && view.getCurrentTextColor() != color) view.setTextColor(color);
+    }
+
+    static void setTextAndColorIfChanged(TextView view, CharSequence value, int color) {
+        setTextIfChanged(view, value);
+        setTextColorIfChanged(view, color);
     }
 
     static int stageColor(Stage.Kind kind) {
