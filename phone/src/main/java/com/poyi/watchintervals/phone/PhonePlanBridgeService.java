@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.nsd.NsdManager;
@@ -409,6 +410,20 @@ public class PhonePlanBridgeService extends Service {
             return PhoneSyncOutbox.drain(this, connection);
         } catch (Exception error) {
             return object("state", "pending", "reason", "watch_unavailable");
+        }
+    }
+
+    static void pushCurrentLibraryToWatch(Context context) throws Exception {
+        WatchConnectionManager connection = WatchConnectionManager.get(context);
+        if (!connection.identity().isPaired()) {
+            throw new IllegalStateException("watch_not_paired");
+        }
+        PhoneSyncOutbox.enqueueLibrary(context, PhonePlanLibrary.load(context),
+                "upsert", "library");
+        JSONObject result = PhoneSyncOutbox.drain(context, connection);
+        if (!"synced".equals(result.optString("state")) ||
+                result.optInt("pendingOperations", 1) != 0) {
+            throw new IllegalStateException("watch_projection_pending");
         }
     }
 

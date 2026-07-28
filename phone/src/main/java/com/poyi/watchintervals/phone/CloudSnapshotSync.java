@@ -16,6 +16,6 @@ final class CloudSnapshotSync {
     }
 
     static boolean sync(Context context) {
-        return EncryptedWatchSync.sync(context);
+        return EncryptedWatchSync.sync(context) == EncryptedWatchSync.SyncOutcome.SUCCESS;
     }
 }

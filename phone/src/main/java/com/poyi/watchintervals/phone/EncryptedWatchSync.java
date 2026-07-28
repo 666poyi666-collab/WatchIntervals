@@ -2,6 +2,7 @@ package com.poyi.watchintervals.phone;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
@@ -41,12 +43,15 @@ import org.json.JSONObject;
  * metadata; raw route, heart, sleep and credential data are intentionally never collected here.
  */
 final class EncryptedWatchSync {
+    enum SyncOutcome { SUCCESS, TRANSIENT_FAILURE, PERMANENT_FAILURE }
+
     static final int PROTOCOL_VERSION = 2;
     static final int ENVELOPE_VERSION = 1;
     static final String PRODUCT = "watch";
     static final String PLAN_LIBRARY_ENTITY_ID = "sync:library";
     private static final String PREFS = "encrypted_watch_sync_v1";
     private static final String STATE = "state";
+    private static final String TAG = "EncryptedWatchSync";
     private static final int MAX_MUTATIONS = 25;
     private static final int MAX_PAGES = 100;
     private static final long LEASE_MILLIS = 45_000L;
@@ -56,34 +61,76 @@ final class EncryptedWatchSync {
     private static final int MAX_CIPHERTEXT_CHARS = 900_000;
     private static final int MAX_CONFLICTS = 1_000;
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
+    private static final String[] WORKOUT_SUMMARY_FIELDS = {
+            "schemaVersion", "id", "startedAt", "endedAt", "durationMs",
+            "distanceMeters", "steps", "averageHeartRate", "plan", "planName",
+            "planGroup", "planRequirement", "stageResults", "averagePaceSecondsPerKm",
+            "averageCadenceSpm", "elevationGainMeters", "splits",
+            "bestPaceSecondsPerKm", "heartRateRange"
+    };
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
+    private static final AtomicBoolean RERUN_REQUESTED = new AtomicBoolean();
 
     private EncryptedWatchSync() {}
 
     static void syncAsync(Context context) {
         Context app = context.getApplicationContext();
-        if (!CloudSyncCredentials.readyForSync(app)) return;
-        EncryptedWatchSyncWorker.ensurePeriodic(app);
+        RERUN_REQUESTED.set(true);
         if (!RUNNING.compareAndSet(false, true)) return;
         WORKER.execute(() -> {
+            boolean allowImmediateRerun = true;
             try {
-                if (!sync(app)) EncryptedWatchSyncWorker.schedule(app);
+                while (RERUN_REQUESTED.getAndSet(false)) {
+                    if (!CloudSyncCredentials.readyForSync(app)) {
+                        EncryptedWatchSyncWorker.cancel(app);
+                        allowImmediateRerun = false;
+                        break;
+                    }
+                    EncryptedWatchSyncWorker.ensurePeriodic(app);
+                    SyncOutcome outcome = sync(app);
+                    if (outcome == SyncOutcome.TRANSIENT_FAILURE) {
+                        RERUN_REQUESTED.set(false);
+                        EncryptedWatchSyncWorker.schedule(app);
+                        allowImmediateRerun = false;
+                        break;
+                    }
+                    if (outcome == SyncOutcome.PERMANENT_FAILURE) {
+                        RERUN_REQUESTED.set(false);
+                        EncryptedWatchSyncWorker.cancel(app);
+                        allowImmediateRerun = false;
+                        break;
+                    }
+                }
             } finally {
                 RUNNING.set(false);
+                if (allowImmediateRerun && RERUN_REQUESTED.get()) syncAsync(app);
             }
         });
     }
 
-    static boolean sync(Context context) {
+    static SyncOutcome sync(Context context) {
+        synchronized (CloudSyncCredentials.class) {
+            return syncWithCredentialsLocked(context);
+        }
+    }
+
+    private static SyncOutcome syncWithCredentialsLocked(Context context) {
         CloudSyncCredentials.Config config = CloudSyncCredentials.load(context);
-        if (!config.configured()) return false;
+        if (!config.configured()) return SyncOutcome.PERMANENT_FAILURE;
         try {
             String deviceId = config.deviceId();
-            SecretKey root = new SecretKeySpec(CloudSyncCredentials.rootKey(context, deviceId), "AES");
+            byte[] rootBytes = CloudSyncCredentials.rootKey(context, deviceId);
+            SecretKey root;
+            try {
+                root = new SecretKeySpec(rootBytes, "AES");
+            } finally {
+                Arrays.fill(rootBytes, (byte) 0);
+            }
             Store store = Store.load(context);
             store.reconcilePlanProjections(context);
+            store.reconcileWatchProjection(context);
             if (!store.bootstrapComplete()) {
                 boolean completed = false;
                 for (int page = 0; page < MAX_PAGES; page++) {
@@ -98,6 +145,7 @@ final class EncryptedWatchSync {
                     List<MaterializedChange> changes = materialize(response, root);
                     store.apply(response, pull.leaseId, changes);
                     store.reconcilePlanProjections(context);
+                    store.reconcileWatchProjection(context);
                     if (!response.getBoolean("hasMore")) {
                         store.markBootstrapComplete();
                         completed = true;
@@ -119,9 +167,10 @@ final class EncryptedWatchSync {
                 List<MaterializedChange> changes = materialize(response, root);
                 store.apply(response, claim.leaseId, changes);
                 store.reconcilePlanProjections(context);
+                store.reconcileWatchProjection(context);
                 if (!response.getBoolean("hasMore") && claim.mutations.length() == 0) {
                     CloudSyncCredentials.recordResult(context, System.currentTimeMillis(), "");
-                    return true;
+                    return SyncOutcome.SUCCESS;
                 }
             }
             throw new IllegalStateException("sync_pagination_did_not_converge");
@@ -131,18 +180,39 @@ final class EncryptedWatchSync {
                 // WorkManager only wastes battery and obscures the actionable state. Keep the
                 // encrypted local state intact so an explicitly approved replacement can recover
                 // it, but discard the unusable bearer immediately.
-                CloudSyncCredentials.clearRevokedDeviceToken(context);
-                CloudSyncCredentials.recordResult(context, 0, "device_token_revoked");
-                return false;
+                CloudSyncCredentials.RevokedTokenResult retired =
+                        CloudSyncCredentials.clearRevokedDeviceToken(
+                                context, config.deviceToken);
+                CloudSyncCredentials.recordResult(context, 0,
+                        retired == CloudSyncCredentials.RevokedTokenResult.CLEARED
+                                ? "device_token_revoked"
+                                : retired == CloudSyncCredentials.RevokedTokenResult.TOKEN_CHANGED
+                                        ? "device_token_rotated_during_request"
+                                        : "device_token_revoke_persist_failed");
+                return retired == CloudSyncCredentials.RevokedTokenResult.CLEARED
+                        ? SyncOutcome.PERMANENT_FAILURE : SyncOutcome.TRANSIENT_FAILURE;
             }
-            CloudSyncCredentials.recordResult(context, 0, failure.getClass().getSimpleName());
-            return false;
+            String diagnostic = failure instanceof CloudHttpException
+                    ? failure.getMessage() : failure.getClass().getSimpleName();
+            CloudSyncCredentials.recordResult(context, 0, diagnostic);
+            return isPermanentFailure(failure)
+                    ? SyncOutcome.PERMANENT_FAILURE : SyncOutcome.TRANSIENT_FAILURE;
         }
     }
 
     static boolean isRevokedDeviceTokenFailure(Exception failure) {
         return failure instanceof CloudHttpException
                 && ((CloudHttpException) failure).statusCode == HttpURLConnection.HTTP_UNAUTHORIZED;
+    }
+
+    static boolean isPermanentFailure(Exception failure) {
+        if (failure instanceof IllegalArgumentException) return true;
+        return failure instanceof CloudHttpException &&
+                ((CloudHttpException) failure).statusCode >= 400 &&
+                ((CloudHttpException) failure).statusCode < 500 &&
+                ((CloudHttpException) failure).statusCode != 408 &&
+                ((CloudHttpException) failure).statusCode != 425 &&
+                ((CloudHttpException) failure).statusCode != 429;
     }
 
     private static SyncInput collectLocalEntities(Context context) {
@@ -165,9 +235,11 @@ final class EncryptedWatchSync {
             entities.put(key("plan", PLAN_LIBRARY_ENTITY_ID), new LocalEntity("plan",
                     PLAN_LIBRARY_ENTITY_ID, PhonePlanLibrary.syncMetadata(library)));
             result.deletedPlanIds.addAll(PhonePlanLibrary.pendingSyncDeletes(library));
-        } catch (Exception ignored) {
+        } catch (Exception deferred) {
             // A corrupt local library never implies a remote deletion. Its last durable cloud
             // state remains intact until a later local read can stage an explicit mutation.
+            Log.w(TAG, "plan collection deferred: " +
+                    deferred.getClass().getSimpleName());
         }
         try {
             WatchConnectionManager connection = WatchConnectionManager.get(context);
@@ -177,12 +249,16 @@ final class EncryptedWatchSync {
                     JSONObject workout = history.optJSONObject(index);
                     String id = workout == null ? "" : workout.optString("id");
                     if (workout != null && validEntityId(id)) {
-                        entities.put(key("workout", id), new LocalEntity("workout", id, copy(workout)));
+                        String entityId = workoutEntityId(id);
+                        entities.put(key("workout", entityId), new LocalEntity(
+                                "workout", entityId, workoutSummary(workout)));
                     }
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception deferred) {
             // Plan sync can continue when the watch is outside BLE/LAN range.
+            Log.w(TAG, "workout collection deferred: " +
+                    deferred.getClass().getSimpleName());
         }
         result.entities.addAll(entities.values());
         result.entities.sort(Comparator
@@ -190,6 +266,38 @@ final class EncryptedWatchSync {
                 .thenComparing(entity -> entity.entityType)
                 .thenComparing(entity -> entity.entityId));
         return result;
+    }
+
+    /** Keeps raw routes, per-sample heart data and future unknown fields off the encrypted plane. */
+    static JSONObject workoutSummary(JSONObject workout) throws Exception {
+        JSONObject summary = new JSONObject();
+        for (String field : WORKOUT_SUMMARY_FIELDS) {
+            if (workout.has(field)) summary.put(field, workout.get(field));
+        }
+        return summary;
+    }
+
+    static String workoutEntityId(String localWorkoutId) throws Exception {
+        if (!validEntityId(localWorkoutId)) {
+            throw new IllegalArgumentException("invalid_workout_id");
+        }
+        return "w:" + sha256(localWorkoutId);
+    }
+
+    static boolean hasAuthenticatedPlanDelete(JSONObject entities, String entityId) {
+        JSONObject metadata = entities.optJSONObject(key("plan", PLAN_LIBRARY_ENTITY_ID));
+        if (metadata == null || metadata.optBoolean("deleted", false) ||
+                !(metadata.opt("payload") instanceof JSONObject)) return false;
+        JSONArray tombstones = metadata.optJSONObject("payload")
+                .optJSONArray("deletedPlanIds");
+        if (tombstones == null) return false;
+        for (int index = 0; index < tombstones.length(); index++) {
+            JSONObject item = tombstones.optJSONObject(index);
+            String candidate = item == null ? tombstones.optString(index, "") :
+                    item.optString("id");
+            if (entityId.equals(candidate)) return true;
+        }
+        return false;
     }
 
     private static JSONObject exchange(CloudSyncCredentials.Config config, String deviceId,
@@ -246,10 +354,11 @@ final class EncryptedWatchSync {
             String entityType = change.getString("entityType");
             String entityId = change.getString("entityId");
             String operation = change.getString("operation");
-            int revision = change.getInt("revision");
+            long revision = change.getLong("revision");
             int keyVersion = change.getInt("keyVersion");
             String operationId = change.getString("operationId");
-            if (!validEntity(entityType, entityId) || revision < 1 || keyVersion < 1 ||
+            if (!validEntity(entityType, entityId) ||
+                    !validRevision(change.opt("revision"), 1L) || keyVersion < 1 ||
                     !validOperationId(operationId) ||
                     (!"upsert".equals(operation) && !"delete".equals(operation))) {
                 throw new IllegalArgumentException("invalid_encrypted_change");
@@ -332,9 +441,12 @@ final class EncryptedWatchSync {
     }
 
     static JSONObject mutation(SecretKey root, String entityType, String entityId,
-                               int baseRevision, String operation, JSONObject payload)
+                               long baseRevision, String operation, JSONObject payload)
             throws Exception {
-        int revision = baseRevision + 1;
+        if (!validRevision(baseRevision, 0L)) {
+            throw new IllegalArgumentException("invalid_base_revision");
+        }
+        long revision = Math.addExact(baseRevision, 1L);
         int keyVersion = 1;
         JSONObject aad = aad(entityType, entityId, operation, keyVersion, revision);
         JSONObject value = new JSONObject()
@@ -371,7 +483,7 @@ final class EncryptedWatchSync {
     }
 
     static JSONObject aad(String entityType, String entityId, String operation,
-                          int keyVersion, int revision) throws Exception {
+                          int keyVersion, long revision) throws Exception {
         return new JSONObject()
                 .put("envelopeVersion", ENVELOPE_VERSION)
                 .put("entityId", entityId)
@@ -433,7 +545,8 @@ final class EncryptedWatchSync {
         if (value == null || !value.matches("^c[0-9a-z]+$") || value.length() > 12) return false;
         try {
             long decoded = Long.parseLong(value.substring(1), 36);
-            return decoded >= 0 && decoded <= MAX_SAFE_INTEGER;
+            return decoded >= 0 && decoded <= MAX_SAFE_INTEGER &&
+                    ("c" + Long.toString(decoded, 36)).equals(value);
         } catch (NumberFormatException invalid) {
             return false;
         }
@@ -445,9 +558,7 @@ final class EncryptedWatchSync {
                 !validEntity(value.optString("entityType"), value.optString("entityId")) ||
                 !("upsert".equals(value.optString("operation")) ||
                         "delete".equals(value.optString("operation")))) return false;
-        Object revision = value.opt("revision");
-        return revision instanceof Number && ((Number) revision).longValue() >= 1 &&
-                ((Number) revision).longValue() <= MAX_SAFE_INTEGER;
+        return validRevision(value.opt("revision"), 1L);
     }
 
     private static boolean validConflict(JSONObject value) {
@@ -471,6 +582,14 @@ final class EncryptedWatchSync {
 
     private static boolean validSha256(String value) {
         return value != null && value.matches("^[0-9a-f]{64}$");
+    }
+
+    private static boolean validRevision(Object value, long minimum) {
+        if (!(value instanceof Number)) return false;
+        double numeric = ((Number) value).doubleValue();
+        long integral = ((Number) value).longValue();
+        return Double.isFinite(numeric) && numeric == integral && integral >= minimum &&
+                integral <= MAX_SAFE_INTEGER;
     }
 
     private static boolean validBase64Url(String value) {
@@ -528,10 +647,10 @@ final class EncryptedWatchSync {
         final String entityType;
         final String entityId;
         final String operation;
-        final int revision;
+        final long revision;
         final JSONObject payload;
         final String operationId;
-        MaterializedChange(String entityType, String entityId, String operation, int revision,
+        MaterializedChange(String entityType, String entityId, String operation, long revision,
                            JSONObject payload, String operationId) {
             this.entityType = entityType;
             this.entityId = entityId;
@@ -599,6 +718,8 @@ final class EncryptedWatchSync {
             else if (!(value.opt("conflicts") instanceof JSONArray)) throw new IllegalArgumentException("corrupt_conflicts");
             if (!value.has("projectionPending")) value.put("projectionPending", new JSONArray());
             else if (!(value.opt("projectionPending") instanceof JSONArray)) throw new IllegalArgumentException("corrupt_projection_queue");
+            if (!value.has("watchProjectionPending")) value.put("watchProjectionPending", false);
+            else if (!(value.opt("watchProjectionPending") instanceof Boolean)) throw new IllegalArgumentException("corrupt_watch_projection");
             if (!value.has("bootstrapComplete")) value.put("bootstrapComplete", false);
             else if (!(value.opt("bootstrapComplete") instanceof Boolean)) throw new IllegalArgumentException("corrupt_bootstrap");
             return value;
@@ -609,6 +730,7 @@ final class EncryptedWatchSync {
                 return new JSONObject().put("cursor", JSONObject.NULL).put("entities", new JSONObject())
                         .put("outbox", new JSONArray()).put("conflicts", new JSONArray())
                         .put("projectionPending", new JSONArray())
+                        .put("watchProjectionPending", false)
                         .put("bootstrapComplete", false);
             } catch (Exception impossible) {
                 throw new IllegalStateException(impossible);
@@ -650,7 +772,7 @@ final class EncryptedWatchSync {
                         hasInflight(outbox, entityKey) || hasBlockingConflict(outbox, entityKey)) continue;
                 removePending(outbox, entityKey);
                 JSONObject mutation = mutation(root, local.entityType, local.entityId,
-                        existing.optInt("confirmedRevision", 0), "upsert", local.payload);
+                        existing.optLong("confirmedRevision", 0), "upsert", local.payload);
                 enqueue(outbox, mutation, fingerprint);
             }
             // Absence from a local read is never a deletion. Only a user action that committed an
@@ -668,7 +790,7 @@ final class EncryptedWatchSync {
                         hasBlockingConflict(outbox, entityKey)) continue;
                 removePending(outbox, entityKey);
                 JSONObject mutation = mutation(root, "plan", entityId,
-                        existing.optInt("confirmedRevision", 0),
+                        existing.optLong("confirmedRevision", 0),
                         "delete", null);
                 existing.put("payload", JSONObject.NULL).put("localFingerprint", JSONObject.NULL)
                         .put("deleted", true).put("updatedAt", System.currentTimeMillis());
@@ -732,21 +854,57 @@ final class EncryptedWatchSync {
         synchronized ApplyResult apply(JSONObject response, String leaseId,
                                        List<MaterializedChange> changes)
                 throws Exception {
+            JSONObject committedState = state;
+            state = new JSONObject(committedState.toString());
+            try {
+                return applyCopy(response, leaseId, changes);
+            } catch (Exception failure) {
+                state = committedState;
+                throw failure;
+            }
+        }
+
+        private ApplyResult applyCopy(JSONObject response, String leaseId,
+                                      List<MaterializedChange> changes)
+                throws Exception {
             JSONObject entities = state.getJSONObject("entities");
             JSONArray outbox = state.getJSONArray("outbox");
             JSONArray nextOutbox = new JSONArray();
             Map<String, JSONObject> acknowledged = new HashMap<>();
             Map<String, JSONObject> rejected = new HashMap<>();
+            Set<String> leasedOperations = new HashSet<>();
+            for (int index = 0; index < outbox.length(); index++) {
+                JSONObject item = outbox.getJSONObject(index);
+                if (leaseId.equals(item.optString("leaseId")) &&
+                        "inflight".equals(item.optString("state"))) {
+                    leasedOperations.add(item.getString("opId"));
+                }
+            }
             Set<String> acknowledgedPlanDeletes = new HashSet<>();
             JSONArray acknowledgements = response.getJSONArray("acknowledged");
             for (int index = 0; index < acknowledgements.length(); index++) {
                 JSONObject ack = acknowledgements.getJSONObject(index);
-                acknowledged.put(ack.getString("opId"), ack);
+                String operationId = ack.getString("opId");
+                if (!leasedOperations.contains(operationId) ||
+                        acknowledged.put(operationId, ack) != null) {
+                    throw new IllegalStateException("unexpected_acknowledgement");
+                }
             }
             JSONArray responseConflicts = response.getJSONArray("conflicts");
             for (int index = 0; index < responseConflicts.length(); index++) {
                 JSONObject conflict = responseConflicts.getJSONObject(index);
-                rejected.put(conflict.getString("opId"), conflict);
+                String operationId = conflict.getString("opId");
+                if (!leasedOperations.contains(operationId) ||
+                        acknowledged.containsKey(operationId) ||
+                        rejected.put(operationId, conflict) != null) {
+                    throw new IllegalStateException("unexpected_conflict");
+                }
+            }
+            for (String operationId : leasedOperations) {
+                if (!acknowledged.containsKey(operationId) &&
+                        !rejected.containsKey(operationId)) {
+                    throw new IllegalStateException("mutation_outcome_missing");
+                }
             }
             JSONArray conflicts = state.getJSONArray("conflicts");
             for (int index = 0; index < outbox.length(); index++) {
@@ -754,8 +912,8 @@ final class EncryptedWatchSync {
                 String opId = item.getString("opId");
                 JSONObject ack = acknowledged.get(opId);
                 if (ack != null && leaseId.equals(item.optString("leaseId"))) {
-                    int expectedRevision = item.getInt("baseRevision") + 1;
-                    int confirmedRevision = ack.getInt("revision");
+                    long expectedRevision = Math.addExact(item.getLong("baseRevision"), 1L);
+                    long confirmedRevision = ack.getLong("revision");
                     if (confirmedRevision != expectedRevision ||
                             !item.getString("entityType").equals(ack.getString("entityType")) ||
                             !item.getString("entityId").equals(ack.getString("entityId")) ||
@@ -770,6 +928,8 @@ final class EncryptedWatchSync {
                     if ("plan".equals(item.getString("entityType")) &&
                             "delete".equals(item.getString("operation"))) {
                         acknowledgedPlanDeletes.add(item.getString("entityId"));
+                        enqueueProjection(key(item.getString("entityType"),
+                                item.getString("entityId")));
                     }
                     continue;
                 }
@@ -789,10 +949,11 @@ final class EncryptedWatchSync {
             for (MaterializedChange change : changes) {
                 String entityKey = key(change.entityType, change.entityId);
                 JSONObject existing = entities.optJSONObject(entityKey);
-                if (hasPending(nextOutbox, entityKey)) {
+                if (hasPending(nextOutbox, entityKey) ||
+                        hasBlockingConflict(nextOutbox, entityKey)) {
                     appendConflict(conflicts, new JSONObject().put("id", "remote-" + change.operationId)
                             .put("entityType", change.entityType).put("entityId", change.entityId)
-                            .put("reason", "REMOTE_CHANGE_WHILE_LOCAL_OUTBOX_PENDING")
+                            .put("reason", "REMOTE_CHANGE_WHILE_LOCAL_CANDIDATE_PENDING")
                             .put("remoteRevision", change.revision)
                             .put("remoteOperation", change.operation)
                             .put("remotePayload", change.payload == null
@@ -800,7 +961,7 @@ final class EncryptedWatchSync {
                             .put("createdAt", System.currentTimeMillis()));
                     continue;
                 }
-                if (existing != null && change.revision < existing.optInt("confirmedRevision", 0)) {
+                if (existing != null && change.revision < existing.optLong("confirmedRevision", 0)) {
                     throw new IllegalStateException("remote_revision_regressed");
                 }
                 JSONObject entity = existing == null ? new JSONObject() : existing;
@@ -833,6 +994,9 @@ final class EncryptedWatchSync {
             }
             projectionKeys.sort(Comparator.comparingInt(entityKey ->
                     entityKey.equals(key("plan", PLAN_LIBRARY_ENTITY_ID)) ? 1 : 0));
+            JSONArray deferred = new JSONArray();
+            List<String> confirmedDeletes = new ArrayList<>();
+            boolean projected = false;
             for (String entityKey : projectionKeys) {
                 JSONObject entity = entities.optJSONObject(entityKey);
                 if (entity == null || !"plan".equals(entity.optString("entityType"))) {
@@ -847,15 +1011,41 @@ final class EncryptedWatchSync {
                     PhonePlanLibrary.applySyncMetadata(applicationContext,
                             entity.getJSONObject("payload"));
                 } else if (deleted) {
+                    if (!hasAuthenticatedPlanDelete(entities, entityId)) {
+                        deferred.put(entityKey);
+                        continue;
+                    }
                     PhonePlanLibrary.deletePlanFromSync(applicationContext, entityId);
-                    PhonePlanLibrary.confirmSyncDelete(applicationContext, entityId);
+                    confirmedDeletes.add(entityId);
                 } else {
                     PhonePlanLibrary.upsertFromSync(applicationContext,
                             entity.getJSONObject("payload"));
                 }
+                projected = true;
             }
-            state.put("projectionPending", new JSONArray());
+            for (String entityId : confirmedDeletes) {
+                PhonePlanLibrary.confirmSyncDelete(applicationContext, entityId);
+            }
+            state.put("projectionPending", deferred);
+            if (projected) state.put("watchProjectionPending", true);
             save();
+        }
+
+        synchronized boolean reconcileWatchProjection(Context applicationContext)
+                throws Exception {
+            if (!state.optBoolean("watchProjectionPending", false)) return true;
+            try {
+                PhonePlanBridgeService.pushCurrentLibraryToWatch(applicationContext);
+                state.put("watchProjectionPending", false)
+                        .remove("watchProjectionLastError");
+                save();
+                return true;
+            } catch (Exception unavailable) {
+                state.put("watchProjectionLastError",
+                        unavailable.getClass().getSimpleName());
+                save();
+                return false;
+            }
         }
 
         synchronized JSONObject snapshotForTesting() throws Exception {

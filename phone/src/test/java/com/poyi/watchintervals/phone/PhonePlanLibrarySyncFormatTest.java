@@ -31,7 +31,33 @@ public class PhonePlanLibrarySyncFormatTest {
         assertFalse(PhonePlanLibrary.pendingSyncDeletes(normalized).contains("kept-plan"));
         assertTrue(PhonePlanLibrary.pendingSyncDeletes(normalized).contains("deleted-plan"));
         JSONObject metadata = PhonePlanLibrary.syncMetadata(normalized);
-        assertFalse(metadata.has("deletedPlanIds"));
+        assertEquals(1, metadata.getJSONArray("deletedPlanIds").length());
         assertEquals("kept-plan", metadata.getString("selectedPlanId"));
+    }
+
+    @Test public void acknowledgedTombstoneRemainsAuthenticatedButIsNotRestaged()
+            throws Exception {
+        JSONObject normalized = PhonePlanLibrary.normalizeForTesting(new JSONObject()
+                .put("revision", 10).put("groups", new JSONArray())
+                .put("plans", new JSONArray()).put("selectedPlanId", "")
+                .put("deletedPlanIds", new JSONArray().put(new JSONObject()
+                        .put("id", "deleted-plan").put("deletedAt", 2)
+                        .put("acknowledged", true).put("confirmedAt", 3))));
+        assertFalse(PhonePlanLibrary.pendingSyncDeletes(normalized).contains("deleted-plan"));
+        JSONObject metadata = PhonePlanLibrary.syncMetadata(normalized);
+        assertTrue(metadata.getJSONArray("deletedPlanIds").getJSONObject(0)
+                .getBoolean("acknowledged"));
+    }
+
+    @Test public void reservedMetadataIdIsRemappedDuringNormalization() throws Exception {
+        JSONObject plan = new JSONObject().put("id", EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID)
+                .put("name", "旧计划").put("group", "我的计划")
+                .put("stages", new JSONArray().put(new JSONObject()
+                        .put("kind", "RUN").put("unit", "TIME").put("target", 60)));
+        JSONObject normalized = PhonePlanLibrary.normalizeForTesting(new JSONObject()
+                .put("groups", new JSONArray()).put("plans", new JSONArray().put(plan))
+                .put("selectedPlanId", EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID));
+        assertFalse(EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID.equals(
+                normalized.getJSONArray("plans").getJSONObject(0).getString("id")));
     }
 }

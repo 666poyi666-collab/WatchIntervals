@@ -26,9 +26,11 @@ final class WatchPairingStore {
             }
             // Legacy plaintext entry: migrate atomically.
             byte[] plain=BleSecurity.decode(item.optString("secret"));
-            if(plain!=null&&plain.length>0)migrateEntry(context,items,phoneId,item,plain,
+            if(plain==null||plain.length==0)return null;
+            boolean migrated=migrateEntry(context,items,phoneId,item,plain,
                     item.optString("lanCredential"));
-            return plain;
+            java.util.Arrays.fill(plain,(byte)0);
+            return migrated?secret(context,phoneId):null;
         }catch(Exception ignored){return null;}
     }
 
@@ -46,8 +48,10 @@ final class WatchPairingStore {
             String plain=item.optString("lanCredential");
             byte[] secretBytes=null;
             try{secretBytes=BleSecurity.decode(item.optString("secret"));}catch(Exception ignored){}
-            if(secretBytes!=null&&secretBytes.length>0)migrateEntry(context,items,phoneId,item,secretBytes,plain);
-            return plain;
+            if(secretBytes==null||secretBytes.length==0)return "";
+            boolean migrated=migrateEntry(context,items,phoneId,item,secretBytes,plain);
+            java.util.Arrays.fill(secretBytes,(byte)0);
+            return migrated?lanCredential(context,phoneId):"";
         }catch(Exception ignored){return "";}
     }
 
@@ -69,7 +73,12 @@ final class WatchPairingStore {
                         item.optString("enc_lan"),item.optString("enc_lan_nonce"),aad(phoneId));
                 stored=decrypted==null?"":new String(decrypted,StandardCharsets.UTF_8);
             }else{
-                stored=item.optString("lanCredential");
+                byte[] legacySecret=null;
+                try{legacySecret=BleSecurity.decode(item.optString("secret"));}catch(Exception ignored){}
+                boolean migrated=legacySecret!=null&&legacySecret.length>0&&migrateEntry(
+                        context,items,phoneId,item,legacySecret,item.optString("lanCredential"));
+                if(legacySecret!=null)java.util.Arrays.fill(legacySecret,(byte)0);
+                stored=migrated?lanCredential(context,phoneId):"";
             }
             if(credential.equals(stored))return true;
         }
@@ -82,15 +91,10 @@ final class WatchPairingStore {
         WatchSecretStore.EncryptedValue encSecret=WatchSecretStore.encrypt(secret,aad(phoneId));
         WatchSecretStore.EncryptedValue encLan=WatchSecretStore.encrypt(
                 lanCredential.getBytes(StandardCharsets.UTF_8),aad(phoneId));
-        if(encSecret!=null&&encLan!=null){
-            entry.put("v",VERSION_ENCRYPTED)
-                    .put("enc_secret",encSecret.ciphertext).put("enc_secret_nonce",encSecret.nonce)
-                    .put("enc_lan",encLan.ciphertext).put("enc_lan_nonce",encLan.nonce);
-        }else{
-            // Keystore unavailable: fall back to plaintext (watch hardware limitation).
-            Log.w(TAG,"keystore_unavailable_fallback_plaintext phoneId="+phoneId.substring(0,Math.min(8,phoneId.length())));
-            entry.put("secret",BleSecurity.encode(secret)).put("lanCredential",lanCredential);
-        }
+        if(encSecret==null||encLan==null)throw new IllegalStateException("keystore_unavailable");
+        entry.put("v",VERSION_ENCRYPTED)
+                .put("enc_secret",encSecret.ciphertext).put("enc_secret_nonce",encSecret.nonce)
+                .put("enc_lan",encLan.ciphertext).put("enc_lan_nonce",encLan.nonce);
         items.put(phoneId,entry);
         JSONArray names=items.names();
         while(names!=null&&names.length()>4){items.remove(names.optString(0));names=items.names();}
@@ -109,9 +113,9 @@ final class WatchPairingStore {
 
     /**
      * Atomically migrates a legacy plaintext entry to Keystore-encrypted format.
-     * If encryption fails (Keystore unavailable), the entry is left as-is (plaintext fallback).
+     * If encryption or persistence fails, the legacy entry is made unusable and never returned.
      */
-    private static void migrateEntry(Context context,JSONObject items,String phoneId,
+    private static boolean migrateEntry(Context context,JSONObject items,String phoneId,
             JSONObject oldItem,byte[] secretBytes,String lanCredential){
         try{
             WatchSecretStore.EncryptedValue encSecret=WatchSecretStore.encrypt(secretBytes,aad(phoneId));
@@ -119,7 +123,8 @@ final class WatchPairingStore {
                     lanCredential.getBytes(StandardCharsets.UTF_8),aad(phoneId));
             if(encSecret==null||encLan==null){
                 Log.w(TAG,"migration_skipped_keystore_unavailable");
-                return;
+                removeUnsafeEntry(context,items,phoneId);
+                return false;
             }
             JSONObject migrated=new JSONObject()
                     .put("v",VERSION_ENCRYPTED)
@@ -127,11 +132,23 @@ final class WatchPairingStore {
                     .put("enc_lan",encLan.ciphertext).put("enc_lan_nonce",encLan.nonce)
                     .put("pairedAt",oldItem.optLong("pairedAt",System.currentTimeMillis()));
             items.put(phoneId,migrated);
-            context.getSharedPreferences(PREF,Context.MODE_PRIVATE).edit()
-                    .putString(KEY,items.toString()).commit();
+            if(!context.getSharedPreferences(PREF,Context.MODE_PRIVATE).edit()
+                    .putString(KEY,items.toString()).commit()){
+                removeUnsafeEntry(context,items,phoneId);
+                return false;
+            }
             Log.i(TAG,"migrated_plaintext_to_keystore");
+            return true;
         }catch(Exception e){
-            Log.w(TAG,"migration_failed: "+e.getMessage());
+            Log.w(TAG,"migration_failed: "+e.getClass().getSimpleName());
+            removeUnsafeEntry(context,items,phoneId);
+            return false;
         }
+    }
+
+    private static void removeUnsafeEntry(Context context,JSONObject items,String phoneId){
+        items.remove(phoneId);
+        context.getSharedPreferences(PREF,Context.MODE_PRIVATE).edit()
+                .putString(KEY,items.toString()).commit();
     }
 }

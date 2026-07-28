@@ -25,6 +25,8 @@ import javax.crypto.spec.GCMParameterSpec;
  * deliberately not migrated into the V2 device-token boundary.
  */
 final class CloudSyncCredentials {
+    enum RevokedTokenResult { CLEARED, TOKEN_CHANGED, STORE_FAILED }
+
     static final class Config {
         final String endpoint;
         final String deviceToken;
@@ -63,7 +65,7 @@ final class CloudSyncCredentials {
 
     private CloudSyncCredentials() {}
 
-    static Config load(Context context) {
+    static synchronized Config load(Context context) {
         SharedPreferences values = prefs(context);
         String endpoint = values.getString(ENDPOINT, "");
         String token = decrypt(values.getString(TOKEN_CIPHERTEXT, ""),
@@ -71,7 +73,7 @@ final class CloudSyncCredentials {
         return new Config(endpoint == null ? "" : endpoint, token == null ? "" : token);
     }
 
-    static boolean save(Context context, String endpoint, String deviceToken) {
+    static synchronized boolean save(Context context, String endpoint, String deviceToken) {
         String normalizedEndpoint = endpoint == null ? "" : endpoint.trim();
         String normalizedToken = deviceToken == null ? "" : deviceToken.trim();
         if (!validEndpoint(normalizedEndpoint) || !validDeviceToken(normalizedToken)) return false;
@@ -100,7 +102,8 @@ final class CloudSyncCredentials {
                 context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE).edit()
                         .remove("sync_key").remove("endpoint").apply();
                 if (deviceChanged) deleteTransferKey();
-                if (deviceChanged || !readyForSync(context)) EncryptedWatchSyncWorker.cancel(context);
+                if (readyForSync(context)) EncryptedWatchSyncWorker.schedule(context);
+                else EncryptedWatchSyncWorker.cancel(context);
             }
             return saved;
         } catch (Exception failure) {
@@ -109,7 +112,7 @@ final class CloudSyncCredentials {
     }
 
     /** Returns existing local wrapping-key protected root material; never silently creates it. */
-    static byte[] rootKey(Context context, String deviceId) throws Exception {
+    static synchronized byte[] rootKey(Context context, String deviceId) throws Exception {
         if (!validDeviceId(deviceId)) throw new IllegalArgumentException("invalid_device_id");
         SharedPreferences values = prefs(context);
         if (deviceId.equals(values.getString(ROOT_DEVICE_ID, ""))) {
@@ -128,52 +131,76 @@ final class CloudSyncCredentials {
         throw new IllegalStateException("root_key_missing");
     }
 
-    static boolean readyForSync(Context context) {
+    static synchronized boolean readyForSync(Context context) {
         Config config = load(context);
         if (!config.configured()) return false;
-        try { return rootKey(context, config.deviceId()).length == 32; }
+        try {
+            byte[] root = rootKey(context, config.deviceId());
+            try { return root.length == 32; }
+            finally { Arrays.fill(root, (byte) 0); }
+        }
         catch (Exception unavailable) { return false; }
     }
 
     /** Stops background retries after the server has revoked this device credential. */
-    static void clearRevokedDeviceToken(Context context) {
-        prefs(context).edit().remove(TOKEN_CIPHERTEXT).remove(TOKEN_NONCE).commit();
-        EncryptedWatchSyncWorker.cancel(context.getApplicationContext());
+    static synchronized RevokedTokenResult clearRevokedDeviceToken(
+            Context context, String expectedToken) {
+        Config current = load(context);
+        if (!matchesExpectedToken(expectedToken, current.deviceToken)) {
+            return RevokedTokenResult.TOKEN_CHANGED;
+        }
+        boolean cleared = prefs(context).edit()
+                .remove(TOKEN_CIPHERTEXT).remove(TOKEN_NONCE).commit();
+        if (cleared) EncryptedWatchSyncWorker.cancel(context.getApplicationContext());
+        return cleared ? RevokedTokenResult.CLEARED : RevokedTokenResult.STORE_FAILED;
+    }
+
+    static boolean matchesExpectedToken(String expectedToken, String currentToken) {
+        return expectedToken != null && expectedToken.equals(currentToken);
     }
 
     /** Explicit first-device action. Existing roots are never overwritten by this method. */
-    static boolean initializeNewRoot(Context context) throws Exception {
+    static synchronized boolean initializeNewRoot(Context context) throws Exception {
         Config config = load(context);
         if (!config.configured()) throw new IllegalStateException("sync_device_not_configured");
         try {
             rootKey(context, config.deviceId());
+            EncryptedWatchSyncWorker.schedule(context);
             return false;
         } catch (IllegalStateException missing) {
             if (!"root_key_missing".equals(missing.getMessage())) throw missing;
         }
         byte[] generated = new byte[32];
         RANDOM.nextBytes(generated);
-        try { storeRootKey(context, config.deviceId(), generated); }
+        try {
+            storeRootKey(context, config.deviceId(), generated);
+            EncryptedWatchSyncWorker.schedule(context);
+        }
         finally { Arrays.fill(generated, (byte) 0); }
         return true;
     }
 
-    static String createRecoveryPackage(Context context, String recoveryKey) throws Exception {
+    static synchronized String createRecoveryPackage(Context context, String recoveryKey)
+            throws Exception {
         Config config = requireConfigured(context);
         byte[] root = rootKey(context, config.deviceId());
         try { return WatchSyncKeyPackages.createRecoveryPackage(root, recoveryKey); }
         finally { Arrays.fill(root, (byte) 0); }
     }
 
-    static void restoreRecoveryPackage(Context context, String encodedPackage, String recoveryKey)
+    static synchronized void restoreRecoveryPackage(
+            Context context, String encodedPackage, String recoveryKey)
             throws Exception {
         Config config = requireConfigured(context);
         byte[] root = WatchSyncKeyPackages.restoreRecoveryPackage(encodedPackage, recoveryKey);
-        try { storeRootKey(context, config.deviceId(), root); }
+        try {
+            storeRootKey(context, config.deviceId(), root);
+            EncryptedWatchSyncWorker.schedule(context);
+        }
         finally { Arrays.fill(root, (byte) 0); }
     }
 
-    static String createDeviceApprovalRequest(Context context) throws Exception {
+    static synchronized String createDeviceApprovalRequest(Context context) throws Exception {
         Config config = requireConfigured(context);
         String request = WatchSyncKeyPackages.createApprovalRequest(config.deviceId(),
                 transferKeyPair().getPublic(), System.currentTimeMillis());
@@ -185,7 +212,8 @@ final class CloudSyncCredentials {
         return request;
     }
 
-    static String approveDeviceRequest(Context context, String requestPackage) throws Exception {
+    static synchronized String approveDeviceRequest(Context context, String requestPackage)
+            throws Exception {
         Config config = requireConfigured(context);
         byte[] root = rootKey(context, config.deviceId());
         try {
@@ -194,7 +222,8 @@ final class CloudSyncCredentials {
         } finally { Arrays.fill(root, (byte) 0); }
     }
 
-    static void importDeviceApproval(Context context, String approvalPackage) throws Exception {
+    static synchronized void importDeviceApproval(Context context, String approvalPackage)
+            throws Exception {
         Config config = requireConfigured(context);
         WatchSyncKeyPackages.ApprovalBinding binding =
                 WatchSyncKeyPackages.approvalBinding(approvalPackage);
@@ -207,11 +236,14 @@ final class CloudSyncCredentials {
         KeyPair pair = transferKeyPair();
         byte[] root = WatchSyncKeyPackages.importApproval(config.deviceId(), pair.getPrivate(),
                 pair.getPublic(), approvalPackage, System.currentTimeMillis());
-        try { storeRootKey(context, config.deviceId(), root); }
+        try {
+            storeRootKey(context, config.deviceId(), root);
+            EncryptedWatchSyncWorker.schedule(context);
+        }
         finally { Arrays.fill(root, (byte) 0); }
     }
 
-    static void recordResult(Context context, long syncedAt, String error) {
+    static synchronized void recordResult(Context context, long syncedAt, String error) {
         prefs(context).edit().putLong("last_synced_at", syncedAt)
                 .putString("last_error", error == null ? "" : error).apply();
     }
@@ -387,8 +419,10 @@ final class CloudSyncCredentials {
             KeyStore store = KeyStore.getInstance("AndroidKeyStore");
             store.load(null);
             if (store.containsAlias(TRANSFER_KEY_ALIAS)) store.deleteEntry(TRANSFER_KEY_ALIAS);
-        } catch (Exception ignored) {
+        } catch (Exception deferred) {
             // A stale key cannot import a package bound to the new device id. Retry deletion later.
+            android.util.Log.w("CloudSyncCredentials", "transfer key deletion deferred: " +
+                    deferred.getClass().getSimpleName());
         }
     }
 }

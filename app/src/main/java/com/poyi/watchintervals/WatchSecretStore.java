@@ -17,7 +17,7 @@ import javax.crypto.spec.GCMParameterSpec;
  * Mirrors the phone module's AndroidSecretStore pattern: AES-256-GCM, randomized encryption,
  * AAD binding to prevent cross-context decryption.
  *
- * Falls back gracefully if Keystore is unavailable (limited watch hardware).
+ * Fails closed if Keystore is unavailable; callers must never persist plaintext fallback values.
  */
 final class WatchSecretStore {
     private static final String TAG = "WatchSecretStore";
@@ -87,7 +87,7 @@ final class WatchSecretStore {
         }
     }
 
-    /** Returns true if the Keystore key is accessible (used to decide fallback strategy). */
+    /** Returns true if the Keystore key is accessible. */
     static boolean isAvailable() {
         try {
             key();
