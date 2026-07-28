@@ -82,17 +82,6 @@
 - 新增长效 ChatGPT Tunnel 安装、守护和检查脚本：固定 Tunnel ID，Runtime Key 经 DPAPI 加密，登录后自动启动并在退出后重连；关联 `REQ-SYNC-004`、`BUG-009`。
 - APK SHA-256：watch `3FC388C682E0AFD393AD4CD916C9152B3B8E8C3992447840AC636D2E4D0F70DA`；phone `A44B5212E9F847C1B29013A2AD60B01C4C2954C7A027EE125DD94F393D7907D7`。
 
-## 2026-07-28：从干净 main 重建加密 V2 同步候选
-
-- 目标/关联：`REQ-SYNC-005`、`REQ-SYNC-006`、`BUG-010`。
-- 从 `959ff4d47bc13dcd06b443edb2aaf13618d9e148` 新建 `work/qa-clear-watch`；旧 `work/final-100-watch` 相对 main ahead 42、涉及 175 文件，明确不 merge/cherry-pick。
-- 只把 `ad25c3d` 的混合快照与 `f9a3f65` 的 401 修复当作只读审计输入，重建 Phone V2、Keystore、WorkManager、schema 3 tombstone/projection 和 JVM 测试；完全排除 UI、MCP tunnel、BLE/connection、LAN `PhoneSyncOutbox`、Watch 代码、历史格式化、wrapper/CI 和旧明文 snapshot。
-- 基线 `/v1/history` 仍返回完整 route/逐点心率，因此训练上传改为字段 allowlist，cloud entityId 使用本地 workout ID 的 SHA-256，避免把轨迹样本和时间型 ID 暴露为 envelope metadata。
-- 审计修复候选缺口：进程内同步与凭据/root 变更共用生命周期锁；token 吊销 compare-and-clear；HTTP status 优先；leased mutation exactly-one outcome；ACK/cursor/projection 原子持久化；conflict 不覆盖本地计划；safe-integer long revision 与 canonical cursor。
-- 远端 plan 先幂等投影到 Phone schema 3，再保留持久 Watch projection 待办并使用现有 `WatchClient` 回写；远端 workout 摘要仅保存在加密 state，本阶段不新增 UI/历史导入。
-- 首轮 `:phone:testDebugUnitTest` 使用 Watch 专属 TEMP/TMP/java.io.tmpdir 和外部 project cache，通过 20 个 Gradle tasks；完整 JVM/lint/APK/secret 门禁在本批结束时补记。
-- 当前没有 staging、ADB、真机、部署或远端写入；`watch-cloud-mcp` HEAD `a13368e7b58ff86e1ceff174fc2ba8daf9991079` 仅只读核对且保持干净。
-
 ## 决策记录
 
 | ID | 决策 | 原因 | 后果 |
@@ -104,7 +93,6 @@
 | ADR-005 | 厂商能力运行时探测而非按包版本猜测 | 服务存在不代表运动能力开放 | 每次固件变化都需重新验证 capabilities |
 | ADR-006 | APK 通过 GitHub Release 分发，不进 Git | 避免仓库历史膨胀 | Release 必须记录哈希和构建类型 |
 | ADR-007 | 睡眠使用 HealthKit Store 只读 API并保留原始 stage type | 权限边界稳定，避免依赖私有数据库及猜测未公开枚举 | 需系统授权；固件变化后复测字段单位和语义 |
-| ADR-008 | 云同步使用设备端 AES-GCM + 持久 outbox/cursor/projection，root 不由 token 派生 | 云端只需保存密文；断网与进程退出后可恢复 | provisioning、Keystore 和 PC-off 必须独立验收；本阶段未发布 |
 
 ## 工作日志模板
 

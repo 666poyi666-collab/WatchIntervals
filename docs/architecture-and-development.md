@@ -17,15 +17,10 @@
                     v
 手机 phone (Android API 29+)
   MainActivity / HistoryDetailActivity
-      -> PhonePlanLibrary schema 3（多计划主库 + 显式删除 tombstone）
+      -> PhonePlanLibrary（多计划主库）
       -> WatchClient
       -> PhoneLocationRelayService
       -> PhonePlanBridgeService :8766
-      -> EncryptedWatchSync / WorkManager
-                    |
-                    | HTTPS + SyncEnvelopeV1 密文
-                    v
-              /sync/v2/exchange
                     ^
                     | 本地 HTTP
                     v
@@ -45,7 +40,6 @@
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
 | 手表 API | `WatchBridgeService` | 配对、mDNS、计划/历史/睡眠/控制/手机定位中继 |
 | 手机伴侣 | `phone/*` | 计划库、发现配对、同步、历史详情、定位中继 |
-| 手机加密同步 | `EncryptedWatchSync`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials`、`WatchSyncKeyPackages` | V2 密文交换、持久 outbox/cursor/conflict/projection、Keystore 包装、恢复包和后台 catch-up |
 | MCP | `mcp/*.py` | 将手表和手机 HTTP API 暴露为本地工具 |
 
 ## 3. 核心状态和不变量
@@ -61,26 +55,20 @@
 5. 轨迹点只在通过精度、速度、时间间隔过滤后入库。
 6. 恢复会话必须兼容旧检查点；损坏检查点应清除或跳过坏字段，不阻塞新训练。
 7. 缺失/过期的心率显示为未知，不能沿用无限期旧值。
-8. 本地列表暂时缺项不代表删除；只有与 schema 3 计划库同次提交的显式 tombstone 能生成远端 delete。
-9. ACK、change materialize、projection 待办与 cursor 推进必须在同一份持久同步状态提交；projection 可幂等重放。
-10. 所有前台与 WorkManager 同步入口共享凭据生命周期锁，禁止两个 `Store` 实例并发覆盖 outbox/cursor；`syncAsync` 在调用线程只置 dirty，避免与计划库锁形成反序死锁，并在运行中变更后自动再收一轮。
 
 ## 4. 数据和存储
 
 | 数据 | 位置 | 当前 schema/上限 | 说明 |
 | --- | --- | --- | --- |
 | 当前计划 | SharedPreferences `plans` | 阶段 JSON 数组 | 含名称、分组、要求 |
-| 多计划库 | SharedPreferences `plan_library_v2` | schema 3 | 手机为主库；`deletedPlanIds` 保存显式 tombstone，schema 2 向后读取 |
+| 多计划库 | SharedPreferences `plan_library_v2` | schema 2 | 手机为主库，手表保留同步副本 |
 | 活动会话 | SharedPreferences `active_session` | 兼容 schema 2 前检查点 | 用于进程/任务恢复 |
 | 训练历史 | `files/workout_history.json` | `WorkoutRecord` schema 2，200 条 | 临时文件写入后替换 |
 | 配对码 | SharedPreferences `bridge` | 六位十进制字符串 | 当前持久保存，不自动轮换 |
 | MCP 配置 | `%USERPROFILE%/.watchintervals.json` | host/port/phoneHost/phonePort/pairingCode | 禁止提交真实配置 |
 | Tunnel 凭据 | `%LOCALAPPDATA%/WatchIntervals/tunnel` | DPAPI CurrentUser + 本地 profile | Runtime Key 不写入仓库、命令行和日志 |
-| 手机加密同步 | SharedPreferences `encrypted_watch_sync_v1` + Android Keystore | protocol 2 / envelope 1 | endpoint/deviceId 为非密字段；device token、root、state/outbox/cursor/conflict/projection 持久化，备份禁用 |
 
 任何 schema 变更都要：提升 schema 版本、保留向后读取、增加迁移/损坏数据测试、更新本表与 CHANGELOG。
-
-Phone manifest 设置 `allowBackup=false`，并在 Auto Backup/device-transfer 规则中显式排除 `encrypted_watch_sync_v1.xml` 与仍含局域网配对信息的 `connection.xml`。Keystore 包装 key 不可导出；同步 root 跨设备只能走恢复包或已授权设备批准包。
 
 ## 5. 距离与传感器策略
 
@@ -124,19 +112,9 @@ Phone manifest 设置 `allowBackup=false`，并在 Auto Backup/device-transfer �
 - 2xx 表示处理成功；4xx 返回稳定错误码；控制接口要保持幂等语义，当前 `pause/resume` 的 toggle 实现见 `BUG-002`。
 - 局域网 API 使用明文 HTTP，仅用于受信网络；安全改进见 `BUG-003`。
 
-### 加密 V2 数据面
-
-手机使用 HTTPS `POST /sync/v2/exchange`，请求固定为 protocol 2、envelope 1、product `watch`。计划、保留分组/当前选择及删除 ledger 的 `sync:library` 元数据实体，以及训练摘要在设备端使用 AES-256-GCM 加密；AAD 绑定产品、实体类型、实体 ID、目标 revision、操作和 key version。原始轨迹、逐点心率、睡眠、第三方凭据和未知字段通过 allowlist 排除，workout envelope ID 使用本地 ID 的 SHA-256，不暴露时间型记录 ID。
-
-本地 `state` 一次提交保存 entity、outbox、flight lease、conflict、Phone/Watch projection 待办和严格 base36 cursor。首次建立 root 后必须 pull-first；ACK/change 验证成功后，outbox 删除、cursor 推进和 projection 入队原子提交，再幂等写入 schema 3 计划库并通过现有 `WatchClient` 回写手表。revision conflict 保留本地候选与解密后的远端候选，不自动覆盖手机计划库。训练摘要为 immutable 云实体；训练 pull 保留在加密同步 state 中，本阶段不新增历史导入或 UI。
-
-协议 delete mutation 按云合同不携带 ciphertext/nonce，因此客户端不能只信公开 `aadHash`。每个 plan delete 还必须命中 root 加密的 `sync:library.deletedPlanIds` ledger；缺少这份第二证据时 projection 持久挂起，绝不删除本地计划。已 ACK tombstone 继续留在加密 ledger 中但不再进入待发送 delete 集合，计划重新创建时才移除。当前威胁模型仍信任云端的 change ordering/availability；抗云端 rollback 不在本阶段声明范围。
-
-device token 与 32-byte root 分别由 Android Keystore AES key 包装。首台设备必须显式初始化 root；已有空间通过 PBKDF2-HMAC-SHA256（310,000 次）恢复包，或绑定目标 deviceId、一次性 nonce、公钥 fingerprint 和 10 分钟有效期的 3072-bit RSA 批准包导入。凭据/root 变更和所有 sync 入口共用生命周期锁；HTTP 401 使用本次请求 token compare-and-clear，只有清除持久成功才取消后台任务。400/403/409/413/415 等永久 4xx 记录可操作状态并停止 WorkManager retry。当前收敛阶段没有配置 UI；已配置安装可由服务启动与开机接收器恢复调度。
-
 ## 7. 开发环境和构建
 
-前置条件：JDK 17、Android SDK 35、Gradle 8.14.3。Phone 加密同步使用 WorkManager 2.10.1。当前仓库未包含 Gradle Wrapper（`BUG-004`）。
+前置条件：JDK 17、Android SDK 35、Gradle 8.14.3。当前仓库未包含 Gradle Wrapper（`BUG-004`）。
 
 ```powershell
 gradle :app:assembleDebug :phone:assembleDebug
@@ -162,7 +140,6 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 6. 378×496 手表界面固定执行文字溢出、底部安全区、横纵手势冲突检查。
 7. 修复缺陷时先在 `bugs.md` 建号，再补测试或可复现验证步骤。
 8. 厂商健康数据通过公开 Store Binder 和运行时匹配的 protobuf 类读取；禁止提交厂商 APK、反编译产物、权限记录或真实健康数据。
-9. 加密同步协议字段、AAD、cursor、ACK 与 revision 必须按合同验证；不可把网络返回直接投影到计划库。
 
 ## 9. Git 和发布规范
 

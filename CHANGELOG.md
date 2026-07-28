@@ -7,24 +7,6 @@
 ### Added
 
 - 新增固定 Tunnel ID 的 ChatGPT 长效 MCP 连接、DPAPI 凭据存储、登录自启动、自动重连和健康检查脚本。
-- Phone 新增未发布的 `SyncEnvelopeV1` 加密 V2 同步闭环：计划、计划库元数据和训练摘要使用 AES-256-GCM，持久保存 outbox/cursor/conflict/projection，并由 WorkManager 联网补偿。
-- 新增 Android Keystore 包装的 device token/root，以及 PBKDF2 恢复包和绑定目标设备、nonce、公钥 fingerprint、10 分钟有效期的已授权设备批准包。
-
-### Changed
-
-- 手机计划库升级到 schema 3；删除操作原子记录显式 tombstone，本地读取暂时缺项不再推断为云端删除。
-- Phone 禁用 Auto Backup，并显式排除加密同步 state 与局域网配对配置的 cloud backup/device transfer。
-
-### Fixed
-
-- 401 吊销 token 采用 compare-and-clear；只有清除持久成功才取消后台任务，已轮换的新 token 不会被旧请求误删。
-- 所有同步入口共享凭据生命周期锁；ACK/conflict 必须完整覆盖当前 lease，delete ACK 与 projection 待办同一次 state commit，永久 4xx 不再进入 WorkManager 重试。
-- revision 按 JS safe integer 使用严格 `long`，cursor 拒绝非 canonical 前导零；conflict 同时保留本地与解密远端候选，不自动覆盖手机计划库。
-- plan delete 只有同时命中 root 加密的 `sync:library` tombstone ledger 才允许投影；训练摘要使用 allowlist 且散列 envelope ID，避免原始轨迹、逐点心率和时间型 ID 外泄。
-
-### Known Issues
-
-- 加密 V2 仍是本地 QA 候选：本阶段不含配置 UI、staging、Android Keystore 真机、Doze/重启或 PC-off 验收，关联 `BUG-010`。
 
 ## [Phone 0.10.1 / MCP 0.5.1] - 2026-07-25
 

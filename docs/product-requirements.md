@@ -1,7 +1,7 @@
 # 产品需求文档（PRD）
 
 状态：维护中  
-基线：2026-07-25
+基线：2026-07-25  
 产品：步序（WatchIntervals）
 
 ## 1. 产品目标
@@ -68,8 +68,6 @@
 | REQ-SYNC-002 | 使用六位码配对本地 API | 未提供正确 `X-Pairing-Code` 时返回 401 | 已实现 |
 | REQ-SYNC-003 | MCP 支持计划、统计、历史和训练控制 | 工具清单与 `mcp/README.md` 一致 | 已实现 |
 | REQ-SYNC-004 | ChatGPT 使用固定的长效 MCP 通道 | 插件绑定一次 Tunnel ID；电脑登录后自动启动，进程退出后自动重连，Runtime Key 不以明文落盘 | 实现完成，待绑定 Tunnel 实测 |
-| REQ-SYNC-005 | 手机使用加密 V2 交换计划和训练摘要 | `/sync/v2/exchange` 只传 AES-256-GCM 密文与最小协议元数据；原始轨迹、逐点心率、睡眠、凭据和时间型 workout ID 不进入数据面；plan delete 需 root 加密 ledger 二次授权 | 本地候选，待 staging/真机验收 |
-| REQ-SYNC-006 | 加密同步可离线恢复并在联网后补偿 | root 由 Keystore 包装，可通过恢复包或已授权设备批准导入；outbox/cursor/ACK/projection 持久化，WorkManager 负责 catch-up | 本地候选，配置 UI 与 PC-off 验收不在本阶段 |
 
 ### 3.5 手表交互和适配
 

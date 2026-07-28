@@ -24,7 +24,7 @@
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.10.1`（11） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | GitHub 私有仓库；`v0.17.0` 为 debug APK 预发布；Phone 加密 V2 同步为未发布本地 QA 候选 |
+| 发布状态 | GitHub 私有仓库；`v0.17.0` 为 debug APK 预发布 |
 
 ## 事实来源
 
