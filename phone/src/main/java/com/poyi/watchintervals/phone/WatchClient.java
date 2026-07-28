@@ -7,14 +7,15 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-final class WatchClient {
+public final class WatchClient {
     private final String baseUrl, code;
-    WatchClient(String host, String code) { this.baseUrl = "http://" + host + ":8765"; this.code = code; }
+    public WatchClient(String host, String code) { this.baseUrl = "http://" + host + ":8765"; this.code = code; }
 
-    String get(String path) throws Exception { return request("GET", path, null); }
-    String put(String path, String body) throws Exception { return request("PUT", path, body); }
-    String post(String path) throws Exception { return request("POST", path, "{}"); }
-    String post(String path, String body) throws Exception { return request("POST", path, body); }
+    public String get(String path) throws Exception { return request("GET", path, null); }
+    public String put(String path, String body) throws Exception { return request("PUT", path, body); }
+    public String post(String path) throws Exception { return request("POST", path, "{}"); }
+    public String post(String path, String body) throws Exception { return request("POST", path, body); }
+    public String delete(String path) throws Exception { return request("DELETE", path, null); }
 
     private String request(String method, String path, String body) throws Exception {
         HttpURLConnection connection = (HttpURLConnection)new URL(baseUrl + path).openConnection();

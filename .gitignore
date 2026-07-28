@@ -22,6 +22,11 @@ Thumbs.db
 **/.venv/
 **/__pycache__/
 *.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.coverage
+**/coverage.xml
+**/test-results.xml
 
 # Local MCP runtime state and downloaded tunnel client
 mcp/tunnel-client/
@@ -36,8 +41,12 @@ mcp/*.pid
 analysis/
 dist/
 .agents/
+.work/
 
 # Root-level test captures and third-party APK samples
 /*.png
 /*.xml
 /*.apk
+hs_err_pid*.log
+replay_pid*.log
+backups/

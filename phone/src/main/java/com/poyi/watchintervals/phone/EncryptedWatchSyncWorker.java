@@ -23,24 +23,8 @@ public final class EncryptedWatchSyncWorker extends Worker {
     }
 
     @NonNull @Override public Result doWork() {
-        if (!CloudSyncCredentials.readyForSync(getApplicationContext())) {
-            cancel(getApplicationContext());
-            return Result.success();
-        }
-        EncryptedWatchSync.SyncOutcome outcome =
-                EncryptedWatchSync.sync(getApplicationContext());
-        if (outcome == EncryptedWatchSync.SyncOutcome.PERMANENT_FAILURE) {
-            cancel(getApplicationContext());
-            return Result.success();
-        }
-        return shouldRetry(outcome, CloudSyncCredentials.readyForSync(getApplicationContext()))
-                ? Result.retry() : Result.success();
-    }
-
-    static boolean shouldRetry(EncryptedWatchSync.SyncOutcome outcome,
-                               boolean credentialsStillReady) {
-        return outcome == EncryptedWatchSync.SyncOutcome.TRANSIENT_FAILURE &&
-                credentialsStillReady;
+        if (!CloudSyncCredentials.readyForSync(getApplicationContext())) return Result.success();
+        return EncryptedWatchSync.sync(getApplicationContext()) ? Result.success() : Result.retry();
     }
 
     static void schedule(Context context) {

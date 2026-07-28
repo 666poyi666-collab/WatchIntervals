@@ -8,22 +8,44 @@ import java.util.ArrayList;
 
 /** Versioned workout record. Old minimal JSON remains readable. */
 final class WorkoutRecord {
-    static final int SCHEMA_VERSION = 2;
+    static final int SCHEMA_VERSION = 3;
     String id, plan, planName = "", planGroup = "", planRequirement = "";
     long startedAt, endedAt, durationMs;
+    long pausedDurationMs, planCompletedActiveMs, planCompletedWallTime;
     double distanceMeters;
+    double planDistanceMeters, freeRecordingDistanceMeters, maxSmoothedSpeedMps;
     int steps, averageHeartRate;
+    int routePointCount;
+    boolean routeTruncated;
+    JSONObject distanceBySourceMeters = new JSONObject();
+    JSONObject routePointCountBySource = new JSONObject();
+    JSONArray sourceTransitions = new JSONArray();
+    JSONObject locationAccuracySummary = new JSONObject();
     final ArrayList<Location> route = new ArrayList<>();
     final ArrayList<Long> heartTimes = new ArrayList<>();
     final ArrayList<Integer> heartValues = new ArrayList<>();
     JSONArray stageResults = new JSONArray();
 
-    JSONObject toJson() throws JSONException {
+    JSONObject toSummaryJson() throws JSONException {
         JSONObject json = new JSONObject();
         json.put("schemaVersion", SCHEMA_VERSION).put("id", id).put("startedAt", startedAt).put("endedAt", endedAt)
-                .put("durationMs", durationMs).put("distanceMeters", distanceMeters).put("steps", steps)
+                .put("durationMs", durationMs).put("distanceMeters", finite(distanceMeters)).put("steps", steps)
                 .put("averageHeartRate", averageHeartRate).put("plan", plan == null ? "" : plan)
-                .put("planName", planName).put("planGroup", planGroup).put("planRequirement", planRequirement);
+                .put("planName", planName).put("planGroup", planGroup).put("planRequirement", planRequirement)
+                .put("pausedDurationMs", pausedDurationMs).put("elapsedDurationMs", Math.max(durationMs, endedAt - startedAt))
+                .put("planCompletedActiveMs", planCompletedActiveMs).put("planCompletedWallTime", planCompletedWallTime)
+                .put("freeRecordingActiveMs", planCompletedActiveMs > 0 ? Math.max(0, durationMs - planCompletedActiveMs) : 0)
+                .put("planDistanceMeters", finite(planDistanceMeters)).put("freeRecordingDistanceMeters", finite(freeRecordingDistanceMeters))
+                .put("maxSmoothedSpeedMps", finite(maxSmoothedSpeedMps)).put("routePointCount", Math.max(routePointCount, route.size()))
+                .put("distanceBySourceMeters", distanceBySourceMeters).put("routePointCountBySource", routePointCountBySource)
+                .put("sourceTransitions", sourceTransitions).put("locationAccuracySummary", locationAccuracySummary)
+                .put("stageResults", stageResults == null ? new JSONArray() : stageResults);
+        addDerived(json);
+        return json;
+    }
+
+    JSONObject toJson() throws JSONException {
+        JSONObject json = toSummaryJson();
         JSONArray points = new JSONArray();
         for (Location location : route) {
             JSONObject point = new JSONObject().put("latitude", location.getLatitude()).put("longitude", location.getLongitude())
@@ -33,8 +55,10 @@ final class WorkoutRecord {
             points.put(point);
         }
         JSONArray hearts = new JSONArray(); for (int i = 0; i < Math.min(heartTimes.size(), heartValues.size()); i++) hearts.put(new JSONArray().put(heartTimes.get(i)).put(heartValues.get(i)));
-        json.put("route", points).put("heartRateSamples", hearts).put("stageResults", stageResults == null ? new JSONArray() : stageResults);
-        addDerived(json); return json;
+        json.put("route", points).put("heartRateSamples", hearts)
+                .put("routePointCount", Math.max(routePointCount, route.size()))
+                .put("routeTruncated", routeTruncated);
+        return json;
     }
 
     private void addDerived(JSONObject json) throws JSONException {
@@ -61,8 +85,15 @@ final class WorkoutRecord {
     static WorkoutRecord fromJson(JSONObject json) throws JSONException {
         WorkoutRecord record = new WorkoutRecord();
         record.id = json.getString("id"); record.startedAt = json.optLong("startedAt"); record.endedAt = json.optLong("endedAt");
-        record.durationMs = json.optLong("durationMs"); record.distanceMeters = json.optDouble("distanceMeters"); record.steps = json.optInt("steps");
+        record.durationMs = json.optLong("durationMs"); record.distanceMeters = finite(json.optDouble("distanceMeters", 0d)); record.steps = json.optInt("steps");
         record.averageHeartRate = json.optInt("averageHeartRate"); record.plan = json.optString("plan"); record.planName=json.optString("planName");record.planGroup=json.optString("planGroup");record.planRequirement=json.optString("planRequirement");
+        record.pausedDurationMs=json.optLong("pausedDurationMs");record.planCompletedActiveMs=json.optLong("planCompletedActiveMs");record.planCompletedWallTime=json.optLong("planCompletedWallTime");
+        record.planDistanceMeters=finite(json.optDouble("planDistanceMeters",0d));record.freeRecordingDistanceMeters=finite(json.optDouble("freeRecordingDistanceMeters",0d));record.maxSmoothedSpeedMps=finite(json.optDouble("maxSmoothedSpeedMps",0d));
+        record.routePointCount=json.optInt("routePointCount");record.routeTruncated=json.optBoolean("routeTruncated");
+        if(json.optJSONObject("distanceBySourceMeters")!=null)record.distanceBySourceMeters=json.optJSONObject("distanceBySourceMeters");
+        if(json.optJSONObject("routePointCountBySource")!=null)record.routePointCountBySource=json.optJSONObject("routePointCountBySource");
+        if(json.optJSONArray("sourceTransitions")!=null)record.sourceTransitions=json.optJSONArray("sourceTransitions");
+        if(json.optJSONObject("locationAccuracySummary")!=null)record.locationAccuracySummary=json.optJSONObject("locationAccuracySummary");
         JSONArray points = json.optJSONArray("route"); if (points != null) for (int index = 0; index < points.length(); index++) {
             Location location = new Location("history"); Object raw=points.opt(index);
             if(raw instanceof JSONArray){JSONArray point=(JSONArray)raw;if(point.length()<2)continue;location.setLatitude(point.optDouble(0));location.setLongitude(point.optDouble(1));}
@@ -70,6 +101,9 @@ final class WorkoutRecord {
             else continue; record.route.add(location);
         }
         JSONArray hearts=json.optJSONArray("heartRateSamples");if(hearts!=null)for(int i=0;i<hearts.length();i++){JSONArray sample=hearts.optJSONArray(i);if(sample!=null&&sample.length()>=2){record.heartTimes.add(sample.optLong(0));record.heartValues.add(sample.optInt(1));}}
-        record.stageResults=json.optJSONArray("stageResults");if(record.stageResults==null)record.stageResults=new JSONArray();return record;
+        record.stageResults=json.optJSONArray("stageResults");if(record.stageResults==null)record.stageResults=new JSONArray();
+        if(record.routePointCount<=0)record.routePointCount=record.route.size();return record;
     }
+
+    private static double finite(double value) { return Double.isFinite(value) ? value : 0d; }
 }

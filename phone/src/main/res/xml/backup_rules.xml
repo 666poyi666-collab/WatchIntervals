@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <exclude domain="sharedpref" path="encrypted_watch_sync_v1.xml" />
+    <exclude domain="sharedpref" path="cloud_snapshot_sync.xml" />
+    <exclude domain="sharedpref" path="gateway_api_auth.xml" />
+    <exclude domain="sharedpref" path="watch_identity.xml" />
     <exclude domain="sharedpref" path="connection.xml" />
+    <exclude domain="sharedpref" path="sync_outbox.xml" />
+    <exclude domain="sharedpref" path="gateway_mutations.xml" />
+    <exclude domain="sharedpref" path="gateway_control_mutations.xml" />
+    <exclude domain="sharedpref" path="gateway_control_state.xml" />
+    <exclude domain="sharedpref" path="watch_connection_state.xml" />
+    <exclude domain="sharedpref" path="device_identity.xml" />
 </full-backup-content>

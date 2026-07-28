@@ -11,6 +11,7 @@
 | [testing.md](testing.md) | 自动化策略、手表/手机/MCP 回归矩阵、发布门禁 | 修 Bug、新增功能或发现新风险时 |
 | [bugs.md](bugs.md) | 开放缺陷、技术债、历史修复和验证证据 | 发现、修复、复现或关闭问题时 |
 | [project-log.md](project-log.md) | 决策背景、Vibe Coding 迭代轨迹、工作日志 | 每个有意义的开发批次结束时 |
+| [stabilization-audit-0.18.0.md](stabilization-audit-0.18.0.md) | 0.18.0 冻结快照、实现审计、Lint 分类和真机门禁 | 稳定化阶段发现或关闭风险时 |
 | [system-exercise-implementation.md](system-exercise-implementation.md) | OWW221 系统运动接口专项分析 | 厂商固件或桥接实现变化时 |
 | [../CHANGELOG.md](../CHANGELOG.md) | 用户可感知的版本变化 | 发布或修改版本号时 |
 | [../AGENTS.md](../AGENTS.md) | AI/编码代理的项目工作约束 | 工作流或项目治理变化时 |
@@ -19,12 +20,12 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 基线日期 | 2026-07-25 |
-| 手表应用 | `app`，`com.poyi.watchintervals`，`0.17.0`（27） |
-| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.10.1`（11） |
+| 基线日期 | 2026-07-29 |
+| 手表应用 | `app`，`com.poyi.watchintervals`，`0.21.0`（31） |
+| 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.22.0`（17） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | GitHub 私有仓库；`v0.17.0` 为 debug APK 预发布 |
+| 发布状态 | Watch `0.21.0` / Phone `0.22.0` 本地候选；加密 V2 同步已通过 JVM/构建门禁，尚缺 staging、真机恢复和三轮 PC-off 验收 |
 
 ## 事实来源
 

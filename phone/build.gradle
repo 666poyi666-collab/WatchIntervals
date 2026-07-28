@@ -3,12 +3,14 @@ plugins { id 'com.android.application' }
 android {
     namespace 'com.poyi.watchintervals.phone'
     compileSdk 35
+    buildFeatures { buildConfig true }
     defaultConfig {
         applicationId 'com.poyi.watchintervals.phone'
         minSdk 29
         targetSdk 35
-        versionCode 11
-        versionName '0.10.1'
+        versionCode 17
+        versionName '0.22.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -21,4 +23,6 @@ dependencies {
     implementation 'androidx.work:work-runtime:2.10.1'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }

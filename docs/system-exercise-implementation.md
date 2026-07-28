@@ -78,7 +78,7 @@
 
 调用链为：应用客户端配置 -> HealthKit Binder -> `ExerciseService` -> protobuf 请求 -> MCU 通道。系统运动 APK 的页面不是数据源；真正的运动会话由健康服务维护。
 
-系统运动包本身还保留一条旧私有架构路径：它请求 `BIND_HEALTH`、`BIND_CONN`、`BINDER_PROVIDER`、`PROVIDER`、`WRITE_SECURE_SETTINGS` 等系统权限，并直接引用隐藏的 `android.app.wear.McuManager`。`SportPrepareActivity` 入口受 signature 权限 `heytap.wearable.permission.sports.VIEW` 保护，因此第三方包不能通过启动原生页面获得同等访问级别。
+系统运动包本身还保留一条旧私有架构路径：它请求 `BIND_HEALTH`、`BIND_CONN`、`BINDER_PROVIDER`、`PROVIDER`、`WRITE_SECURE_SETTINGS` 等系统权限，并直接引用隐藏的 `android.app.wear.McuManager`。`SportPrepareActivity` 入口受 signature 权限 `heytap.wearable.permission.sports.VIEW` 保护，因此第三方包不能通过启动原生页面获得同等访问级别。旧运动路线不在 HealthKit `ExerciseSessionRecord` 中，而保存在健康服务 Room 表 `sport_gps`（`sport_id/time_stamp/longitude/latitude/speed/state`），系统运动通过 `ISportAidlInterface2.queryGpsByte(sportId)` 读取压缩 protobuf。`com.heytap.wearable.health.binder` 虽使用 normal permission，`BinderProvider.query()` 仍会校验调用包签名，第三方签名会被 `signature not match` 拒绝，不能把这条私有 Binder 当作可用的历史导入接口。
 
 ## 系统运动的定位路径
 
@@ -105,7 +105,7 @@ Legacy system GPS closed
 
 系统运动 `SportService` 的旧架构还会注册 MCU `341`、`343`、`513` 以及 `module 8 / event 18、31、34、35` 等运动会话事件。它们承载的是完整运动会话、提醒和结果数据，而定位准备状态仍独立走 `8/5、8/6、8/7`。当前固件对第三方开放的 HealthKit capabilities 为空，所以应用保留能力门控，不再把这一固件状态显示成启动错误；实际记录由连续 GPS、累计步数差和光学心率完成。
 
-轨迹采集使用 1 秒 GPS 请求并在前台服务中持续运行。只有精度、时间间隔和速度过滤通过的坐标才累计距离；合格坐标另外进入本地离线轨迹图，最多保留 600 点。MCU `gpsLocate` 与 SNR 负责复刻系统准备页的搜星状态，Android GPS 坐标负责绘制真实路线，两者不会混作同一种数据。
+轨迹采集使用 1 秒 GPS 请求并在前台服务中持续运行。只有精度、时间间隔和速度过滤通过的坐标才累计距离；合格坐标逐行追加到会话文件，地图只绘制最多 600 点的简化预览。MCU `gpsLocate` 与 SNR 负责复刻系统准备页的搜星状态，Android GPS 坐标负责绘制真实路线，两者不会混作同一种数据。
 
 ## 固件能力门控
 

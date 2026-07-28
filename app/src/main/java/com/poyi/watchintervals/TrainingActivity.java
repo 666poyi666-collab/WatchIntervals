@@ -11,32 +11,61 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import java.util.Locale;
 import java.util.ArrayList;
 
 public class TrainingActivity extends Activity {
     public static final String EXTRA_PREPARED_SESSION = "com.poyi.watchintervals.PREPARED_SESSION";
+    private static final int CONTROL_PAGE = 0;
+    private static final int CORE_PAGE = 1;
+    private static final int EXTRA_PAGE = 2;
+    private static final int STAGE_PAGE = 3;
+    /** Index of the live route panel inside {@link #workoutPager}. */
+    private static final int ROUTE_PAGE = 4;
     private WorkoutService service;
     private boolean bound, workoutCompleted;
     private boolean allowTaskLeave;
     private int displayedStage = -1;
+    private int displayedStageAccent = Integer.MIN_VALUE;
+    private int displayedControlTone = Integer.MIN_VALUE;
+    private boolean displayedPauseStyle;
+    private boolean pauseStyleInitialized;
+    private boolean routePageSettled;
+    private boolean refreshDeferredByPager;
+    private WorkoutService.Snapshot lastUiSnapshot;
+    private long lastUiSnapshotElapsed;
     private String lastStageSummary = "";
+    private final java.text.SimpleDateFormat clockFormat =
+            new java.text.SimpleDateFormat("HH:mm", Locale.CHINA);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView stageName, remaining, remainingLabel, stageProgress, stageCounter, gps, distance, pace, heart, steps, duration, pause, stop;
+    private TextView coreHeader, speed, controlState, controlDuration, controlSummary;
+    private TextView trainClock, extraClock;
+    private TextView avgPace, cadence, climb, calories, averageHeart, maxHeart, maxSpeed;
+    private Ui.ZoneBar zoneBar;
+    private Ui.HeartTrace heartTrace;
+    private TextView splitTitle, splitDetail;
+    private LinearLayout splitNotice;
+    private int displayedSplitCount = -1;
     private LinearLayout controls, stopConfirmation, transitionNotice, routePanel;
     private View stopScrim;
     private TextView transitionTitle, transitionDetail, routeSummary;
     private WorkoutRouteView routeView;
-    private ProgressBar progress;
+    private Ui.Ring ring;
     private WatchPagerLayout workoutPager;
-    private final Runnable update = new Runnable() { @Override public void run() { refresh(); handler.postDelayed(this, 500); } };
+    // Every value on screen changes at most once a second, so a 2 Hz tick just doubled the CPU
+    // wake-ups and layout passes for an identical picture.
+    private static final long REFRESH_INTERVAL_MILLIS = 1_000L;
+    private final Runnable update = new Runnable() {
+        @Override public void run() { refresh(); handler.postDelayed(this, REFRESH_INTERVAL_MILLIS); }
+    };
     private final Runnable hideTransition = new Runnable() { @Override public void run() {
         if (transitionNotice != null) transitionNotice.setVisibility(View.GONE);
     }};
@@ -67,14 +96,21 @@ public class TrainingActivity extends Activity {
     private void buildUi() {
         FrameLayout shell = new FrameLayout(this);
         LinearLayout controlPage = buildControlPage();
+        LinearLayout corePage = buildCorePage();
+        LinearLayout extraPage = buildExtraPage();
         LinearLayout dataPage = buildDataPage();
         routePanel = buildRoutePanel();
         workoutPager = new WatchPagerLayout(this);
+        workoutPager.setOnPageSettledListener(this::onWorkoutPageSettled);
         // Physical order follows the demonstrated system app. The workout opens
-        // in the centre; dragging left reveals the page on the physical right.
+        // on the main data screen; controls sit one swipe to the left, deeper
+        // data screens to the right, the live route at the far end.
         workoutPager.addView(controlPage);
+        workoutPager.addView(corePage);
+        workoutPager.addView(extraPage);
         workoutPager.addView(dataPage);
-        workoutPager.addView(routePanel);
+        workoutPager.addView(routePanel);   // index == ROUTE_PAGE
+        workoutPager.setPageIndicatorEnabled(true);
         workoutPager.setCurrentItem(1, false);
         shell.addView(workoutPager, new FrameLayout.LayoutParams(-1, -1));
 
@@ -82,6 +118,10 @@ public class TrainingActivity extends Activity {
         FrameLayout.LayoutParams transitionParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 124), Gravity.CENTER);
         transitionParams.leftMargin = Ui.dp(this, 16); transitionParams.rightMargin = Ui.dp(this, 16);
         shell.addView(transitionNotice, transitionParams);
+        splitNotice = buildSplitNotice();
+        FrameLayout.LayoutParams splitParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 112), Gravity.CENTER);
+        splitParams.leftMargin = Ui.dp(this, 20); splitParams.rightMargin = Ui.dp(this, 20);
+        shell.addView(splitNotice, splitParams);
         stopScrim = new View(this);
         stopScrim.setBackgroundColor(Color.argb(190, 0, 0, 0));
         stopScrim.setClickable(true);
@@ -95,98 +135,251 @@ public class TrainingActivity extends Activity {
         setContentView(shell);
     }
 
+    /** Interval page: one stage-coloured progress ring and no competing dashboard metrics. */
     private LinearLayout buildDataPage() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 8));
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 8), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 4));
         root.setBackgroundColor(Ui.BLACK);
 
         LinearLayout top = new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL);
-        stageCounter = Ui.bold(this, "阶段 1 / 2", 12, Ui.MUTED);
-        top.addView(stageCounter, new LinearLayout.LayoutParams(0, Ui.dp(this, 30), 1));
-        gps = Ui.text(this, "● 等待 GPS", 10, Ui.MUTED); gps.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        top.addView(gps, new LinearLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 30))); root.addView(top);
+        TextView section = Ui.bold(this, "阶段进度", Ui.FIGURE_LABEL, Ui.WHITE);
+        top.addView(section, new LinearLayout.LayoutParams(0, -1, 1));
+        stageCounter = Ui.chip(this, "第 1/2 项", Ui.LIME, Color.rgb(30, 48, 14));
+        top.addView(stageCounter, new LinearLayout.LayoutParams(Ui.dp(this, 92), Ui.dp(this, 26)));
+        root.addView(top, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
 
-        stageName = Ui.bold(this, "准备", 24, Ui.LIME); stageName.setGravity(Gravity.CENTER);
-        root.addView(stageName, new LinearLayout.LayoutParams(-1, Ui.dp(this, 32)));
-        remainingLabel = Ui.text(this, "剩余距离", 11, Ui.MUTED); remainingLabel.setGravity(Gravity.CENTER);
-        root.addView(remainingLabel, new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
-        remaining = Ui.bold(this, "--", 55, Ui.WHITE); remaining.setGravity(Gravity.CENTER);
-        root.addView(remaining, new LinearLayout.LayoutParams(-1, Ui.dp(this, 60)));
+        stageName = Ui.bold(this, "准备", 23, Ui.LIME); stageName.setGravity(Gravity.CENTER);
+        root.addView(stageName, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
 
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(1000); progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.LIME));
-        progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Ui.LINE));
-        root.addView(progress, new LinearLayout.LayoutParams(-1, Ui.dp(this, 6)));
-        stageProgress = Ui.text(this, "本阶段 --", 11, Ui.MUTED); stageProgress.setGravity(Gravity.CENTER);
-        root.addView(stageProgress, new LinearLayout.LayoutParams(-1, Ui.dp(this, 18)));
+        FrameLayout ringBox = new FrameLayout(this);
+        ring = new Ui.Ring(this);
+        FrameLayout.LayoutParams ringParams = new FrameLayout.LayoutParams(Ui.dp(this, 196), Ui.dp(this, 196), Gravity.CENTER);
+        ringBox.addView(ring, ringParams);
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setGravity(Gravity.CENTER);
+        remainingLabel = Ui.bold(this, "剩余距离", Ui.LABEL, Ui.MUTED); remainingLabel.setGravity(Gravity.CENTER);
+        center.addView(remainingLabel, new LinearLayout.LayoutParams(-2, -2));
+        remaining = Ui.numeral(this, "--", 46, Ui.WHITE); remaining.setGravity(Gravity.CENTER);
+        center.addView(remaining, new LinearLayout.LayoutParams(-2, -2));
+        ringBox.addView(center, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        // Let the ring panel consume the actual remaining 496 px canvas. The previous fixed
+        // 204 dp box plus a weighted empty View left a visible black chin on the watch.
+        root.addView(ringBox, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        LinearLayout metrics = Ui.card(this); metrics.setPadding(Ui.dp(this, 6), Ui.dp(this, 5), Ui.dp(this, 6), Ui.dp(this, 5));
-        LinearLayout first = new LinearLayout(this); distance = metric(first, "总距离", "0 m"); pace = metric(first, "平均配速", "-- /km");
-        metrics.addView(first, new LinearLayout.LayoutParams(-1, Ui.dp(this, 50)));
-        metrics.addView(Ui.divider(this));
-        LinearLayout second = new LinearLayout(this); heart = metric(second, "心率", "-- bpm"); steps = metric(second, "实际步数", "0 步"); duration = metric(second, "用时", "00:00");
-        metrics.addView(second, new LinearLayout.LayoutParams(-1, Ui.dp(this, 50)));
-        LinearLayout.LayoutParams metricsParams = new LinearLayout.LayoutParams(-1, -2);
-        metricsParams.topMargin = Ui.dp(this, 8); root.addView(metrics, metricsParams);
-        root.addView(new TextView(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        root.addView(Ui.pagerDots(this, 1, 3), new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
-        TextView hint = Ui.text(this, "右侧轨迹", 10, Ui.MUTED); hint.setGravity(Gravity.CENTER);
-        root.addView(hint, new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
+        stageProgress = Ui.text(this, "本阶段 --", Ui.LABEL, Ui.MUTED); stageProgress.setGravity(Gravity.CENTER);
+        root.addView(stageProgress, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
+
+        root.addView(Ui.pagerDots(this, 3, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
         return root;
     }
 
+    /** Dense live dashboard translated from the supplied Apple-style workout reference. */
+    private LinearLayout buildCorePage() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 6), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 4));
+        root.setBackgroundColor(Ui.BLACK);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(Ui.workoutGlyph(this, Ui.LIME),
+                new LinearLayout.LayoutParams(Ui.dp(this, 34), Ui.dp(this, 34)));
+        LinearLayout identity = new LinearLayout(this);
+        identity.setOrientation(LinearLayout.VERTICAL);
+        identity.addView(Ui.bold(this, "间歇训练", 16, Ui.WHITE),
+                new LinearLayout.LayoutParams(-1, Ui.dp(this, 21)));
+        coreHeader = Ui.bold(this, "训练中", Ui.CAPTION, Ui.LIME);
+        identity.addView(coreHeader, new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
+        LinearLayout.LayoutParams identityParams = new LinearLayout.LayoutParams(0, Ui.dp(this, 36), 1);
+        identityParams.leftMargin = Ui.dp(this, 8);
+        header.addView(identity, identityParams);
+        LinearLayout liveState = new LinearLayout(this);
+        liveState.setOrientation(LinearLayout.VERTICAL);
+        trainClock = Ui.numeral(this, "", 18, Ui.WHITE);
+        trainClock.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        liveState.addView(trainClock, new LinearLayout.LayoutParams(-1, Ui.dp(this, 21)));
+        gps = Ui.bold(this, "GPS 准备中", Ui.CAPTION, Ui.MUTED);
+        gps.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        liveState.addView(gps, new LinearLayout.LayoutParams(-1, Ui.dp(this, 15)));
+        header.addView(liveState, new LinearLayout.LayoutParams(Ui.dp(this, 108), Ui.dp(this, 36)));
+        root.addView(header, new LinearLayout.LayoutParams(-1, Ui.dp(this, 40)));
+
+        duration = Ui.numeral(this, "00:00", 43, Ui.WHITE);
+        root.addView(duration, new LinearLayout.LayoutParams(-1, Ui.dp(this, 52)));
+        root.addView(Ui.divider(this));
+
+        LinearLayout distanceRow = new LinearLayout(this);
+        distance = Ui.metricCell(this, distanceRow, "距离", "0.00", "公里", Ui.LIME, 29);
+        root.addView(distanceRow, new LinearLayout.LayoutParams(-1, Ui.dp(this, 49)));
+        root.addView(Ui.divider(this));
+
+        LinearLayout primary = new LinearLayout(this);
+        pace = Ui.metricCell(this, primary, "当前配速", "--", "/公里", Ui.CYAN, 31);
+        heart = Ui.metricCell(this, primary, "当前心率", "--", "次/分", Ui.RED, 31);
+        LinearLayout.LayoutParams primaryParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 62));
+        primaryParams.topMargin = Ui.dp(this, 4); primaryParams.bottomMargin = Ui.dp(this, 4);
+        root.addView(primary, primaryParams);
+        root.addView(Ui.divider(this));
+
+        LinearLayout compact = new LinearLayout(this);
+        cadence = Ui.metricCell(this, compact, "步频", "--", "spm", Ui.YELLOW, 21);
+        calories = Ui.metricCell(this, compact, "热量", "0", "千卡", Ui.AMBER, 21);
+        climb = Ui.metricCell(this, compact, "累计爬升", "0", "米", Ui.LIME, 21);
+        root.addView(compact, new LinearLayout.LayoutParams(-1, Ui.dp(this, 51)));
+
+        zoneBar = new Ui.ZoneBar(this);
+        LinearLayout.LayoutParams zoneParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 10));
+        zoneParams.topMargin = Ui.dp(this, 3);
+        root.addView(zoneBar, zoneParams);
+        heartTrace = new Ui.HeartTrace(this);
+        heartTrace.setExpanded(true);
+        LinearLayout.LayoutParams traceParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        traceParams.topMargin = Ui.dp(this, 5);
+        traceParams.bottomMargin = Ui.dp(this, 3);
+        root.addView(heartTrace, traceParams);
+
+        root.addView(Ui.pagerDots(this, 1, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
+        return root;
+    }
+
+    /** Running averages and totals that remain useful but do not crowd the live dashboard. */
+    private LinearLayout buildExtraPage() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 8), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 4));
+        root.setBackgroundColor(Ui.BLACK);
+
+        TextView title = Ui.bold(this, "训练数据", Ui.FIGURE_LABEL, Ui.WHITE);
+        extraClock = Ui.topBar(this, root, title);
+
+        LinearLayout first = new LinearLayout(this);
+        avgPace = Ui.metricCell(this, first, "平均配速", "--", "/公里", Ui.CYAN, 29);
+        averageHeart = Ui.metricCell(this, first, "平均心率", "--", "次/分", Ui.RED, 29);
+        root.addView(first, extraRowParams());
+        root.addView(Ui.divider(this));
+        LinearLayout second = new LinearLayout(this);
+        speed = Ui.metricCell(this, second, "当前时速", "--", "km/h", Ui.WHITE, 29);
+        maxSpeed = Ui.metricCell(this, second, "最高时速", "--", "km/h", Ui.WHITE, 29);
+        root.addView(second, extraRowParams());
+        root.addView(Ui.divider(this));
+        LinearLayout third = new LinearLayout(this);
+        steps = Ui.metricCell(this, third, "步数", "0", "步", Ui.YELLOW, 29);
+        maxHeart = Ui.metricCell(this, third, "最高心率", "--", "次/分", Ui.RED, 29);
+        root.addView(third, extraRowParams());
+
+        root.addView(Ui.pagerDots(this, 2, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
+        return root;
+    }
+
+    private LinearLayout.LayoutParams extraRowParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, 0, 1);
+        params.topMargin = Ui.dp(this, 7); params.bottomMargin = Ui.dp(this, 7);
+        return params;
+    }
+
+    /** Routine pause is yellow/continue green; the destructive stop action remains tonal red. */
     private LinearLayout buildControlPage() {
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.setPadding(Ui.dp(this, 18), Ui.dp(this, 14), Ui.dp(this, 18), Ui.dp(this, 10));
+        page.setPadding(Ui.dp(this, 20), Ui.dp(this, 10), Ui.dp(this, 20), Ui.dp(this, 4));
         page.setBackgroundColor(Ui.BLACK);
-        TextView eyebrow = Ui.text(this, "训练控制", 12, Ui.MUTED); eyebrow.setGravity(Gravity.CENTER);
-        page.addView(eyebrow, new LinearLayout.LayoutParams(-1, Ui.dp(this, 30)));
-        TextView title = Ui.bold(this, "保持节奏", 26, Ui.WHITE); title.setGravity(Gravity.CENTER);
-        page.addView(title, new LinearLayout.LayoutParams(-1, Ui.dp(this, 44)));
+
+        LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(Ui.workoutGlyph(this, Ui.RED),
+                new LinearLayout.LayoutParams(Ui.dp(this, 34), Ui.dp(this, 34)));
+        TextView title = Ui.bold(this, "训练控制", 18, Ui.WHITE);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -1, 1);
+        titleParams.leftMargin = Ui.dp(this, 9); header.addView(title, titleParams);
+        controlState = Ui.chip(this, "训练中", Ui.LIME, Color.rgb(30, 48, 14));
+        header.addView(controlState, new LinearLayout.LayoutParams(Ui.dp(this, 82), Ui.dp(this, 26)));
+        page.addView(header, new LinearLayout.LayoutParams(-1, Ui.dp(this, 40)));
+
+        controlDuration = Ui.numeral(this, "00:00", 43, Ui.WHITE); controlDuration.setGravity(Gravity.CENTER);
+        page.addView(controlDuration, new LinearLayout.LayoutParams(-1, Ui.dp(this, 54)));
+        controlSummary = Ui.text(this, "", Ui.LABEL, Ui.MUTED); controlSummary.setGravity(Gravity.CENTER);
+        page.addView(controlSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
+
         page.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
         controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER);
-        pause = roundControl("Ⅱ", "暂停", Ui.GREEN);
-        stop = roundControl("■", "长按结束", Ui.RED);
-        LinearLayout.LayoutParams action = new LinearLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 104));
-        action.rightMargin = Ui.dp(this, 18); controls.addView(pause, action);
-        controls.addView(stop, new LinearLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 104)));
-        page.addView(controls, new LinearLayout.LayoutParams(-1, Ui.dp(this, 122)));
-        TextView instruction = Ui.text(this, "轻触暂停  ·  长按结束", 12, Ui.MUTED); instruction.setGravity(Gravity.CENTER);
-        page.addView(instruction, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
+        pause = roundControl("Ⅱ", "暂停", Ui.YELLOW, true);
+        stop = roundControl("■", "结束", Ui.RED, false);
+        LinearLayout.LayoutParams action = new LinearLayout.LayoutParams(Ui.dp(this, 102), Ui.dp(this, 102));
+        action.rightMargin = Ui.dp(this, 20); controls.addView(pause, action);
+        controls.addView(stop, new LinearLayout.LayoutParams(Ui.dp(this, 102), Ui.dp(this, 102)));
+        page.addView(controls, new LinearLayout.LayoutParams(-1, Ui.dp(this, 114)));
+        TextView instruction = Ui.text(this, "轻触暂停 · 长按结束", Ui.CAPTION, Ui.MUTED); instruction.setGravity(Gravity.CENTER);
+        page.addView(instruction, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
         page.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        page.addView(Ui.pagerDots(this, 0, 3), new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
-        TextView hint = Ui.text(this, "向左滑返回数据", 10, Ui.MUTED); hint.setGravity(Gravity.CENTER);
-        page.addView(hint, new LinearLayout.LayoutParams(-1, Ui.dp(this, 16)));
-        pause.setOnClickListener(v -> { if (workoutCompleted) stopAndFinish(); else if (service != null) service.togglePause(); });
+        page.addView(Ui.pagerDots(this, 0, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
+        pause.setOnClickListener(v -> { if (service != null) service.togglePause(); });
         stop.setOnLongClickListener(v -> { confirmStop(); return true; });
         stop.setOnClickListener(v -> android.widget.Toast.makeText(this, "长按结束训练", android.widget.Toast.LENGTH_SHORT).show());
         return page;
     }
 
-    private TextView roundControl(String symbol, String label, int color) {
-        TextView button = Ui.bold(this, symbol + "\n" + label, 17, Ui.BLACK);
-        button.setSingleLine(false); button.setGravity(Gravity.CENTER); button.setLineSpacing(0, .86f);
-        button.setBackground(Ui.ovalAction(this, color)); button.setClickable(true); button.setFocusable(true);
-        return button;
+    /**
+     * @param primary the routine action gets the solid fill; the destructive one stays tonal so
+     *                the two circles no longer compete for the same visual weight.
+     */
+    private TextView roundControl(String symbol, String label, int color, boolean primary) {
+        TextView button = Ui.bold(this, symbol + "\n" + label, Ui.BODY, primary ? Ui.BLACK : color);
+        button.setSingleLine(false);
+        button.setGravity(Gravity.CENTER);
+        button.setLineSpacing(0, 1.05f);
+        button.setBackground(primary ? Ui.ovalAction(this, color) : Ui.tonalOvalAction(this, color, 38, 130));
+        button.setClickable(true);
+        button.setFocusable(true);
+        return Ui.pressable(button);
     }
 
-    private void setControlsForCompletion(boolean completed) {
+    private void setControlsForCompletion(boolean paused) {
         if (pause == null || stop == null) return;
-        pause.setText(completed ? "✓\n完成" : service != null && service.snapshot().paused ? "▶\n继续" : "Ⅱ\n暂停");
-        stop.setVisibility(completed ? View.GONE : View.VISIBLE);
+        Ui.setTextIfChanged(pause, paused ? "▶\n继续" : "Ⅱ\n暂停");
+        Ui.setTextColorIfChanged(pause, Ui.BLACK);
+        if (!pauseStyleInitialized || displayedPauseStyle != paused) {
+            displayedPauseStyle = paused;
+            pauseStyleInitialized = true;
+            pause.setBackground(Ui.ovalAction(this, paused ? Ui.GREEN : Ui.YELLOW));
+        }
+        if (stop.getVisibility() != View.VISIBLE) stop.setVisibility(View.VISIBLE);
     }
 
-    private TextView metric(LinearLayout row, String label, String initial) {
-        LinearLayout cell = new LinearLayout(this); cell.setOrientation(LinearLayout.VERTICAL); cell.setGravity(Gravity.CENTER);
-        TextView caption = Ui.text(this, label, 10, Ui.MUTED); caption.setGravity(Gravity.CENTER);
-        TextView value = Ui.bold(this, initial, 19, Ui.WHITE); value.setGravity(Gravity.CENTER);
-        cell.addView(caption, new LinearLayout.LayoutParams(-1, Ui.dp(this, 22)));
-        cell.addView(value, new LinearLayout.LayoutParams(-1, Ui.dp(this, 34)));
-        row.addView(cell, new LinearLayout.LayoutParams(0, -1, 1));
-        return value;
+    /**
+     * Kilometre lap card, shown for a few seconds when a split completes — mirrors the auto-lap
+     * flash every running watch does. First refresh only syncs the counter so recovering an
+     * in-progress session does not replay an old lap.
+     */
+    private void maybeShowSplit(WorkoutService.Snapshot s) {
+        if (displayedSplitCount < 0) { displayedSplitCount = s.live.splitCount; return; }
+        if (s.live.splitCount <= displayedSplitCount) return;
+        displayedSplitCount = s.live.splitCount;
+        if (splitNotice == null) return;
+        splitTitle.setText(String.format(Locale.CHINA, "第 %d 公里", s.live.lastSplitIndex));
+        splitDetail.setText("配速 " + SpeedFusion.formatPace(s.live.lastSplitPaceSecondsPerKm));
+        splitNotice.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideSplit);
+        handler.postDelayed(hideSplit, 3_000L);
+    }
+
+    private final Runnable hideSplit = new Runnable() { @Override public void run() {
+        if (splitNotice != null) splitNotice.setVisibility(View.GONE);
+    }};
+
+    private LinearLayout buildSplitNotice() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER);
+        panel.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 14));
+        panel.setBackground(Ui.outlinedBackground(this, Ui.PANEL_ACTIVE, Ui.YELLOW, 24));
+        panel.setVisibility(View.GONE);
+        splitTitle = Ui.numeral(this, "", 30, Ui.YELLOW); splitTitle.setGravity(Gravity.CENTER);
+        splitDetail = Ui.numeral(this, "", 20, Ui.WHITE); splitDetail.setGravity(Gravity.CENTER);
+        panel.addView(splitTitle, new LinearLayout.LayoutParams(-1, Ui.dp(this, 42)));
+        panel.addView(splitDetail, new LinearLayout.LayoutParams(-1, Ui.dp(this, 30)));
+        return panel;
     }
 
     private LinearLayout buildTransitionNotice() {
@@ -194,7 +387,7 @@ public class TrainingActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(Gravity.CENTER);
         panel.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
-        panel.setBackground(Ui.background(this, Ui.PANEL_ACTIVE, 8));
+        panel.setBackground(Ui.outlinedBackground(this, Ui.PANEL_ACTIVE, Ui.LIME, 24));
         panel.setFocusable(true);
         panel.setFocusableInTouchMode(true);
         // The notice is an overlay, so it must start hidden.  Starting it visible
@@ -210,7 +403,7 @@ public class TrainingActivity extends Activity {
     private LinearLayout buildRoutePanel() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
+        panel.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 4));
         panel.setBackgroundColor(Ui.BLACK);
         panel.setClickable(true);
         panel.setFocusable(true);
@@ -220,26 +413,28 @@ public class TrainingActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView close = Ui.action(this, "‹", 30, Ui.WHITE, Ui.PANEL);
-        header.addView(close, new LinearLayout.LayoutParams(Ui.dp(this, 42), Ui.dp(this, 42)));
-        TextView title = Ui.bold(this, "运动轨迹", 21, Ui.WHITE);
-        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 42), 1));
-        TextView live = Ui.text(this, "实时", 11, Ui.LIME);
-        live.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        header.addView(live, new LinearLayout.LayoutParams(Ui.dp(this, 54), Ui.dp(this, 42)));
-        panel.addView(header);
+        TextView close = Ui.backButton(this);
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(Ui.dp(this, 34), Ui.dp(this, 34));
+        closeParams.rightMargin = Ui.dp(this, 8);
+        header.addView(close, closeParams);
+        TextView title = Ui.bold(this, "运动轨迹", 19, Ui.WHITE);
+        header.addView(title, new LinearLayout.LayoutParams(0, Ui.dp(this, 38), 1));
+        TextView live = Ui.chip(this, "实时", Ui.LIME, Color.rgb(30, 48, 14));
+        header.addView(live, new LinearLayout.LayoutParams(Ui.dp(this, 54), Ui.dp(this, 24)));
+        panel.addView(header, new LinearLayout.LayoutParams(-1, Ui.dp(this, 40)));
 
         routeView = new WorkoutRouteView(this);
+        routeView.setActive(false);
         routeView.setBackground(Ui.background(this, Color.rgb(15, 22, 23), 18));
         LinearLayout.LayoutParams mapParams = new LinearLayout.LayoutParams(-1, 0, 1);
         mapParams.topMargin = Ui.dp(this, 4); panel.addView(routeView, mapParams);
         routeSummary = Ui.text(this, "等待有效定位轨迹", 12, Ui.MUTED);
         routeSummary.setGravity(Gravity.CENTER);
-        panel.addView(routeSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 38)));
-        TextView hint = Ui.text(this, "红色为起点 · 白色为当前位置", 11, Ui.MUTED);
+        panel.addView(routeSummary, new LinearLayout.LayoutParams(-1, Ui.dp(this, 32)));
+        TextView hint = Ui.text(this, "红色起点 · 白色当前位置", 10, Ui.MUTED);
         hint.setGravity(Gravity.CENTER);
-        panel.addView(hint, new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
-        panel.addView(Ui.pagerDots(this, 2, 3), new LinearLayout.LayoutParams(-1, Ui.dp(this, 20)));
+        panel.addView(hint, new LinearLayout.LayoutParams(-1, Ui.dp(this, 17)));
+        panel.addView(Ui.pagerDots(this, 4, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
         close.setOnClickListener(v -> hideRoute());
         return panel;
     }
@@ -248,14 +443,14 @@ public class TrainingActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
-        panel.setBackground(Ui.background(this, Ui.PANEL_ACTIVE, 18));
+        panel.setBackground(Ui.background(this, Ui.PANEL_ACTIVE, 24));
         panel.setVisibility(View.GONE);
         TextView title = Ui.bold(this, "结束本次训练？", 19, Ui.WHITE);
         panel.addView(title, new LinearLayout.LayoutParams(-1, Ui.dp(this, 30)));
         TextView hint = Ui.text(this, "记录会立即停止", 12, Ui.MUTED);
         panel.addView(hint, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
         LinearLayout choices = new LinearLayout(this);
-        TextView cancel = Ui.action(this, "继续训练", 15, Ui.WHITE, Ui.PANEL);
+        TextView cancel = Ui.action(this, "继续训练", 15, Ui.BLACK, Ui.LIME);
         TextView confirm = Ui.action(this, "结束", 15, Ui.WHITE, Ui.RED);
         LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1);
         cancelParams.rightMargin = Ui.dp(this, 7);
@@ -271,6 +466,7 @@ public class TrainingActivity extends Activity {
     @Override public void onStop() {
         handler.removeCallbacks(update);
         handler.removeCallbacks(hideTransition);
+        handler.removeCallbacks(hideSplit);
         if (bound) { unbindService(connection); bound = false; service = null; }
         super.onStop();
         // During an active workout this task owns the foreground just like the
@@ -293,82 +489,191 @@ public class TrainingActivity extends Activity {
 
     private void refresh() {
         if (service == null) return;
-        WorkoutService.Snapshot s = service.snapshot();
-        String stageSummary = s.stageName + " " + stageTargetText(s);
-        if (!s.completed && displayedStage > 0 && s.stageNumber > displayedStage) showTransition(lastStageSummary, stageSummary);
-        displayedStage = s.stageNumber;
-        if (!s.completed) lastStageSummary = stageSummary;
-        workoutCompleted = s.completed;
-
-        int accent = s.completed ? Ui.LIME : s.paused ? Ui.MUTED : s.waitingForGps ? Ui.AMBER : s.stageName.equals("快走") ? Ui.CYAN : s.stageName.equals("休息") ? Ui.AMBER : Ui.LIME;
-        stageName.setText(s.completed ? "训练完成" : s.paused ? s.stageName + " · 已暂停" : s.waitingForGps ? s.stageName + " · 等待信号" : s.stageName);
-        stageName.setTextColor(accent);
-        stageCounter.setText(String.format(Locale.CHINA, "阶段 %d / %d", s.stageNumber, s.stageCount));
-        if (s.completed) {
-            remainingLabel.setText("本次计划");
-            remaining.setText("完成");
-            stageProgress.setText("训练记录已保存");
-            hideStopConfirmation();
-        } else if (s.waitingForGps && !s.paused) {
-            remainingLabel.setText("移动后自动开始记录");
-            remaining.setText("等待");
-            stageProgress.setText(gpsAcquisitionDetail(s) + " · 目标 " + stageTargetText(s));
-        } else {
-            remainingLabel.setText(s.unit == Stage.Unit.DISTANCE ? "剩余距离" : "剩余时间");
-            if (s.unit == Stage.Unit.DISTANCE) remaining.setText(String.format(Locale.CHINA, "%d m", s.remaining));
-            else remaining.setText(String.format(Locale.CHINA, "%d:%02d", s.remaining / 60, s.remaining % 60));
-            stageProgress.setText(s.paused ? "训练已暂停" : stageProgressText(s));
+        // Keep the finger path and settle frames allocation-free. The settled callback below
+        // immediately applies a fresh snapshot, so visible metrics lag by at most one page motion.
+        if (workoutPager != null && workoutPager.isInMotion()) {
+            refreshDeferredByPager = true;
+            return;
         }
-        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
-        progress.setProgress((int)(s.progress * 1000));
-        distance.setText(formatDistance(s.totalMeters));
-        pace.setText(formatPace(s));
-        heart.setText(heartStatus(s));
-        steps.setText(s.sessionSteps + " 步");
-        duration.setText(formatDuration(s.activeMillis));
-        if (routeView != null) routeView.setRoute(s.routeLatitudes, s.routeLongitudes);
-        if (routeSummary != null) {
+        refreshDeferredByPager = false;
+        WorkoutService.Snapshot s = service.snapshot(routePageSettled);
+        lastUiSnapshot = s;
+        lastUiSnapshotElapsed = SystemClock.elapsedRealtime();
+        renderSnapshot(s);
+    }
+
+    /** Update only the settled page; hidden pages receive the same snapshot when entered. */
+    private void renderSnapshot(WorkoutService.Snapshot s) {
+        int visiblePage = workoutPager == null ? CORE_PAGE : workoutPager.getCurrentItem();
+        String stageSummary = s.stageName + " " + stageTargetText(s);
+        if (!s.planCompleted && displayedStage > 0 && s.stageNumber > displayedStage) showTransition(lastStageSummary, stageSummary);
+        displayedStage = s.stageNumber;
+        if (!s.planCompleted) lastStageSummary = stageSummary;
+        workoutCompleted = false;
+
+        int accent = s.planCompleted ? Ui.CYAN : s.paused ? Ui.MUTED : s.waitingForGps ? Ui.AMBER : s.stageName.equals("快走") ? Ui.CYAN : s.stageName.equals("休息") ? Ui.AMBER : Ui.LIME;
+        if (visiblePage == STAGE_PAGE) {
+            Ui.setTextIfChanged(stageName, s.planCompleted
+                    ? (s.paused ? "自由记录 · 已暂停" : "自由记录")
+                    : s.paused ? s.stageName + " · 已暂停"
+                    : s.waitingForGps ? s.stageName + " · 等待信号" : s.stageName);
+            Ui.setTextColorIfChanged(stageName, accent);
+            Ui.setTextIfChanged(stageCounter,
+                    String.format(Locale.CHINA, "第 %d/%d 项", s.stageNumber, s.stageCount));
+            Ui.setTextColorIfChanged(stageCounter, accent);
+            if (displayedStageAccent != accent) {
+                displayedStageAccent = accent;
+                stageCounter.setBackground(Ui.background(this,
+                        Color.argb(45, Color.red(accent), Color.green(accent), Color.blue(accent)), 14));
+            }
+            if (s.planCompleted) {
+                Ui.setTextIfChanged(remainingLabel, "计划已完成");
+                Ui.setTextIfChanged(remaining, Format.duration(Math.max(0, s.activeMillis)));
+                Ui.setTextIfChanged(stageProgress, "继续记录中 · 手动结束后保存");
+            } else {
+                if (s.waitingForGps && !s.paused) {
+                    Ui.setTextIfChanged(remainingLabel, "移动后开始");
+                    Ui.setTextIfChanged(remaining, "等待");
+                    Ui.setTextIfChanged(stageProgress,
+                            gpsAcquisitionDetail(s) + " · 目标 " + stageTargetText(s));
+                } else {
+                    Ui.setTextIfChanged(remainingLabel,
+                            s.unit == Stage.Unit.DISTANCE ? "剩余距离" : "剩余时间");
+                    if (s.unit == Stage.Unit.DISTANCE) {
+                        Ui.setTextIfChanged(remaining,
+                                String.format(Locale.CHINA, "%d m", s.remaining));
+                    } else {
+                        Ui.setTextIfChanged(remaining,
+                                String.format(Locale.CHINA, "%d:%02d",
+                                        s.remaining / 60, s.remaining % 60));
+                    }
+                    Ui.setTextIfChanged(stageProgress,
+                            s.paused ? "训练已暂停" : stageProgressText(s));
+                }
+            }
+            ring.set(s.planCompleted ? 1f : (float) s.progress, accent);
+        }
+
+        boolean paceLive = Double.isFinite(s.currentSpeedMps)
+                && s.currentSpeedMps >= SpeedFusion.MOVING_THRESHOLD_MPS;
+        if (visiblePage == CORE_PAGE) {
+            Ui.setTextIfChanged(coreHeader, s.planCompleted ? "自由记录"
+                    : String.format(Locale.CHINA, "%s · 第 %d/%d 项%s",
+                            s.stageName, s.stageNumber, s.stageCount, s.paused ? " · 已暂停" : ""));
+            Ui.setTextColorIfChanged(coreHeader, accent);
+            Ui.setTextIfChanged(trainClock, clockFormat.format(new java.util.Date()));
+            Ui.setTextIfChanged(distance,
+                    String.format(Locale.CHINA, "%.2f", Math.max(0d, s.totalMeters) / 1000d));
+            Ui.setTextIfChanged(pace, formatCurrentPace(s));
+            Ui.setTextColorIfChanged(pace, paceLive ? Ui.CYAN : Ui.MUTED);
+            Ui.setTextIfChanged(heart, s.heartRate > 0 ? String.valueOf(s.heartRate) : "--");
+            Ui.setTextColorIfChanged(heart,
+                    s.live.heartRateZone > 0
+                            ? Ui.ZONE_COLORS[s.live.heartRateZone - 1] : Ui.MUTED);
+            zoneBar.set(s.live.heartRateZone);
+            heartTrace.setSamples(s.heartRate > 0 ? s.live.heartRateTrace : null);
+            Ui.setTextIfChanged(duration, Format.duration(s.activeMillis));
+            Ui.setTextIfChanged(cadence,
+                    s.live.cadenceSpm > 0 ? String.valueOf(s.live.cadenceSpm) : "--");
+            Ui.setTextIfChanged(climb, String.valueOf(Math.round(s.live.elevationGainMeters)));
+            Ui.setTextIfChanged(calories, String.valueOf(s.live.calories));
+            updateGpsStatus(s);
+        }
+
+        if (visiblePage == EXTRA_PAGE) {
+            Ui.setTextIfChanged(extraClock, clockFormat.format(new java.util.Date()));
+            Ui.setTextIfChanged(avgPace, s.live.avgPaceSecondsPerKm > 0
+                    ? SpeedFusion.formatPace(s.live.avgPaceSecondsPerKm) : "--");
+            Ui.setTextIfChanged(averageHeart, s.live.averageHeartRate > 0
+                    ? String.valueOf(s.live.averageHeartRate) : "--");
+            Ui.setTextIfChanged(speed, paceLive
+                    ? String.format(Locale.CHINA, "%.1f", s.currentSpeedMps * 3.6d) : "--");
+            Ui.setTextColorIfChanged(speed, paceLive ? Ui.WHITE : Ui.MUTED);
+            Ui.setTextIfChanged(maxSpeed,
+                    s.maxSmoothedSpeedMps >= SpeedFusion.MOVING_THRESHOLD_MPS
+                            ? String.format(Locale.CHINA, "%.1f", s.maxSmoothedSpeedMps * 3.6d) : "--");
+            Ui.setTextIfChanged(steps, String.valueOf(s.sessionSteps));
+            Ui.setTextIfChanged(maxHeart,
+                    s.live.maxHeartRate > 0 ? String.valueOf(s.live.maxHeartRate) : "--");
+        }
+
+        maybeShowSplit(s);
+
+        if (visiblePage == CONTROL_PAGE) {
+            Ui.setTextIfChanged(controlState,
+                    s.paused ? "已暂停" : s.planCompleted ? "自由记录中" : "训练中");
+            Ui.setTextColorIfChanged(controlState, s.paused ? Ui.AMBER : accent);
+            int controlTone = s.paused ? 1 : s.planCompleted ? 2 : 0;
+            if (displayedControlTone != controlTone) {
+                displayedControlTone = controlTone;
+                controlState.setBackground(Ui.background(this,
+                        s.paused ? Color.rgb(54, 37, 12)
+                                : s.planCompleted ? Color.rgb(13, 39, 48)
+                                : Color.rgb(30, 48, 14), 14));
+            }
+            Ui.setTextIfChanged(controlDuration, Format.duration(s.activeMillis));
+            Ui.setTextIfChanged(controlSummary, Format.distance(s.totalMeters)
+                    + (s.heartRate > 0 ? " · " + s.heartRate + " bpm" : ""));
+            setControlsForCompletion(s.paused);
+        }
+
+        // Heavy route work starts only after the pager is fully settled, never during the swipe.
+        if (visiblePage == ROUTE_PAGE && routeView != null && routePageSettled) {
+            routeView.setRoute(s.routeLatitudes, s.routeLongitudes);
             int points = Math.min(s.routeLatitudes.length, s.routeLongitudes.length);
-            routeSummary.setText(points > 0
-                    ? formatDistance(s.totalMeters) + " · " + points + " 个轨迹点 · " + formatDuration(s.activeMillis)
+            Ui.setTextIfChanged(routeSummary, points > 0
+                    ? Format.distance(s.totalMeters) + " · " + points + " 个轨迹点 · " + Format.duration(s.activeMillis)
                     : "等待有效定位轨迹 · 步数仍会准确记录");
         }
-        updateGpsStatus(s);
-        setControlsForCompletion(s.completed);
     }
 
     private void updateGpsStatus(WorkoutService.Snapshot s) {
-        if (s.completed) {
-            gps.setText("● 已保存"); gps.setTextColor(Ui.LIME);
-        } else if (s.usingSystemExerciseDistance) {
-            gps.setText("● 系统运动"); gps.setTextColor(Ui.LIME);
+        String text;
+        int color;
+        if (s.usingSystemExerciseDistance) {
+            text = "● 系统运动"; color = Ui.LIME;
         } else if (s.systemGpsLocated) {
             String signal = s.systemGpsSnr > 0 ? " " + Ui.systemGpsSignal(s.systemGpsSnr) : "";
-            gps.setText("● 系统定位" + signal); gps.setTextColor(Ui.LIME);
+            text = "● 系统定位" + signal; color = Ui.LIME;
         } else if (s.systemExerciseConnected) {
-            gps.setText("● 系统预热"); gps.setTextColor(Ui.CYAN);
+            text = "● 系统预热"; color = Ui.CYAN;
         } else if (s.usingStepDistance) {
-            gps.setText("● 实际步数估距"); gps.setTextColor(Ui.AMBER);
+            text = "● 实际步数估距"; color = Ui.AMBER;
         } else if (!s.gpsPermissionGranted) {
-            gps.setText("● GPS 未授权"); gps.setTextColor(Ui.RED);
+            text = "● GPS 未授权"; color = Ui.RED;
         } else if (!s.gpsProviderEnabled) {
-            gps.setText("● 定位已关闭"); gps.setTextColor(Ui.RED);
+            text = "● 定位已关闭"; color = Ui.RED;
         } else if (!s.gpsRequestActive) {
-            gps.setText("● GPS 未就绪"); gps.setTextColor(Ui.AMBER);
+            text = "● GPS 未就绪"; color = Ui.AMBER;
         } else if (s.hasGpsFix && s.gpsFixFromCache) {
             String accuracy = s.gpsAccuracyMeters > 0 ? " ±" + Math.round(s.gpsAccuracyMeters) + "m" : "";
-            gps.setText("● GPS 缓存" + accuracy); gps.setTextColor(Ui.AMBER);
+            text = "● GPS 缓存" + accuracy; color = Ui.AMBER;
         } else if (s.hasGpsFix) {
             String accuracy = s.gpsAccuracyMeters > 0 ? " ±" + Math.round(s.gpsAccuracyMeters) + "m" : "";
-            gps.setText("● GPS 轨迹" + accuracy); gps.setTextColor(Ui.LIME);
+            text = "● GPS 轨迹" + accuracy; color = Ui.LIME;
         } else if (s.gpsAccuracyMeters > 0) {
-            gps.setText("● GPS ±" + Math.round(s.gpsAccuracyMeters) + "m"); gps.setTextColor(Ui.AMBER);
+            text = "● GPS ±" + Math.round(s.gpsAccuracyMeters) + "m"; color = Ui.AMBER;
         } else if (s.gpsSatelliteCount > 0) {
             String visible = s.gpsSatellitesUsed > 0 ? s.gpsSatellitesUsed + "/" + s.gpsSatelliteCount : "搜星 " + s.gpsSatelliteCount;
-            gps.setText("● GPS " + visible); gps.setTextColor(Ui.AMBER);
+            text = "● GPS " + visible; color = Ui.AMBER;
         } else {
-            gps.setText(s.systemGpsAvailable ? "● 系统定位搜星" : "● 轨迹定位中"); gps.setTextColor(Ui.AMBER);
+            text = s.systemGpsAvailable ? "● 系统定位搜星" : "● 轨迹定位中";
+            color = Ui.AMBER;
         }
+        Ui.setTextIfChanged(gps, text);
+        Ui.setTextColorIfChanged(gps, color);
+    }
+
+    private void onWorkoutPageSettled(int item) {
+        boolean routeActive = item == ROUTE_PAGE;
+        routePageSettled = routeActive;
+        if (routeView != null) routeView.setActive(routeActive);
+        if (service == null) return;
+        boolean cachedFresh = lastUiSnapshot != null && !refreshDeferredByPager
+                && SystemClock.elapsedRealtime() - lastUiSnapshotElapsed <= 700L;
+        // Route coordinates are deliberately absent from hidden-page snapshots.
+        if (routeActive || !cachedFresh) refresh();
+        else renderSnapshot(lastUiSnapshot);
     }
 
     private String gpsAcquisitionDetail(WorkoutService.Snapshot s) {
@@ -389,24 +694,14 @@ public class TrainingActivity extends Activity {
         return "请到开阔户外";
     }
 
-    private String formatDistance(double meters) {
-        if (meters < 1000) return Math.round(meters) + " m";
-        return String.format(Locale.CHINA, "%.2f km", meters / 1000d);
-    }
-
-    private String formatPace(WorkoutService.Snapshot s) {
-        if (s.totalMeters < 10 || s.activeMillis < 1000) return s.totalMeters > 0 ? "采集中" : "-- /km";
-        long paceMillis = Math.round(s.activeMillis * 1000d / s.totalMeters);
-        return (s.usingStepDistance ? "约 " : "") + formatDuration(paceMillis) + " /km";
-    }
-
-    private String heartStatus(WorkoutService.Snapshot s) {
-        if (s.heartRate > 0) return s.heartRate + " bpm";
-        if (!s.heartSensorAvailable) return "不可用";
-        if (!s.heartPermissionGranted) return "未授权";
-        if (!s.heartSensorActive && !s.completed) return "未连接";
-        if (s.heartSensorWarmingUp) return "读取中";
-        return s.completed ? "-- bpm" : "请佩戴";
+    /** Minutes per kilometre, the reading runners actually pace by. */
+    private String formatCurrentPace(WorkoutService.Snapshot s) {
+        // A bare dash beats "--'--\"" as a placeholder: the prime marks read as broken glyphs at
+        // display size when there is no number between them.
+        if (!Double.isFinite(s.currentSpeedMps) || s.currentSpeedMps < SpeedFusion.MOVING_THRESHOLD_MPS) {
+            return "--";
+        }
+        return SpeedFusion.formatPace(1000d / s.currentSpeedMps);
     }
 
     private void showTransition(String previous, String next) {
@@ -422,16 +717,12 @@ public class TrainingActivity extends Activity {
         if (s.unit == Stage.Unit.DISTANCE) {
             return String.format(Locale.CHINA, "本阶段 %d / %s%s", Math.round(s.stageProgressValue), stageTargetText(s), s.usingStepDistance ? " · 步数估距" : "");
         }
-        return "本阶段 " + formatDuration((long)s.stageProgressValue) + " / " + stageTargetText(s);
+        return "本阶段 " + Format.duration((long)s.stageProgressValue) + " / " + stageTargetText(s);
     }
 
     private String stageTargetText(WorkoutService.Snapshot s) {
         if (s.unit == Stage.Unit.DISTANCE) return s.stageTarget >= 1000 && s.stageTarget % 1000 == 0 ? (s.stageTarget / 1000) + " km" : s.stageTarget + " m";
-        return formatDuration(s.stageTarget * 1000L);
-    }
-
-    private String formatDuration(long millis) {
-        long seconds = millis / 1000; return String.format(Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60);
+        return Format.duration(s.stageTarget * 1000L);
     }
 
     private void confirmStop() {
@@ -447,7 +738,7 @@ public class TrainingActivity extends Activity {
     }
 
     private void showRoute() {
-        if (workoutPager != null) workoutPager.setCurrentItem(2,true);
+        if (workoutPager != null) workoutPager.setCurrentItem(ROUTE_PAGE,true);
     }
 
     private void hideRoute() {

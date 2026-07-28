@@ -11,6 +11,7 @@ import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.IBinder;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -33,6 +34,7 @@ public class WatchBridgeService extends Service {
     private ServerSocket server;
     private NsdManager.RegistrationListener registration;
     private SystemSleepBridge sleepBridge;
+    private WatchCommandRouter commandRouter;
 
     static String pairingCode(Context context) {
         android.content.SharedPreferences preferences = context.getSharedPreferences("bridge", MODE_PRIVATE);
@@ -44,15 +46,18 @@ public class WatchBridgeService extends Service {
         return code;
     }
 
+    static synchronized String rotatePairingCode(Context context){String code=String.format(Locale.US,"%06d",new SecureRandom().nextInt(1_000_000));if(!context.getSharedPreferences("bridge",MODE_PRIVATE).edit().putString("pairing_code",code).commit())throw new IllegalStateException("pairing_code_rotation_failed");return code;}
+
     @Override public void onCreate() {
         super.onCreate();
-        sleepBridge = new SystemSleepBridge(this);
+        commandRouter = new WatchCommandRouter(this);
         NotificationChannel channel = new NotificationChannel(CHANNEL, "手机与 MCP 连接", NotificationManager.IMPORTANCE_MIN);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
         Notification notification = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher).setContentTitle("步序连接服务")
                 .setContentText("手机与电脑可同步训练数据").setOngoing(true).build();
         startForeground(73, notification);
+        BootReceiver.schedule(this);
         workers.execute(this::serve);
         registerNsd();
     }
@@ -94,10 +99,18 @@ public class WatchBridgeService extends Service {
             }
             String body = bodyBuilder.toString();
 
-            if (!pairingCode(this).equals(headers.get("x-pairing-code"))) { respond(socket, 401, error("pairing_required")); return; }
+            String credential=headers.get("x-pairing-code");if (!pairingCode(this).equals(credential)&&!WatchPairingStore.matchesLanCredential(this,credential)) { respond(socket, 401, error("pairing_required")); return; }
+            if (commandRouter != null) {
+                WatchCommandRouter.Result routed = commandRouter.route(method, path, body);
+                respond(socket, routed.status, routed.body);
+                return;
+            }
             if ("GET".equals(method) && "/v1/status".equals(path)) {
                 JSONObject status = new JSONObject().put("device", "OWW221").put("appVersion", BuildConfig.VERSION_NAME)
+                        .put("deviceId", deviceId()).put("protocolVersion", 2)
                         .put("activeSession", WorkoutService.hasRecoverableSession(this))
+                        .put("sessionState", WorkoutService.persistedSessionState(this))
+                        .put("planState", WorkoutService.persistedPlanState(this))
                         .put("backgroundLocation", checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED)
                         .put("transport", "lan-mdns").put("port", PORT);
                 respond(socket, 200, status.toString());
@@ -113,6 +126,8 @@ public class WatchBridgeService extends Service {
                 JSONObject library = PlanLibraryStore.replace(this, new JSONObject(body));
                 respond(socket, 200, new JSONObject().put("saved", true).put("revision", library.optLong("revision"))
                         .put("planCount", library.getJSONArray("plans").length()).put("selectedPlanId", library.optString("selectedPlanId")).toString());
+            } else if ("POST".equals(method) && "/v1/sync/operations".equals(path)) {
+                respond(socket, 200, applySyncOperations(new JSONObject(body)).toString());
             } else if ("PUT".equals(method) && "/v1/plan-selection".equals(path)) {
                 JSONObject selected = PlanLibraryStore.select(this, new JSONObject(body).optString("planId"));
                 respond(socket, 200, new JSONObject().put("selected", true).put("planId", selected.optString("id"))
@@ -136,6 +151,12 @@ public class WatchBridgeService extends Service {
                 int days = queryDays(path);
                 JSONObject sleep = sleepBridge.read(days);
                 respond(socket, 200, sleep.toString());
+            } else if ("GET".equals(method) && path.startsWith("/v1/history/") && path.contains("/route")) {
+                String id = historyId(path, "/route");
+                respond(socket, 200, HistoryStore.routePage(this, id, queryInt(path,"cursor",0,0,Integer.MAX_VALUE), queryInt(path,"limit",500,1,1000)).toString());
+            } else if ("GET".equals(method) && path.startsWith("/v1/history/") && path.contains("/heart")) {
+                String id = historyId(path, "/heart");
+                respond(socket, 200, HistoryStore.heartPage(this, id, queryInt(path,"cursor",0,0,Integer.MAX_VALUE), queryInt(path,"limit",500,1,1000)).toString());
             } else if ("GET".equals(method) && path.startsWith("/v1/history/")) {
                 WorkoutRecord record = HistoryStore.find(this, path.substring("/v1/history/".length()));
                 if (record == null) respond(socket, 404, error("workout_not_found"));
@@ -154,19 +175,39 @@ public class WatchBridgeService extends Service {
                     startService(relay); respond(socket, 200, "{\"accepted\":true}");
                 }
             } else if ("POST".equals(method) && path.startsWith("/v1/control/")) {
-                control(path.substring("/v1/control/".length())); respond(socket, 200, "{\"accepted\":true}");
+                JSONObject result = control(path.substring("/v1/control/".length()), body);
+                int status = result.optInt("httpStatus", 200); result.remove("httpStatus"); respond(socket, status, result.toString());
             } else respond(socket, 404, error("not_found"));
         } catch (Exception ignored) {}
     }
 
-    private void control(String action) {
+    private JSONObject control(String action, String body) throws Exception {
+        JSONObject command = body == null || body.isEmpty() ? new JSONObject() : new JSONObject(body);
+        String commandId = command.optString("commandId", java.util.UUID.randomUUID().toString());
+        JSONObject cached = commandCache().optJSONObject(commandId);
+        if (cached != null) return new JSONObject(cached.toString()).put("duplicate", true);
+        long expiresAt = command.optLong("expiresAt", Long.MAX_VALUE);
+        if (expiresAt < System.currentTimeMillis()) return cacheCommand(commandId, new JSONObject().put("accepted",false).put("error","command_expired").put("httpStatus",409));
+        String expected = command.optString("expectedState", "").toUpperCase(Locale.US);
+        String actual = WorkoutService.persistedSessionState(this);
+        if (!expected.isEmpty() && !expected.equals(actual)) return cacheCommand(commandId, new JSONObject().put("accepted",false).put("error","state_mismatch").put("actualState",actual).put("httpStatus",409));
         Intent intent = new Intent(this, WorkoutService.class);
         if ("start".equals(action)) intent.setAction(WorkoutService.ACTION_START).putExtra("plan", PlanStore.encode(PlanStore.load(this)));
-        else if ("pause".equals(action) || "resume".equals(action) || "toggle".equals(action)) intent.setAction(WorkoutService.ACTION_TOGGLE);
+        else if ("pause".equals(action)) intent.setAction(WorkoutService.ACTION_PAUSE);
+        else if ("resume".equals(action)) intent.setAction(WorkoutService.ACTION_RESUME);
+        else if ("toggle".equals(action)) intent.setAction(WorkoutService.ACTION_TOGGLE);
         else if ("stop".equals(action)) intent.setAction(WorkoutService.ACTION_STOP);
-        else return;
+        else return new JSONObject().put("accepted",false).put("error","invalid_action").put("httpStatus",422);
         startForegroundService(intent);
+        return cacheCommand(commandId, new JSONObject().put("accepted",true).put("commandId",commandId).put("action",action));
     }
+
+    private JSONObject commandCache() { try { return new JSONObject(getSharedPreferences("command_cache",MODE_PRIVATE).getString("items","{}")); } catch(Exception ignored){return new JSONObject();} }
+    private JSONObject cacheCommand(String id,JSONObject result){try{JSONObject cache=commandCache();cache.put(id,new JSONObject(result.toString()));JSONArray names=cache.names();if(names!=null&&names.length()>100)cache.remove(names.optString(0));getSharedPreferences("command_cache",MODE_PRIVATE).edit().putString("items",cache.toString()).apply();}catch(Exception ignored){}return result;}
+    private String deviceId(){android.content.SharedPreferences p=getSharedPreferences("bridge",MODE_PRIVATE);String id=p.getString("device_id","");if(id.isEmpty()){id=java.util.UUID.randomUUID().toString();p.edit().putString("device_id",id).apply();}return id;}
+    private String historyId(String path,String suffix){int start="/v1/history/".length(),end=path.indexOf(suffix,start);return path.substring(start,end);}
+    private int queryInt(String path,String name,int fallback,int min,int max){int q=path.indexOf('?');if(q<0)return fallback;for(String item:path.substring(q+1).split("&")){String[] pair=item.split("=",2);if(pair.length==2&&name.equals(pair[0]))try{return Math.max(min,Math.min(max,Integer.parseInt(pair[1])));}catch(Exception ignored){return fallback;}}return fallback;}
+    private JSONObject applySyncOperations(JSONObject request)throws Exception{JSONArray operations=request.optJSONArray("operations"),acks=new JSONArray();if(operations==null)return new JSONObject().put("acks",acks);android.content.SharedPreferences p=getSharedPreferences("processed_operations",MODE_PRIVATE);JSONObject processed;try{processed=new JSONObject(p.getString("items","{}"));}catch(Exception ignored){processed=new JSONObject();}for(int i=0;i<operations.length();i++){JSONObject op=operations.optJSONObject(i);if(op==null)continue;String id=op.optString("operationId");JSONObject ack=new JSONObject().put("operationId",id);if(processed.has(id)){acks.put(ack.put("status","already_applied"));continue;}if(!"plan_library".equals(op.optString("entityType"))||op.optJSONObject("payload")==null){acks.put(ack.put("status","invalid"));continue;}JSONObject current=PlanLibraryStore.load(this),payload=op.getJSONObject("payload");if(payload.optLong("revision")<current.optLong("revision")){acks.put(ack.put("status","conflict").put("libraryRevision",current.optLong("revision")));continue;}JSONObject saved=PlanLibraryStore.replace(this,payload);processed.put(id,System.currentTimeMillis());acks.put(ack.put("status","applied").put("libraryRevision",saved.optLong("revision")));}JSONArray names=processed.names();while(names!=null&&names.length()>500){processed.remove(names.optString(0));names=processed.names();}p.edit().putString("items",processed.toString()).apply();return new JSONObject().put("acks",acks);}
 
     private String error(String code) { try { return new JSONObject().put("error", code).toString(); } catch (Exception ignored) { return "{}"; } }
 
@@ -202,6 +243,7 @@ public class WatchBridgeService extends Service {
     @Override public void onDestroy() {
         closed = true; try { if (server != null) server.close(); } catch (Exception ignored) {}
         if (sleepBridge != null) sleepBridge.close();
+        if (commandRouter != null) commandRouter.close();
         try { if (registration != null) getSystemService(NsdManager.class).unregisterService(registration); } catch (Exception ignored) {}
         workers.shutdownNow(); super.onDestroy();
     }

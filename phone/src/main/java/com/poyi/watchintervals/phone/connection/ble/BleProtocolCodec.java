@@ -1,0 +1,42 @@
+package com.poyi.watchintervals.phone.connection.ble;
+
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+public final class BleProtocolCodec {
+    public static final int HEADER_BYTES=16,MAX_MESSAGE_BYTES=256_000;
+    private static final byte VERSION=1;
+
+    private BleProtocolCodec() {}
+
+    public static List<byte[]> encode(String messageId,byte[] payload,int mtu){
+        if(payload==null)payload=new byte[0];
+        if(payload.length>MAX_MESSAGE_BYTES)throw new IllegalArgumentException("message_too_large");
+        int chunk=Math.max(1,Math.min(512,mtu-3)-HEADER_BYTES),count=Math.max(1,(payload.length+chunk-1)/chunk);
+        if(count>65535)throw new IllegalArgumentException("too_many_frames");
+        UUID id=parseId(messageId);long token=id.getMostSignificantBits()^id.getLeastSignificantBits();ArrayList<byte[]> frames=new ArrayList<>(count);
+        for(int index=0;index<count;index++){int start=index*chunk,length=Math.min(chunk,payload.length-start);ByteBuffer value=ByteBuffer.allocate(HEADER_BYTES+length);value.put(VERSION).put((byte)(index==count-1?1:0)).putShort((short)index).putShort((short)count).putLong(token).putShort((short)length);if(length>0)value.put(payload,start,length);frames.add(value.array());}
+        return frames;
+    }
+
+    public static final class Assembler {
+        private static final long TIMEOUT_MILLIS=30_000L;
+        private final Map<Long,Pending> pending=new HashMap<>();
+        public synchronized Message accept(byte[] frame,long now){
+            cleanup(now);if(frame==null||frame.length<HEADER_BYTES)return null;ByteBuffer value=ByteBuffer.wrap(frame);if(value.get()!=VERSION)return null;value.get();int index=value.getShort()&0xffff,count=value.getShort()&0xffff;long id=value.getLong();int length=value.getShort()&0xffff;if(count<1||index>=count||length!=value.remaining())return null;
+            Pending item=pending.get(id);if(item==null){item=new Pending(count,now);pending.put(id,item);}if(item.frames.length!=count)return null;if(item.frames[index]==null){item.frames[index]=new byte[length];value.get(item.frames[index]);item.received++;item.total+=length;if(item.total>MAX_MESSAGE_BYTES){pending.remove(id);return null;}}
+            if(item.received!=count)return null;pending.remove(id);try{ByteArrayOutputStream output=new ByteArrayOutputStream(item.total);for(byte[] part:item.frames)output.write(part);return new Message(Long.toHexString(id),output.toByteArray());}catch(Exception ignored){return null;}
+        }
+        private void cleanup(long now){Iterator<Map.Entry<Long,Pending>> values=pending.entrySet().iterator();while(values.hasNext())if(now-values.next().getValue().createdAt>TIMEOUT_MILLIS)values.remove();}
+    }
+
+    public static final class Message { public final String messageId;public final byte[] payload;Message(String messageId,byte[] payload){this.messageId=messageId;this.payload=payload;} }
+    private static final class Pending { final byte[][] frames;final long createdAt;int received,total;Pending(int count,long createdAt){frames=new byte[count][];this.createdAt=createdAt;} }
+    private static UUID parseId(String value){try{return UUID.fromString(value);}catch(Exception ignored){return UUID.nameUUIDFromBytes(String.valueOf(value).getBytes(java.nio.charset.StandardCharsets.UTF_8));}}
+}
