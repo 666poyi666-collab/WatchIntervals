@@ -51,17 +51,17 @@
 
 手表 UI 继续使用 Java 动态 View，不引入第二套页面框架。`Ui` 是唯一公共视觉层：基于 378×496 画布缩放，提供 AMOLED 纯黑背景、运动语义色、表格数字、圆角面板、状态胶囊、运动员图标、指标网格、五区心率条、阶段环、页码与心率趋势。训练页的主要内容区使用剩余高度权重伸展到固定页码上方，不再用大块空 View 补齐画布。实时趋势只接收 `WorkoutService.Snapshot` 中实际有效的心率值；无样本时只显示文字空状态，禁止生成装饰性假曲线。主页保持三屏 pager，训练保持控制/综合仪表/训练数据/阶段/轨迹五屏，Activity 仍只消费服务快照并发送控制动作。
 
-轨迹地图继续通过 `AmapTileSource.fromWgs84` 将原始 WGS84 点映射到高德 GCJ-02；观察层使用道路矢量栅格，不使用卫星影像。语义暗色矩阵把陆地转为近黑、保留蓝灰河道、提亮文字/细路，并按暖色色差压暗橙色主干道。历史地图高度按 OWW221 系统运动资源值固定为 164dp；系统包络为横向 15dp、纵向 25dp，而 osmdroid 只支持统一值，因此使用 25dp，最大 zoom 18、单点 zoom 18，路线线宽 2.6dp。镜头和底图只改变观察方式，不改写落盘坐标。
+轨迹地图改用与 OWW221 系统运动同代的 Baidu Map SDK 7.5.9 原生矢量底图和项目既有本地暗色样式，不使用卫星影像或高德道路瓦片。`WorkoutRouteView` 把服务提供的原始 WGS84 点通过 SDK `CoordinateConverter(GPS)` 转为 BD-09LL，只转换观察层，落盘坐标不变。历史地图高度固定为系统资源值 164dp；相机取景使用横向 15dp、纵向 25dp 内容框，最大 zoom 19、单点 zoom 18，路线为 3dp 圆帽细线。
 
 定位继续沿用经过既有真机行为验证的容错边界：首次位置可接受到 200m，连续跟踪点可接受到 150m，并同时受时间间隔、速度和跳点过滤约束。`legacy` 历史里的 accuracy 可能来自旧 schema 迁移默认值，不得在没有原始采集证据时把它解释为每个 GNSS fix 的实测水平；历史详情必须保留并绘制原始合法坐标。界面可以展示数据来源与不确定性，但禁止用底图吸附、手工闭环或无依据删点改变历史几何。
 
-系统运动应用的旧路线不在 HealthKit `ExerciseSessionRecord` 中，而存于健康服务的 `sport_gps` 表，并经 `ISportAidlInterface2.queryGpsByte(sportId)` 返回压缩 protobuf。虽然 BinderProvider 外层 permission 标记为 normal，provider 内部仍校验调用包签名，第三方签名会得到 `signature not match`，因此本应用不能把该私有库当作稳定导入 API。系统运动使用 Baidu Map SDK 7.5.9 与自定义暗色样式，本应用当前因地图 AK 受包名/签名约束而使用 AMap 道路瓦片降级；两者道路层级、坐标系转换和样式不同，不能把视觉差异单独归因于定位精度。
+系统运动应用的旧路线不在 HealthKit `ExerciseSessionRecord` 中，而存于健康服务的 `sport_gps` 表，并经 `ISportAidlInterface2.queryGpsByte(sportId)` 返回压缩 protobuf。虽然 BinderProvider 外层 permission 标记为 normal，provider 内部仍校验调用包签名，第三方签名会得到 `signature not match`，因此本应用不能把该私有库当作稳定导入 API。系统运动和本应用的轨迹观察层现均使用 Baidu Map SDK 7.5.9 暗色矢量地图，但本应用只绘制自身保存的合法原始点，不读取或伪造系统私有路线。
 
 跑者图形由 `Ui.WorkoutGlyph` 以本地几何绘制：粗实心躯干、圆帽加权四肢和前倾重心保证 34–36 dp 下仍可辨识。按压由 `Ui.pressable()` 统一提供 `1 → 0.94 → 1` 的 RenderThread 缩放、轻微透明度与触觉反馈；准备倒计时复用 `Ui.popIn()`，每一拍单独触觉提示。实现只参考 OWW221 系统运动应用的视觉和交互原则，不复制厂商 path、图片、字体或其他专有资产。
 
 `WatchPagerLayout` 是主页和训练的唯一横向分页容器。它使用系统 paging touch slop、quintic ease-out 和按剩余距离计算的约 210–267 ms 吸附；固定页码由容器根据连续 `scrollX` 绘制，拖动时主动点同步位移并拉伸，不再由每页维护一组静态圆点。吸附过程中再次按下会接管仍有明显余量的运动，接近终点则先完成吸附，任何路径都必须回到整页。主页三张低频静态页可在空闲阶段预热当前页及相邻页的硬件层；训练五页包含每秒数据，禁止整页缓存，防止纹理持续失效反而增加合成成本。
 
-训练刷新以分页运动为背压边界：拖动和吸附期间不取新快照、不写 TextView，`OnPageSettledListener` 停稳后补一帧；平时只更新当前可见页。`WorkoutService.snapshot(false)` 在轨迹页隐藏时不构造两组坐标数组，服务仍是所有训练状态和原始轨迹的唯一所有者。`WorkoutRouteView` 只有在轨迹页停稳且可见时才按需创建/恢复 `MapView`，离页立即暂停；同一 `Polyline`、起终点 `Marker` 和位图跨刷新复用，前缀不变时只把新增坐标转换为 `GeoPoint`，镜头最多每 5 秒直接重算一次且不播放动画。历史详情先渲染指标，延迟 500 ms 激活地图，避免首屏与地图初始化争用主线程。
+训练刷新以分页运动为背压边界：拖动和吸附期间不取新快照、不写 TextView，`OnPageSettledListener` 停稳后补一帧；平时只更新当前可见页。`WorkoutService.snapshot(false)` 在轨迹页隐藏时不构造两组坐标数组，服务仍是所有训练状态和原始轨迹的唯一所有者。`WorkoutRouteView` 只有在轨迹页停稳且可见时才按需创建/恢复 Baidu `MapView`，离页立即暂停；同一 `Polyline`、起终点 `Marker` 和位图跨刷新复用，前缀不变时只转换新增坐标，镜头最多每 5 秒直接重算一次且不播放动画。历史详情先渲染指标，延迟 500 ms 激活地图，避免首屏与地图初始化争用主线程。
 
 ## 3. 核心状态和不变量
 
@@ -196,7 +196,7 @@ adb -s PHONE_SERIAL install -r phone/build/outputs/apk/debug/phone-debug.apk
 BAIDU_MAP_AK=YOUR_LOCAL_KEY
 ```
 
-默认值 `TOKEN` 只允许用于不依赖百度地图能力的开发构建。
+默认值 `TOKEN` 只允许编译不展示地图的开发构建；运行时会明确显示“地图授权待配置”，不得静默退回另一家底图。Android AK 必须绑定包名 `com.poyi.watchintervals` 和实际签名 SHA-1。
 
 ## 8. 编码规范
 

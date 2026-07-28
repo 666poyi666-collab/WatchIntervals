@@ -496,4 +496,11 @@
 - 删除未经户外验证的 35/50m 新门禁和对应测试，恢复既有 200m 获取/150m 连续跟踪边界；历史详情再次把全部原始合法点交给地图。OWW221 覆盖安装后原有 280 点轨迹已恢复，历史仍为 2 条，文件没有被改写。
 - 室内准备页 20 秒观察到 24 个卫星候选，但 GPS provider 的 last location 为 null、position accuracy reports 为 0；因此没有证据宣称当前已低于 35m，也不能用迁移元数据断言硬件达不到。开阔户外真实 fix 仍是 WT-024 的必要条件。
 - 对系统健康服务和运动包继续静态审计：HealthKit 注册的 `ExerciseSessionRecord` 只有时间、运动类型、时长、热量和心率摘要，不含路线；旧路线单独保存在 `sport_gps` 表，经 `ISportAidlInterface2.queryGpsByte(sportId)` 返回。BinderProvider 虽声明 normal permission，但内部还执行调用包签名校验，第三方签名会被 `signature not match` 拒绝。
-- 系统运动路线页使用 Baidu Map SDK 7.5.9 与自定义暗色样式，本应用当前受 Baidu AK 包名/签名绑定限制而使用 AMap 道路瓦片降级。两套 provider、坐标转换和道路层级不同，之前把不一致全部归因于 125m 精度同样不成立；BUG-037/038 保持 In Progress。
+- 系统运动路线页使用 Baidu Map SDK 7.5.9 与自定义暗色样式；之前的 AMap 降级与系统 provider、坐标转换和道路层级不同，把不一致全部归因于 125m 精度同样不成立。后续已撤销该降级，BUG-037/038 保持 In Progress。
+
+## 2026-07-29：轨迹观察层切换到系统同代百度矢量地图（REQ-UI-010、BUG-037）
+
+- 用户连续否决卫星图、高德暗色滤镜和仅调整缩放的候选，明确要求改用系统运动一类地图。手表模块现删除 `AmapTileSource` 和 osmdroid 依赖，接入仓库既有 Baidu Map SDK 7.5.9、本地暗色样式、原生 `Polyline`/`Marker` 与 GPS→BD-09LL 转换。
+- 轨迹数据仍来自 `WorkoutService`/历史文件原始合法点；只在观察层转换坐标，不读取签名保护的系统 `sport_gps`，不复制系统 AK，不吸附或重写路线。地图保持系统资源 164dp，包络横向 15dp/纵向 25dp，3dp 圆帽轨迹，离页暂停和 5 秒镜头节流继续保留。
+- 当前 Chrome 中的百度账号已登录，但尚停在开发者身份登记页；创建开发者身份和 Android AK 会修改外部账号，未在无确认情况下提交。代码在占位 AK 下会明确显示“地图授权待配置”，不再静默退回错误底图。
+- `:app:compileDebugJavaWithJavac :app:testDebugUnitTest` 与 `git diff --check` 已通过。由于缺少绑定 `com.poyi.watchintervals` 和实际签名 SHA-1 的有效 AK，本批次尚未安装新地图候选，WT-023 继续开放。
