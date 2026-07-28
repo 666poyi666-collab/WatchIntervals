@@ -126,9 +126,23 @@ final class EncryptedWatchSync {
             }
             throw new IllegalStateException("sync_pagination_did_not_converge");
         } catch (Exception failure) {
+            if (isRevokedDeviceTokenFailure(failure)) {
+                // A revoked credential is permanent for this device. Retrying it through
+                // WorkManager only wastes battery and obscures the actionable state. Keep the
+                // encrypted local state intact so an explicitly approved replacement can recover
+                // it, but discard the unusable bearer immediately.
+                CloudSyncCredentials.clearRevokedDeviceToken(context);
+                CloudSyncCredentials.recordResult(context, 0, "device_token_revoked");
+                return false;
+            }
             CloudSyncCredentials.recordResult(context, 0, failure.getClass().getSimpleName());
             return false;
         }
+    }
+
+    static boolean isRevokedDeviceTokenFailure(Exception failure) {
+        return failure instanceof CloudHttpException
+                && ((CloudHttpException) failure).statusCode == HttpURLConnection.HTTP_UNAUTHORIZED;
     }
 
     private static SyncInput collectLocalEntities(Context context) {
@@ -205,12 +219,21 @@ final class EncryptedWatchSync {
             try (InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream()) {
                 response = readBounded(input, MAX_RESPONSE_BYTES);
             }
-            if (status < 200 || status >= 300) throw new IllegalStateException("cloud_http_" + status);
+            if (status < 200 || status >= 300) throw new CloudHttpException(status);
             JSONObject parsed = new JSONObject(response);
             validateExchangeResponse(parsed);
             return parsed;
         } finally {
             connection.disconnect();
+        }
+    }
+
+    static final class CloudHttpException extends Exception {
+        final int statusCode;
+
+        CloudHttpException(int statusCode) {
+            super("cloud_http_" + statusCode);
+            this.statusCode = statusCode;
         }
     }
 

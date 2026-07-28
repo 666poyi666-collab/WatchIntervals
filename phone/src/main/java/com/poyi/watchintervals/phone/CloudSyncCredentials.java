@@ -135,6 +135,12 @@ final class CloudSyncCredentials {
         catch (Exception unavailable) { return false; }
     }
 
+    /** Stops background retries after the server has revoked this device credential. */
+    static void clearRevokedDeviceToken(Context context) {
+        prefs(context).edit().remove(TOKEN_CIPHERTEXT).remove(TOKEN_NONCE).commit();
+        EncryptedWatchSyncWorker.cancel(context.getApplicationContext());
+    }
+
     /** Explicit first-device action. Existing roots are never overwritten by this method. */
     static boolean initializeNewRoot(Context context) throws Exception {
         Config config = load(context);

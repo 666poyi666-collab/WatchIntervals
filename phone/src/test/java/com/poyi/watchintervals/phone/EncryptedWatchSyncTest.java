@@ -15,6 +15,13 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 public class EncryptedWatchSyncTest {
+
+    @Test public void onlyUnauthorizedCloudResponsesRetireTheDeviceToken() {
+        assertTrue(EncryptedWatchSync.isRevokedDeviceTokenFailure(
+                new EncryptedWatchSync.CloudHttpException(401)));
+        assertFalse(EncryptedWatchSync.isRevokedDeviceTokenFailure(
+                new EncryptedWatchSync.CloudHttpException(403)));
+    }
     private static final String DEVICE_ID = "watch-device-test";
 
     @Test public void stableJsonAndAadAreCanonical() throws Exception {
