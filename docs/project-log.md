@@ -498,6 +498,13 @@
 - 对系统健康服务和运动包继续静态审计：HealthKit 注册的 `ExerciseSessionRecord` 只有时间、运动类型、时长、热量和心率摘要，不含路线；旧路线单独保存在 `sport_gps` 表，经 `ISportAidlInterface2.queryGpsByte(sportId)` 返回。BinderProvider 虽声明 normal permission，但内部还执行调用包签名校验，第三方签名会被 `signature not match` 拒绝。
 - 系统运动路线页使用 Baidu Map SDK 7.5.9 与自定义暗色样式；之前的 AMap 降级与系统 provider、坐标转换和道路层级不同，把不一致全部归因于 125m 精度同样不成立。后续已撤销该降级，BUG-037/038 保持 In Progress。
 
+## 2026-07-29：训练完成云同步与 Watch authority 本地闭环（REQ-SYNC-015 至 017、BUG-039）
+
+- 手表只在历史成功落盘或真实删除后，经当前已认证 AES-GCM BLE 会话发送 exact two-field `history_changed` 提示；手机严格校验 version/event/replyTo/status 且拒绝多余字段，只 enqueue 网络约束 `ExistingWorkPolicy.KEEP` 任务。BLE/LAN 重连和 15 分钟周期继续补偿断联、进程回收、Doze 与重启漏事件；电脑、ADB 和 Windows MCP 不进入同步数据面。
+- 手机仍以同一持久 state 提交 ACK 删除、远端 materialize、conflict、projection pending 和单调 cursor；计划删除仅来自 schema 3 tombstone，训练保持 create-once。两端 `allowBackup=false`，boot receiver 改为 `exported=false` 且代码只接受系统 `BOOT_COMPLETED`，app-private watchdog receiver 仍校验专用 action。
+- Watch Worker 的 encrypted D1 authority 与最小 read projection 完成本地闭环；OAuth `watch:read` 只读实际计划名、粗粒度训练、同步状态和活动汇总。新增 service-binding-only observation，精确要求 vendor `Accept`、独立 `Capability` 与完整 `/authority/watch` audience；D1 authority checkpoint 只由真实状态变化推进，同 revision observation 持久化不变，过期/损坏/额外字段/依赖失败/revision 缺失均 fail closed，Worker 不签名。
+- 本地证据：Android `test lint :app:assembleDebug :phone:assembleDebug --rerun-tasks` 为 140/140 tasks 成功，debug/release 共 156 次 JVM test execution（78 个唯一测试、0 失败）；Worker schema 5、D1 8、static 6、黑盒 34 项和 TypeScript typecheck 全部通过。未执行部署、远端迁移、ADB、真机、设备/系统重启、staging 或 PC-off；这些仍由 WT-025、PT-016 至 020、BLE-011 和 API-024 的 staging 段阻断。
+
 ## 2026-07-29：轨迹观察层切换到系统同代百度矢量地图（REQ-UI-010、BUG-037）
 
 - 用户连续否决卫星图、高德暗色滤镜和仅调整缩放的候选，明确要求改用系统运动一类地图。手表模块现删除 `AmapTileSource` 和 osmdroid 依赖，接入仓库既有 Baidu Map SDK 7.5.9、本地暗色样式、原生 `Polyline`/`Marker` 与 GPS→BD-09LL 转换。

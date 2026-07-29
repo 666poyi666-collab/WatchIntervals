@@ -374,6 +374,17 @@
 - 处理：删除未经验证的 35/50m 新门禁，恢复既有 200m 获取/150m 连续跟踪边界；历史详情重新把所有原始合法点传给 `WorkoutRouteView`，不删除、不吸附、不伪造闭环。后续把“采集实测精度”和“迁移估计值”分字段处理，不能再让元数据不确定性抹掉路线。
 - 验证：关联 `WT-024`。OWW221 已重新显示原有 2.43km、280 点路线，历史仍为 2 条。室内准备页 20 秒只观察到 24 个卫星候选，GPS provider 的 last location 仍为 null、accuracy report 为 0，因此当前没有证据宣称可定位到 35m 以下；需在开阔户外取得真实 fix 后继续验证。本项保持 In Progress。
 
+### BUG-039：训练成功落盘后手机不会立即触发 V2 云同步
+
+- 状态：Fixed，待手机/手表真机与 PC-off 验证
+- 严重度：P1
+- 影响：Watch 0.21.0 / Phone 0.22.0 首个加密 V2 候选
+- 现象：手机虽有 boot、network、Doze 和 15 分钟周期 WorkManager，但手表训练完成后没有业务入口主动 enqueue；用户可能在周期任务前从云端 MCP 读不到刚完成的训练。
+- 根因：`BleGattTransport.subscribe()` 已实现未匹配安全消息分发，但 `WatchConnectionManager` 没有注册 listener，`HistoryStore`/`WatchLinkService` 也没有发出历史变化提示。
+- 处理：训练成功落盘或真实删除后，手表向已认证且订阅 indication 的手机发送严格两字段、无业务数据的 `history_changed` 安全事件；手机 exact-key/version 校验后 enqueue 网络约束唯一任务。BLE/LAN 成功重连也 enqueue，15 分钟周期继续兜底。
+- 自动化：双端纯 Java 合同测试覆盖事件最小字段、敏感字段不存在、版本/状态/replyTo/多余字段拒绝；完整 Gradle 门禁见 `project-log.md`。
+- 剩余：需按 `WT-025`、`PT-020`、`BLE-011` 在真实 OWW221/手机上验证 indication、后台蜂窝/Wi-Fi、重复事件、断联重连和 Doze。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。

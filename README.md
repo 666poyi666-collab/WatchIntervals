@@ -30,13 +30,13 @@
 - Android 13+ 会在首次训练前请求通知权限，确保前台训练通知可见
 - 最多 200 条独立训练历史目录；摘要索引与完整轨迹/心率样本分离，支持详情、分页和删除
 - 独立 `phone` 伴侣 App：局域网 mDNS 自动发现、六位码配对；本地计划库支持新建、命名、分组、保存、再次编辑和同步，训练控制与历史分区显示
-- 手机伴侣已本地实现 `/sync/v2/exchange` 端到端加密双向同步：计划、计划库元数据和训练摘要使用 AES-256-GCM，凭据/root 由 Android Keystore 保护，支持离线恢复包、已授权设备批准、显式 tombstone、冲突保留和 WorkManager catch-up；staging 与真实 PC-off 仍待验收
+- 手机伴侣已本地实现 `/sync/v2/exchange` 端到端加密双向同步：计划、计划库元数据和训练摘要使用 AES-256-GCM，凭据/root 由 Android Keystore 保护，支持离线恢复包、已授权设备批准、显式 tombstone、冲突保留和 WorkManager catch-up；训练成功落盘后，手表通过已认证 BLE 发送不含业务数据的 `history_changed` 提示，手机用唯一 WorkManager 任务上云，重连和 15 分钟周期负责漏事件兜底；staging 与真实 PC-off 仍待验收
 - 手表首页按页面方向进入训练历史和训练计划；训练数据为第一页，实时轨迹固定在其右侧页，并支持双向跟手返回
 - 手表 `8765`、手机 `8766` 协议 v2 API，以及复用同一工具核心的 stdio/Windows HTTP Gateway MCP
 
 ## 手机伴侣与本地 MCP
 
-设备控制优先使用应用层加密 BLE，已验证 LAN 作为批量数据加速通道。手表广播 `_watchintervals._tcp.`，手机广播 `_watchintervals-phone._tcp.`；IP 只是运行时端点，设备身份由稳定 deviceId 校验。手机云同步仅接受 HTTPS `/sync/v2/exchange` 与专用 device token，MCP OAuth token 不能替代它；云端只持有计划/训练摘要密文和可验证同步元数据，不持有根密钥，也不把离线设备伪装为可控制。旧 `/sync/push` 与 plaintext V1 是已退役迁移面。远程启动训练仍依赖在线设备和后台定位授权。
+设备控制优先使用应用层加密 BLE，已验证 LAN 作为批量数据加速通道。手表广播 `_watchintervals._tcp.`，手机广播 `_watchintervals-phone._tcp.`；IP 只是运行时端点，设备身份由稳定 deviceId 校验。手机云同步仅接受 HTTPS `/sync/v2/exchange` 与专用 device token，MCP OAuth token 不能替代它；canonical 计划/训练正文只以密文存在，另有一个由设备认证、严格字段白名单约束的最小只读 projection，供 OAuth MCP 实际读取计划名、粗粒度训练和活动健康汇总。根密钥、原始轨迹、逐点心率、睡眠、凭据和诊断正文不会进入该 projection，也不会把离线设备伪装为可控制。旧 `/sync/push` 与 plaintext V1 是已退役迁移面。远程启动训练仍依赖在线设备和后台定位授权。
 
 首次建立空白同步空间必须在手机“恢复与设备批准”中显式初始化并立即导出离线恢复包；已有空间必须导入恢复包，或让已授权设备批准新设备。缺少 root 时客户端保持未就绪，绝不会静默生成另一把 key。当前实现只通过本地合同、JVM 和 debug 构建门禁；没有 staging deployment revision、Android Keystore 真机证据和三轮 PC-off 结果，因此发布清单保持 `supportsPcOff=false`。
 

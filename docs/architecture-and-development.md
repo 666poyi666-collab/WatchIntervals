@@ -20,11 +20,20 @@
 手机 phone (Android API 29+)
   MainActivity / HistoryDetailActivity
       -> PhonePlanLibrary（多计划主库）
-      -> WatchConnectionManager
-           -> BleGattTransport（Central/GATT Client）
-           -> LanHttpTransport
-      -> PhoneLocationRelayService
-      -> PhonePlanBridgeService :8766
+       -> WatchConnectionManager
+            -> BleGattTransport（Central/GATT Client）
+            -> LanHttpTransport
+            -> history_changed -> EncryptedWatchSyncWorker
+       -> PhoneLocationRelayService
+       -> PhonePlanBridgeService :8766
+       -> EncryptedWatchSyncWorker -> HTTPS /sync/v2/exchange
+                    |
+                    v
+       Watch Cloud MCP（密文 authority + 最小只读 projection）
+                    ^
+                    | OAuth watch:read
+                    |
+                 ChatGPT
                     ^
                     | 本地 HTTP
                     v
@@ -42,9 +51,9 @@
 | 训练模型 | `Stage`、`WorkoutRecord` | 阶段和历史 JSON schema |
 | 本地存储 | `PlanStore`、`PlanLibraryStore`、`HistoryStore` | 当前计划、多计划库、最多 200 条历史 |
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
-| 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS |
-| 手机伴侣 | `WatchConnectionManager`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继 |
-| 手机云同步 | `EncryptedWatchSync`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials`、`WatchSyncKeyPackages` | `SyncEnvelopeV1` 加密双向 exchange、持久 outbox/cursor/conflict、Keystore 凭据、恢复包与后台恢复；`CloudSnapshotSync` 仅保留兼容入口 |
+| 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchCloudBridgeEvent`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS；训练历史成功落盘后发送无业务数据的安全同步提示 |
+| 手机伴侣 | `WatchConnectionManager`、`WatchCloudBridgeEvent`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继；严格解析手表同步提示并交给唯一后台任务 |
+| 手机云同步 | `EncryptedWatchSync`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials`、`WatchSyncKeyPackages` | `SyncEnvelopeV1` 加密双向 exchange、持久 outbox/cursor/conflict、Keystore 凭据、恢复包与后台恢复；训练完成事件、BLE/LAN 重连和 15 分钟周期共同触发同一唯一任务；`CloudSnapshotSync` 仅保留兼容入口 |
 | MCP | `mcp/src/watch_mcp` | 独立 Watch MCP；只通过手机 8766 业务门面访问本项目 |
 
 ### 2.1 手表视觉层
@@ -81,6 +90,8 @@
 10. 本地列表暂时缺项不代表删除；只有与计划库同次提交的显式 tombstone 可以生成 delete mutation。
 11. 远端 change 解密/materialize、ACK 删除 outbox、冲突留存和 cursor 推进必须在同一份持久状态提交成功后才生效。
 12. 设备 token、OAuth token 与根同步密钥三者用途隔离；云端、MCP、日志和迁移代码均不得获得未包装根密钥。
+13. 手表的 `history_changed` 仅是已认证 BLE 上的版本化提示，不携带训练、位置、健康、设备身份或凭据；真实数据必须由手机重新读取 authenticated Watch API 后进入 canonical sync。
+14. 云端可读 projection 只允许计划名与训练类型/起止/时长/距离/步数；Worker 在写入前精确校验字段，在每次 MCP 读取前再次校验 D1 行。
 
 ## 4. 数据和存储
 
@@ -159,7 +170,11 @@ Phone 0.22.0 将 `CloudSnapshotSync` 收口为兼容调用入口，实际数据�
 
 根同步密钥不会由网络或 token 派生。设备 token 和根密钥分别由 Android Keystore AES key 包装；更换同一 deviceId 的旋转 token 保留根密钥，更换 deviceId 或确认 root fingerprint 变化时先把旧 state 隔离备份，再清空 active state。缺少根密钥时同步保持未就绪，不会静默生成新密钥。首台空白空间必须由用户显式初始化；已有空间通过 PBKDF2-HMAC-SHA256（310,000 次）恢复包，或由已授权设备针对目标 3072-bit Android Keystore RSA 公钥生成 10 分钟一次性混合加密批准包。批准包绑定 target deviceId、一次性 nonce、公钥 fingerprint 和有效期；相同 root fingerprint 的恢复保留现有 state，不同 root 才重新执行 pull-first bootstrap。
 
-`EncryptedWatchSyncWorker` 使用网络约束、指数退避的一次性恢复任务和 15 分钟唯一周期任务，覆盖断网、Doze、进程回收与重启。未配置 token/根密钥时任务成功退出且不会形成无限重试。旧 `/sync/push` 和 plaintext snapshot 只保留历史记录；旧 `SYNC_KEY` 会被删除且不迁移为 V2 设备 token，旧路由的目标行为为 410。
+`EncryptedWatchSyncWorker` 使用网络约束、指数退避的一次性恢复任务和 15 分钟唯一周期任务，覆盖断网、Doze、进程回收与重启。训练成功落盘时，`WatchLinkService` 向当前已认证且订阅 indication 的手机发送严格两字段 `history_changed` 提示；提示本身不含业务数据。`WatchConnectionManager` 严格解析后只 enqueue `ExistingWorkPolicy.KEEP` 的同一个任务，重复提示不会形成并行上传；BLE/LAN 每次成功重连也 enqueue 一次，补偿断联期间漏掉的提示。未配置 token/根密钥时任务成功退出且不会形成无限重试。旧 `/sync/push` 和 plaintext snapshot 只保留历史记录；旧 `SYNC_KEY` 会被删除且不迁移为 V2 设备 token，旧路由的目标行为为 410。
+
+Worker 的 encrypted entity/change 表仍是 canonical authority。为了让 OAuth MCP 在没有根密钥的前提下读取用户明确允许的数据，设备可在同一次 authenticated `/sync/v2/exchange` 附带最小 `readProjection`：计划仅有哈希键和名称；训练仅有哈希键、计划/自由类型、起止、活动时长、距离和步数。projection 按 deviceId 整体替换，上传前严格 exact-key/范围/重复键校验，读取时再次逐行验证并隐藏键。`watch_get_status`/`watch_get_sync_overview` 返回真实 encrypted sync 与 projection 新鲜度，`watch_list_plans`/`watch_list_workouts` 返回实际 projection，`watch_summarize_workouts` 是允许的粗粒度活动健康汇总。睡眠、路线、坐标、逐点心率、凭据和未知字段保持 local-only。
+
+Watch Worker 另提供仅命名 service binding 可达的 authority observation entrypoint。请求必须精确使用 vendor `Accept`、`Authorization: Capability <产品独立 secret>` 和完整 HTTPS `/authority/watch` audience；公网同路径固定拒绝。D1 trigger 只在真实设备、同步 change/state/operation/audit、projection 或撤销状态变化时推进 authority checkpoint；每个 revision 的 exact-field observation 首次生成后持久化，后续读取保持 truth、`observedAt`、`expiresAt` 完全一致，中央签名 authority 因而得到稳定 observationHash。过期、损坏、额外字段、依赖或 revision 不可用时返回非 200，Watch Worker 不生成签名。
 
 当前证据只覆盖本地 JVM、Android 编译与 Worker 合同。尚未部署 staging、未验证 Android Keystore 真机恢复/批准、未执行三轮 PC-off，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
 
@@ -226,7 +241,7 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - `PoyiWatchTunnel` 使用独立 Tunnel ID、独立 Runtime Key 和 `127.0.0.1:8880` 健康端口，仅连接 Watch MCP。两个 WinSW 服务均自动启动和失败重启。
 - 手机 API Token 与 Tunnel Runtime Key 分别用 DPAPI LocalMachine 和不同 entropy 保存，日志过滤令牌、精确位置和正文。Windows 服务按默认 LocalSystem 运行，安装脚本显式授予 `SYSTEM` 数据目录权限；升级旧虚拟服务账户安装时会强制切回 LocalSystem，避免 DPAPI 文件和日志目录 ACL 不一致。
 - 手机 mDNS 地址进入候选列表前必须规范化：IPv6 authority 使用方括号、IPv4 优先尝试、坏缓存跳过；只有 `/v1/status` 成功且稳定 `phoneDeviceId` 匹配后才更新运行时端点。
-- `watch_*` 工具只返回摘要；轨迹、心率和完整睡眠使用 `watch://` Resource 分页读取。
+- 本机 `watch_*` 工具只返回摘要；轨迹、心率和完整睡眠使用 `watch://` Resource 分页读取。云端 MCP 只提供 OAuth `watch:read` 的同步状态、实际计划/粗粒度训练与活动健康汇总；睡眠工具明确返回 `local_only`。
 - 旧 `personal_gateway.py`、Quick Tunnel、固定 IP/六位码配置和直接连接手表脚本已删除；有效工具、Schema、错误映射和发现逻辑已迁入独立包。
 
 ## 11. BLE 连接架构与边界
@@ -235,5 +250,6 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 - GATT 服务包含设备信息、配对、控制、事件、同步收发、定位、LAN endpoint 和心跳特征；手机顺序订阅 indication 后认证。
 - 消息使用 16 字节帧头，兼容默认 MTU 23；单帧同时受 `MTU-3` 与 512 字节属性值上限约束，消息上限 256 KB，不完整帧 30 秒清理。
 - `WatchConnectionManager` 负责 BLE 优先、LAN 加速、状态快照和退避。控制、计划、同步与定位优先 BLE；历史/睡眠等批量读取优先已验证 LAN，失败可回退 BLE。
+- 训练成功写入 `HistoryStore` 后只发送安全 `history_changed` indication；手机收到后通过 WorkManager 读取完整 authenticated `/v1/history`，事件通道本身绝不承载训练摘要。事件重复由唯一工作去重，断联漏事件由成功重连与周期任务补偿。
 - 2026-07-26 真机已验证 OWW221 广播、Xiaomi 连接、MTU 517、四个 CCCD、AUTH、计划 outbox、计划回读和定位请求。
 - 安全版使用 P-256 ECDH、一次性验证码 HMAC 确认、长期配对密钥、challenge-response、AES-GCM、随机 sequence 和持久认证 challenge 防重放；真机门禁通过前仍关联 `BUG-015`。无 Wi-Fi、后台、重启、5 分钟息屏、10 次重连、100 次请求和 15 分钟功耗关联 `BUG-016`。

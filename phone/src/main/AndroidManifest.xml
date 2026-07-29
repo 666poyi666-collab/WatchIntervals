@@ -26,7 +26,7 @@
         <service android:name=".PhoneLocationRelayService" android:foregroundServiceType="location" android:exported="false" />
         <service android:name=".PhonePlanBridgeService" android:foregroundServiceType="dataSync" android:exported="false" />
         <service android:name=".PhoneCompanionService" android:foregroundServiceType="connectedDevice" android:exported="false" />
-        <receiver android:name=".PhoneBootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
+        <receiver android:name=".PhoneBootReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
         <receiver android:name=".PhoneWatchdogReceiver" android:exported="false" />
         <activity android:name=".HistoryDetailActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">

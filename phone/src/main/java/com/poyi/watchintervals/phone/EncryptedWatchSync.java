@@ -1071,7 +1071,7 @@ final class EncryptedWatchSync {
                 JSONObject payload = entity.optJSONObject("payload");
                 if ("plan".equals(entityType) && !PLAN_LIBRARY_ENTITY_ID.equals(entityId)) {
                     String name = payload.optString("name", "").trim();
-                    if (!validEntityId(entityId) || name.isEmpty() || name.length() > 120) continue;
+                    if (!validEntityId(entityId) || !validProjectionName(name)) continue;
                     plans.add(new JSONObject()
                             .put("entityKey", "p:" + sha256(entityId))
                             .put("name", name));
@@ -1087,18 +1087,25 @@ final class EncryptedWatchSync {
                             !Double.isFinite(((Number) distanceMeters).doubleValue()) ||
                             ((Number) distanceMeters).doubleValue() < 0 ||
                             !validProjectionInteger(steps)) continue;
-                    String key = entityId.startsWith("w:") && entityId.length() == 66
+                    long started = ((Number) startedAt).longValue();
+                    long ended = ((Number) endedAt).longValue();
+                    long duration = ((Number) durationMs).longValue();
+                    long stepCount = ((Number) steps).longValue();
+                    double distance = ((Number) distanceMeters).doubleValue();
+                    if (ended < started || duration > ended - started ||
+                            distance > 1_000_000_000d || stepCount > 1_000_000_000L) continue;
+                    String key = entityId.matches("^w:[0-9a-f]{64}$")
                             ? entityId : workoutEntityId(entityId);
                     String planName = payload.optString("planName",
                             payload.optString("plan", "")).trim();
                     workouts.add(new JSONObject()
                             .put("entityKey", key)
                             .put("workoutType", planName.isEmpty() ? "free" : "planned")
-                            .put("startedAt", ((Number) startedAt).longValue())
-                            .put("endedAt", ((Number) endedAt).longValue())
-                            .put("durationMs", ((Number) durationMs).longValue())
-                            .put("distanceMeters", ((Number) distanceMeters).doubleValue())
-                            .put("steps", ((Number) steps).longValue()));
+                            .put("startedAt", started)
+                            .put("endedAt", ended)
+                            .put("durationMs", duration)
+                            .put("distanceMeters", distance)
+                            .put("steps", stepCount));
                 }
             }
             Comparator<JSONObject> byKey =
@@ -1119,6 +1126,15 @@ final class EncryptedWatchSync {
             double number = ((Number) value).doubleValue();
             return Double.isFinite(number) && number >= 0 &&
                     number <= MAX_SAFE_INTEGER && Math.rint(number) == number;
+        }
+
+        private static boolean validProjectionName(String value) {
+            if (value.isEmpty() || value.length() > 120) return false;
+            for (int index = 0; index < value.length(); index++) {
+                char character = value.charAt(index);
+                if (character <= 0x1f || character == 0x7f) return false;
+            }
+            return true;
         }
 
         synchronized JSONObject snapshotForTesting() throws Exception {

@@ -130,6 +130,33 @@ public class EncryptedWatchSyncTest {
         assertFalse(serialized.contains("plan-1"));
     }
 
+    @Test public void invalidLocalProjectionRowsAreSkippedBeforeTheyCanBlockSync()
+            throws Exception {
+        JSONObject badName = localEntity("plan-bad")
+                .put("payload", new JSONObject().put("name", "bad\u0000name"));
+        JSONObject impossibleWorkout = new JSONObject().put("entityType", "workout")
+                .put("entityId", "workout-impossible").put("confirmedRevision", 1)
+                .put("deleted", false).put("payload", new JSONObject()
+                        .put("startedAt", 2_000).put("endedAt", 1_000)
+                        .put("durationMs", 1_500).put("distanceMeters", 1_000_000_001d)
+                        .put("steps", 1_000_000_001L));
+        JSONObject validWorkout = new JSONObject().put("entityType", "workout")
+                .put("entityId", "not-a-wire-key").put("confirmedRevision", 1)
+                .put("deleted", false).put("payload", new JSONObject()
+                        .put("startedAt", 1_000).put("endedAt", 2_000)
+                        .put("durationMs", 900).put("distanceMeters", 100d).put("steps", 120));
+        JSONObject state = EncryptedWatchSync.Store.fresh().put("entities",
+                new JSONObject().put("plan\u0000plan-bad", badName)
+                        .put("workout\u0000workout-impossible", impossibleWorkout)
+                        .put("workout\u0000not-a-wire-key", validWorkout));
+
+        JSONObject projection = EncryptedWatchSync.Store.forTesting(state).readProjection();
+        assertEquals(0, projection.getJSONArray("plans").length());
+        assertEquals(1, projection.getJSONArray("workouts").length());
+        assertTrue(projection.getJSONArray("workouts").getJSONObject(0)
+                .getString("entityKey").matches("^w:[0-9a-f]{64}$"));
+    }
+
     @Test public void revisionsUseTheContractSafeIntegerRange() throws Exception {
         long baseRevision = (long) Integer.MAX_VALUE + 10L;
         JSONObject mutation = EncryptedWatchSync.mutation(root(), "plan", "large-revision",

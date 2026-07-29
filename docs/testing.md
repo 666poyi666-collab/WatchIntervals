@@ -53,6 +53,7 @@ git diff --check
 | WT-022 | 训练五屏 496px 纵向占用 | 在 OWW221 逐屏截图控制、综合仪表、训练数据、阶段、轨迹，分别检查无心率/无轨迹空状态 | 有效内容延伸到底部安全区，不出现由 weighted 空 View 造成的 90px 级黑下巴；固定页码不压内容；无真实数据不绘制假曲线/轨迹 |
 | WT-023 | 真实沿河轨迹地理细节 | 使用绑定 `com.poyi.watchintervals` 和实际签名的百度 Android AK 构建，在 OWW221 打开现有 2.43km、280 点沿河记录，对照系统运动的河道、桥、堤岸和环线，并检查无网络/授权失败占位 | 非卫星 Baidu 暗色矢量底图可见；历史原始路线、起终点完整且坐标文件不被改写；相机按 15dp/25dp 内容框取景，跑道级细路不过度放粗；无 AK 时明确显示授权待配置，不静默退回高德；用户确认前不得判定通过 |
 | WT-024 | 历史轨迹恢复与户外定位精度 | 打开 legacy 旧记录，检查原始点不因迁移 accuracy 被隐藏；准备页室内/户外分别记录 GNSS provider、卫星数和实际 accuracy | 旧路线完整显示且文件不改写；室内无 fix 时不宣称精度；开阔户外取得真实 fix 后记录是否低于 35m、稳定时间、路线闭环和距离来源 |
+| WT-025 | 训练完成同步提示 | 与已配对手机保持 BLE，完成一条短训练并正常结束；随后重复触发连接恢复 | 历史仅新增一次；手表只发送加密 `history_changed` 提示且无训练/位置/健康正文；手机实际回读 `/v1/history`，重复提示或重连不产生重复云训练 |
 
 ### 0.18.0 OWW221 短测证据（2026-07-25）
 
@@ -135,6 +136,7 @@ git diff --check
 | PT-017 | 已授权设备批准 | 新设备生成批准请求，已授权设备确认后返回批准包；非目标 deviceId、非当前 request nonce、过期或篡改包均拒绝，正确包只可导入当前请求 |
 | PT-018 | V2 PC-off 三轮 | 停止 Windows 全部本地服务；第二真实设备分别新建/更新/删除，手机在前台、后台 Doze、重启后三种条件自动 catch-up；验证 exactly-once、冲突、tombstone、outbox 和 cursor 单调 |
 | PT-019 | 凭据迁移与备份边界 | 从 0.21.1 覆盖安装后 pairing/LAN/Gateway token 自动迁到 Keystore 密文且连接不中断；备份/设备迁移不含受保护 prefs；第三方显式/隐式 watchdog 广播不能拉起服务，系统开机和 app-private alarm 仍可恢复 |
+| PT-020 | 训练完成自动上云 | 电脑保持关机/本地服务停止；手机分别使用蜂窝和 Wi-Fi，在前台、后台与 Doze 中接收手表完成提示；网络恢复后唯一 WorkManager 自动 catch-up，OAuth MCP 出现同一实际记录且无路线/心率/睡眠泄漏 |
 
 ## 5. MCP/API 回归
 
@@ -162,6 +164,8 @@ git diff --check
 | API-020 | `/sync/v2/exchange` 只接受 protocol 2 / envelope 1、产品 `watch`、token 自带 deviceId、严格 cursor、UUID opId 和符合 AAD hash 的 plan/workout 密文；plaintext `payload`、错误 nonce、未知实体、超限页均拒绝 |
 | API-021 | mutation 重放返回相同 ACK；revision conflict 保留 current/candidate；基础设施故障不留下孤立 reservation、假 ACK 或已推进 cursor；workout 第二次写入返回 immutable conflict |
 | API-022 | `/sync/push` 和 `/sync/v1/exchange` 按迁移策略拒绝；V2 device token 不能访问 MCP，OAuth token 不能访问 exchange；日志、D1、MCP 响应和 APK 扫描不到 token、根密钥、plaintext payload、原始轨迹/心率/睡眠 |
+| API-023 | device-authenticated `readProjection` 只接受计划名与粗粒度训练 exact fields；OAuth `watch:read` 实际读取计划、训练、encrypted status 和活动健康汇总；多余字段、坐标、路线、逐点心率、睡眠、凭据、错误 deviceId、错误 scope 全部 fail closed |
+| API-024 | authority observation 仅经命名 service binding 读取；要求 vendor `Accept`、独立 `Capability` 和完整 `/authority/watch` audience；响应 exact fields，revision 来自 D1 authority checkpoint，同 revision 的原始响应/hash/truth/时间稳定；缺 binding/capability、错误 audience、过期/额外字段、依赖或 revision 不可用均非 200 且 Worker 不签名 |
 
 ### Phone 0.22.0 加密 V2 本地门禁（2026-07-28）
 
@@ -190,6 +194,7 @@ git diff --check
 | BLE-008 | 连续运行 15 分钟 | 无永久断联，记录断联与恢复次数 |
 | BLE-009 | 计划、轨迹和心率分页中断续传 | cursor 续传无重复、无漏页、无 OOM |
 | BLE-010 | 15 分钟功耗 | 记录真实训练＋BLE 定位中继期间的双端开始/结束电量、断联和重连次数 |
+| BLE-011 | 历史变化提示与去重 | 成功结束训练后抓取安全 indication；重复提示、短时断联和重连各执行一次。提示正文只有 `eventVersion/event`；手机只维持一个持久工作，断联漏事件在重连或周期任务后补齐，云端 workout 不重复 |
 
 ### 0.19.0 BLE 基础真机证据（2026-07-26）
 

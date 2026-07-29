@@ -10,6 +10,9 @@
 - 手表训练综合仪表和历史详情新增真实心率趋势图；只绘制传感器/历史实际样本，无数据时保持空白。
 - 手机端新增 `SyncEnvelopeV1` 端到端加密双向同步：计划、计划库元数据与训练摘要使用 AES-256-GCM，支持持久 outbox/cursor、冲突双方留存、显式删除 tombstone、pull-first bootstrap 和 WorkManager 后台 catch-up。
 - 新增加密密钥管理：device token/root 由 Android Keystore 包装；支持 PBKDF2-HMAC-SHA256 离线恢复包，以及绑定目标 deviceId、一次性 nonce、公钥指纹和 10 分钟有效期的已授权设备批准包。
+- 新增训练完成上云触发：手表历史成功落盘后，经已认证 BLE 发送不含业务数据的版本化提示；手机用网络约束唯一 WorkManager 任务同步，BLE/LAN 重连与 15 分钟周期负责补偿。
+- Watch Cloud MCP 的允许读取面改为实际设备 projection：OAuth `watch:read` 可读计划名、粗粒度训练、同步状态和训练次数/时长/距离/步数活动健康汇总；睡眠、轨迹、坐标、逐点心率与凭据保持 local-only。
+- Watch Cloud MCP 新增 service-binding-only authority observation：独立 capability、完整 audience、严格 vendor media type 与稳定 D1 checkpoint；同 revision 的 truth/时间/hash 不漂移，失败或过期不返回可签名观察。
 
 ### Changed
 
@@ -31,6 +34,8 @@
 - BLE pairing secret、LAN credential 与 Gateway API token 首次使用时迁入 Android Keystore AES-GCM 密文；Watch/Phone 均禁用 Auto Backup，Phone 额外排除凭据、同步 state/outbox 和运行时诊断。
 
 ### Fixed
+
+- 修复加密 V2 只依赖应用启动/周期任务、训练刚结束时云端 MCP 可能暂时没有新记录的问题（`BUG-039`）；安全事件 exact-key/version 负测与唯一任务去重入口已补齐，真实后台/Doze/PC-off 仍按 `WT-025`、`PT-020`、`BLE-011` 验收。
 
 - 恢复历史详情的原始轨迹图；撤销把 `legacy` 记录中的 125m 迁移值当成逐点实测精度、继而隐藏整条路线的错误处理。现有室内测试尚未取得 GNSS fix，不能宣称已达到 35m；系统运动旧轨迹位于签名保护的 `sport_gps` 私有数据链，相关差异继续跟踪（`BUG-038`、`WT-024`）。
 - 手表轨迹观察层撤销卫星候选和高德瓦片降级，改接与系统运动同代的 Baidu Map SDK 7.5.9 非卫星矢量底图、本地暗色样式及 SDK 坐标转换；历史地图为 164dp，取景横向 15dp/纵向 25dp，轨迹 3dp。待当前包名/签名 AK 和 OWW221 联网确认（`BUG-037`、`WT-023`）。

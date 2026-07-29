@@ -58,6 +58,7 @@ final class HistoryStore {
                 WorkoutFileStore.writeAtomic(new File(target, SUMMARY_FILE), record.toSummaryJson().toString());
             }
             updateIndex(context, record, target);
+            WatchLinkService.notifyHistoryChanged(context);
             return true;
         } catch (Exception error) {
             android.util.Log.e("HistoryStore", "Unable to finalize workout", error);
@@ -65,18 +66,24 @@ final class HistoryStore {
         }
     }
 
-    static synchronized void delete(Context context, String id) {
+    static synchronized boolean delete(Context context, String id) {
         JSONArray next = new JSONArray();
         try {
             JSONArray index = readIndex(context);
+            boolean found = false;
             for (int i = 0; i < index.length(); i++) {
                 JSONObject item = index.optJSONObject(i);
-                if (item != null && !id.equals(item.optString("id"))) next.put(item);
+                if (item != null && id.equals(item.optString("id"))) found = true;
+                else if (item != null) next.put(item);
             }
+            if (!found) return false;
             writeIndex(context, next);
             WorkoutFileStore.deleteTree(new File(historyRoot(context), safeId(id)));
+            WatchLinkService.notifyHistoryChanged(context);
+            return true;
         } catch (Exception error) {
             android.util.Log.w("HistoryStore", "Unable to delete workout", error);
+            return false;
         }
     }
 

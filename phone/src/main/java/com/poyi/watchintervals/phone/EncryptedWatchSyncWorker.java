@@ -43,7 +43,7 @@ public final class EncryptedWatchSyncWorker extends Worker {
                 credentialsStillReady;
     }
 
-    static void schedule(Context context) {
+    public static void schedule(Context context) {
         if (!CloudSyncCredentials.readyForSync(context)) return;
         Constraints constraints = networkConstraints();
         ensurePeriodic(context, constraints);

@@ -86,6 +86,9 @@
 | REQ-SYNC-012 | 手机使用端到端加密的双向增量同步 | `/sync/v2/exchange` 仅传输 AES-256-GCM 密文、nonce、AAD hash、revision、tombstone 和最小索引；计划、计划库元数据与训练摘要支持 push/pull，ACK、materialize、cursor 和 outbox 同一持久化边界提交 | 本地实现，待 staging/真机/PC-off 验收 |
 | REQ-SYNC-013 | 同步根密钥可安全恢复和跨设备批准 | 设备 token 与根密钥分别由 Android Keystore 包装；新设备不得静默生成不兼容根密钥，可使用 PBKDF2-HMAC-SHA256 离线恢复包或 10 分钟一次性 RSA-OAEP 设备批准包恢复 | 本地实现，待 Android 真机验证 |
 | REQ-SYNC-014 | 云同步具备后台恢复且不误删数据 | 首次/换钥后先 pull 再 push；WorkManager 在网络恢复、Doze 和重启后继续；删除只来自 schema 3 显式 tombstone，本地暂时缺项不得推断为删除；冲突保留双方候选 | 本地实现，自动化通过，待故障注入/真机验证 |
+| REQ-SYNC-015 | 训练完成后由手表主动触发手机上云 | 训练成功落盘后，手表仅通过已认证加密 BLE 发送版本化 `history_changed` 提示；提示不含训练、位置、健康或凭据数据；手机用网络约束唯一 WorkManager 任务去重并执行 canonical `/sync/v2/exchange`，BLE 重连和 15 分钟周期补偿漏事件 | 本地实现，自动化通过，待手机/手表真机与 PC-off 验收 |
+| REQ-SYNC-016 | 云端 MCP 读取实际最小数据面 | OAuth `watch:read` 可读取同步状态、计划名、粗粒度训练以及由训练次数/时长/距离/步数派生的活动健康汇总；设备 token 只能替换本设备 projection，OAuth token 不能写 exchange；轨迹、坐标、逐点心率、睡眠、凭据和未知字段一律拒绝 | Worker 本地实现，合同测试通过，待 staging/真实账户验收 |
+| REQ-SYNC-017 | Watch 产品提供统一 authority observation | 仅中央签名 authority 可经命名 service binding、vendor `Accept`、本产品独立 `Capability` 和完整 HTTPS `/authority/watch` audience 读取 exact-field observation；revision 由真实 D1 authority checkpoint 推进，同 revision 的 truth/时间及派生 observationHash 稳定；无效、过期、依赖失败或 revision 缺失全部 fail closed，Worker 本身不签名 | Worker 本地实现，合同测试通过，待中央 authority/Gateway staging 验收 |
 
 ### 3.5 手表交互和适配
 

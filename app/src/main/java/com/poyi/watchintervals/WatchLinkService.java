@@ -25,6 +25,7 @@ import org.json.JSONObject;
 /** Persistent watch peripheral. All business requests pass through WatchCommandRouter. */
 public final class WatchLinkService extends Service {
     private static final String TAG="WatchLink",CHANNEL="watch_link";
+    private static final String ACTION_HISTORY_CHANGED="com.poyi.watchintervals.action.HISTORY_CHANGED";
     private static final int NOTIFICATION_ID=74,DEFAULT_MTU=23;
     private BluetoothManager manager;private BluetoothGattServer server;private BluetoothLeAdvertiser advertiser;private AdvertiseCallback advertiseCallback;
     private final Map<UUID,BluetoothGattCharacteristic> characteristics=new HashMap<>();
@@ -35,6 +36,7 @@ public final class WatchLinkService extends Service {
     private final Map<String,PendingPairing> pendingPairings=new HashMap<>();
     private final LinkedHashMap<String,Long> recentAuthChallenges=new LinkedHashMap<>();
     private final Map<String,ArrayDeque<Outgoing>> outgoing=new HashMap<>();
+    private final Map<String,BluetoothDevice> connectedDevices=new HashMap<>();
     private final Set<String> notifying=new HashSet<>();
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private WatchCommandRouter router;
@@ -42,7 +44,16 @@ public final class WatchLinkService extends Service {
     private static volatile long replayRejectedCount;
 
     @Override public void onCreate(){super.onCreate();router=new WatchCommandRouter(this);NotificationChannel channel=new NotificationChannel(CHANNEL,"手机蓝牙连接",NotificationManager.IMPORTANCE_MIN);getSystemService(NotificationManager.class).createNotificationChannel(channel);Notification notification=new Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_launcher).setContentTitle("步序蓝牙连接").setContentText("手机可自动连接手表").setOngoing(true).build();startForeground(NOTIFICATION_ID,notification);startPeripheral();}
-    @Override public int onStartCommand(Intent intent,int flags,int startId){if(server==null)startPeripheral();return START_STICKY;}
+    @Override public int onStartCommand(Intent intent,int flags,int startId){if(server==null)startPeripheral();if(intent!=null&&ACTION_HISTORY_CHANGED.equals(intent.getAction()))worker.execute(this::broadcastHistoryChanged);return START_STICKY;}
+
+    static void notifyHistoryChanged(android.content.Context context){
+        try {
+            context.startForegroundService(new Intent(context,WatchLinkService.class)
+                    .setAction(ACTION_HISTORY_CHANGED));
+        } catch (Exception error) {
+            Log.w(TAG,"history_change_signal_deferred reason="+error.getClass().getSimpleName());
+        }
+    }
 
     @SuppressWarnings("MissingPermission") private synchronized void startPeripheral(){
         if(server!=null)return;manager=getSystemService(BluetoothManager.class);BluetoothAdapter adapter=manager==null?null:manager.getAdapter();
@@ -67,7 +78,7 @@ public final class WatchLinkService extends Service {
 
     private final BluetoothGattServerCallback callback=new BluetoothGattServerCallback(){
         @Override public void onServiceAdded(int status,BluetoothGattService service){if(status==BluetoothGatt.GATT_SUCCESS)startAdvertising();else Log.e(TAG,"service_add status="+status);}
-        @Override public void onConnectionStateChange(BluetoothDevice device,int status,int state){String key=device.getAddress();Log.i(TAG,"connection state="+state+" status="+status+" device="+redact(key));if(state==BluetoothProfile.STATE_CONNECTED){synchronized(WatchLinkService.this){mtuByDevice.put(key,DEFAULT_MTU);}}else if(state==BluetoothProfile.STATE_DISCONNECTED){synchronized(WatchLinkService.this){mtuByDevice.remove(key);authenticated.remove(key);secureSessions.remove(key);pendingPairings.remove(key);subscribedEvents.remove(key);outgoing.remove(key);notifying.remove(key);removeAssemblers(key);}}}
+        @Override public void onConnectionStateChange(BluetoothDevice device,int status,int state){String key=device.getAddress();Log.i(TAG,"connection state="+state+" status="+status+" device="+redact(key));if(state==BluetoothProfile.STATE_CONNECTED){synchronized(WatchLinkService.this){mtuByDevice.put(key,DEFAULT_MTU);connectedDevices.put(key,device);}}else if(state==BluetoothProfile.STATE_DISCONNECTED){synchronized(WatchLinkService.this){mtuByDevice.remove(key);connectedDevices.remove(key);authenticated.remove(key);secureSessions.remove(key);pendingPairings.remove(key);subscribedEvents.remove(key);outgoing.remove(key);notifying.remove(key);removeAssemblers(key);}}}
         @Override public void onMtuChanged(BluetoothDevice device,int mtu){synchronized(WatchLinkService.this){mtuByDevice.put(device.getAddress(),Math.max(DEFAULT_MTU,mtu));}Log.i(TAG,"mtu="+mtu+" device="+redact(device.getAddress()));}
         @Override public void onCharacteristicReadRequest(BluetoothDevice device,int requestId,int offset,BluetoothGattCharacteristic characteristic){byte[] value=readValue(device,characteristic.getUuid());sendRead(device,requestId,offset,value);}
         @Override public void onDescriptorReadRequest(BluetoothDevice device,int requestId,int offset,BluetoothGattDescriptor descriptor){byte[] value=subscribedEvents.contains(device.getAddress())?BluetoothGattDescriptor.ENABLE_INDICATION_VALUE:BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;sendRead(device,requestId,offset,value);}
@@ -89,6 +100,44 @@ public final class WatchLinkService extends Service {
     private synchronized boolean seenChallenge(String key){Long time=recentAuthChallenges.get(key);return time!=null&&System.currentTimeMillis()-time<120_000L;}
     private synchronized void rememberChallenge(String key){recentAuthChallenges.put(key,System.currentTimeMillis());while(recentAuthChallenges.size()>100)recentAuthChallenges.remove(recentAuthChallenges.keySet().iterator().next());}
 
+    private void broadcastHistoryChanged(){
+        ArrayList<SecureTarget> targets=new ArrayList<>();
+        synchronized(this){
+            for(String address:authenticated){
+                BluetoothDevice device=connectedDevices.get(address);
+                BleSecureSession session=secureSessions.get(address);
+                if(device!=null&&session!=null&&subscribedEvents.contains(address))
+                    targets.add(new SecureTarget(device,session));
+            }
+        }
+        for(SecureTarget target:targets){
+            try{
+                JSONObject plain=WatchCloudBridgeEvent.historyChangedEnvelope();
+                sendSecureEventIfCurrent(target,plain);
+            }catch(Exception error){
+                Log.w(TAG,"history_change_event_failed device="+redact(target.device.getAddress())
+                        +" reason="+error.getClass().getSimpleName());
+            }
+        }
+    }
+
+    private void sendSecureEventIfCurrent(SecureTarget target,JSONObject plain)throws Exception{
+        JSONObject secured=target.session.seal(
+                plain.optString("messageId"),plain.toString().getBytes(StandardCharsets.UTF_8));
+        byte[] payload=secured.toString().getBytes(StandardCharsets.UTF_8);
+        synchronized(this){
+            String address=target.device.getAddress();
+            if(secureSessions.get(address)!=target.session||!authenticated.contains(address)
+                    ||!subscribedEvents.contains(address)||connectedDevices.get(address)!=target.device)
+                return;
+            int mtu=mtuByDevice.getOrDefault(address,DEFAULT_MTU);
+            ArrayDeque<Outgoing> queue=outgoing.computeIfAbsent(address,ignored->new ArrayDeque<>());
+            for(byte[] frame:BleProtocolCodec.encode(secured.optString("messageId"),payload,mtu))
+                queue.add(new Outgoing(target.device,frame));
+        }
+        sendNext(target.device);
+    }
+
     private JSONObject response(String replyTo,int status,String body)throws Exception{return new JSONObject().put("protocolVersion",1).put("messageId",UUID.randomUUID().toString()).put("replyTo",replyTo).put("type","RESPONSE").put("createdAt",System.currentTimeMillis()).put("payload",new JSONObject().put("status",status).put("body",body));}
     private void sendEnvelope(BluetoothDevice device,JSONObject envelope){byte[] payload=envelope.toString().getBytes(StandardCharsets.UTF_8);int mtu; synchronized(this){mtu=mtuByDevice.getOrDefault(device.getAddress(),DEFAULT_MTU);ArrayDeque<Outgoing> queue=outgoing.computeIfAbsent(device.getAddress(),ignored->new ArrayDeque<>());for(byte[] frame:BleProtocolCodec.encode(envelope.optString("messageId"),payload,mtu))queue.add(new Outgoing(device,frame));}sendNext(device);}
     @SuppressWarnings("MissingPermission") private void sendNext(BluetoothDevice device){Outgoing next; synchronized(this){String key=device.getAddress();if(notifying.contains(key)||!subscribedEvents.contains(key))return;ArrayDeque<Outgoing> queue=outgoing.get(key);next=queue==null?null:queue.poll();if(next==null)return;notifying.add(key);}BluetoothGattCharacteristic events=characteristics.get(BleUuids.EVENTS);events.setValue(next.frame);boolean started=server!=null&&server.notifyCharacteristicChanged(device,events,true);if(!started){synchronized(this){notifying.remove(device.getAddress());}Log.w(TAG,"indication_start_failed device="+redact(device.getAddress()));}}
@@ -99,9 +148,10 @@ public final class WatchLinkService extends Service {
     private static String redact(String address){return address==null?"unknown":"**:**:**:"+address.substring(Math.max(0,address.length()-8));}
     public static JSONObject diagnostics(){try{return new JSONObject().put("service","watch_link").put("securityProtocol","ECDH_P256_AES_GCM_V1").put("replayRejectedCount",replayRejectedCount);}catch(Exception ignored){return new JSONObject();}}
 
-    @SuppressWarnings("MissingPermission") private synchronized void closeGatt(){if(advertiser!=null&&advertiseCallback!=null)try{advertiser.stopAdvertising(advertiseCallback);}catch(Exception ignored){}advertising=false;if(server!=null)server.close();server=null;characteristics.clear();}
+    @SuppressWarnings("MissingPermission") private synchronized void closeGatt(){if(advertiser!=null&&advertiseCallback!=null)try{advertiser.stopAdvertising(advertiseCallback);}catch(Exception ignored){}advertising=false;if(server!=null)server.close();server=null;characteristics.clear();connectedDevices.clear();}
     @Override public void onDestroy(){closeGatt();worker.shutdownNow();if(router!=null)router.close();super.onDestroy();}
     @Override public IBinder onBind(Intent intent){return null;}
     private static final class Outgoing {final BluetoothDevice device;final byte[] frame;Outgoing(BluetoothDevice device,byte[] frame){this.device=device;this.frame=frame;}}
+    private static final class SecureTarget {final BluetoothDevice device;final BleSecureSession session;SecureTarget(BluetoothDevice device,BleSecureSession session){this.device=device;this.session=session;}}
     private static final class PendingPairing {final String phoneId,watchId;final byte[] clientNonce,serverNonce,shared;final long createdAt;PendingPairing(String phoneId,String watchId,byte[] clientNonce,byte[] serverNonce,byte[] shared,long createdAt){this.phoneId=phoneId;this.watchId=watchId;this.clientNonce=clientNonce;this.serverNonce=serverNonce;this.shared=shared;this.createdAt=createdAt;}}
 }

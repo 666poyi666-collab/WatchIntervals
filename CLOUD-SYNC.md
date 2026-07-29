@@ -1,30 +1,51 @@
-# 云同步（Cloudflare）· 步序 · 间歇跑
+# 步序云同步（加密 V2）
 
-> 2026-07-26 建立。目标：电脑关机后，ChatGPT/Claude 仍能读到训练/睡眠/计划数据。
+> 基线：2026-07-29。目标是电脑关机后，由手表、手机和 Watch Cloud MCP 完成只读数据链；旧 `/sync/push`/电脑同步代理已经退役。
 
-## 现状架构
+## 当前数据流
 
 ```text
-手表/手机（权威数据）
-  ←局域网→ 本机 Watch MCP (127.0.0.1:8768，服务 PoyiWatchMcp)
-      →出站→ 云端镜像 watch-mcp.focuslink-poyi-6465e9.workers.dev（Cloudflare Workers + D1）
+手表训练成功落盘
+  -> 已认证 AES-GCM BLE history_changed（只含事件名和版本）
+  -> 手机读取 authenticated /v1/history
+  -> WorkManager（网络约束、唯一任务、指数退避、15 分钟周期）
+  -> HTTPS /sync/v2/exchange（device token）
+       -> canonical encrypted_sync_*：AES-256-GCM 密文、revision、ACK、cursor、conflict
+       -> watch_read_projection：严格允许字段的最小可读 projection
+  -> OAuth watch:read
+  -> Watch Cloud MCP
+  -> ChatGPT
 ```
 
-- **同步代理**：`C:\Program Files\Poyi\FleetWatchdog\cloud_sync.py`（源码在
-  PersonalMcpGateway 仓库 `fleet/cloud_sync.py`），由看护服务 PoyiFleetWatchdog
-  每 ~5 分钟驱动一轮：调用本机 Watch MCP 的只读工具，把结果推到云端 `/sync/push`。
-- **诚实语义**：手机不在线时本机工具返回 `PHONE_OFFLINE`，同步代理**跳过**该轮
-  （云端保留上一次成功的快照）；云端工具永远返回 `state: synced/stale/never_synced`
-  + `syncedAt`，绝不假装设备在线。
-- 云端工具集：watch_get_status / watch_summarize_workouts / watch_list_workouts /
-  watch_get_latest_sleep / watch_summarize_sleep / watch_list_plans / watch_get_sync_overview。
-- Worker 源码：`C:\开发\mcp开发\watch-cloud-mcp`（D1 表 snapshots，访问密钥在
-  Worker Secret，连接 URL 见该目录 `.dev.vars`，不入 git）。
+电脑、Windows Watch MCP、Tunnel、ADB 和同一局域网都不在这条云端读取路径上。手机可以使用蜂窝或 Wi-Fi；手表只需通过 BLE 把变化提示给手机。提示丢失时，BLE/LAN 成功重连和 15 分钟周期任务会再次执行 catch-up。
 
-## 下一步（需要动手机 App 时再做）
+## 权限和数据边界
 
-真正的"只要有网、任何一台设备都能同步"终态：手机 App 直接向云端 `/sync/push`
-出站推送（无需电脑开机）。设备上行使用独立 `SYNC_KEY` Bearer，不得把 ChatGPT/Claude
-连接器所用的 `ACCESS_KEY` 嵌入 APK。
-`{"source":"phone","snapshots":{"watch_summarize_workouts": <json>, ...}}`。
-届时电脑侧代理自动退化为冗余通道，无需改云端。
+- `/sync/v2/exchange` 只接受专用 device token；OAuth token 不能调用同步路由。
+- `/mcp` 只接受签名、issuer/audience/resource/scope/introspection 均通过的 OAuth `watch:read` token；device token 不能调用 MCP。
+- authority observation 不是公网或 Gateway 数据面：中央签名 authority 只经命名 service binding，以 vendor `Accept`、独立 `Capability` 和完整 HTTPS `/authority/watch` audience 读取。Worker 返回 exact-field、checkpoint 派生且同 revision 不可变的 observation，本身不签名。
+- canonical 计划和训练摘要只以 AES-256-GCM 密文存储；根密钥不离开已授权设备。
+- 为满足用户允许的云端实际读取，手机在同一次设备认证 exchange 中附带严格最小 projection：
+  - 计划：哈希实体键、名称；
+  - 训练：哈希实体键、计划/自由类型、开始/结束、活动时长、距离、步数。
+- MCP 隐藏实体键，只返回计划名、粗粒度训练、encrypted sync 状态/新鲜度，以及次数、时长、距离、步数活动健康汇总。
+- 原始轨迹、坐标、逐点心率、睡眠、凭据、根密钥、设备私钥和诊断正文不上传到 projection；未知或多余字段在写入前拒绝，D1 行在读取前再次验证。
+
+## 可靠性边界
+
+- 手机本地 `state` 同时持久化 entity、outbox、flight lease、conflict、projection pending 和 cursor。
+- ACK 移除、远端 materialize、冲突留存和 cursor 推进必须同一次 `commit()` 成功。
+- 首次/换 root 必须先 pull bootstrap；计划删除只来自 schema 3 显式 tombstone；训练是 create-once immutable fact。
+- WorkManager 使用 `ExistingWorkPolicy.KEEP` 去重一次性工作；网络恢复、Doze、进程回收和开机由持久任务/receiver 恢复。
+- 未配置或 Keystore 解密失败时 fail closed，不生成替代 token/root，也不无限重试。
+
+## 尚未完成的验收
+
+当前本地实现和自动化不能代替真实设备结论。必须继续完成：
+
+1. OWW221 + 手机真实 `history_changed` indication 与重复事件/断联重连测试（`WT-025`、`BLE-011`）。
+2. 手机 Keystore 恢复包/设备批准真机负测（`PT-016`、`PT-017`）。
+3. 蜂窝、Wi-Fi、后台 Doze、重启三轮 PC-off catch-up（`PT-018`、`PT-020`）。
+4. staging Worker migration、OAuth 实际连接和 MCP 实际计划/训练/状态/活动汇总回读。
+
+在上述证据齐全前，项目 manifest 必须保持 `supportsPcOff=false`，不得把本地绿色门禁描述为生产可用。
