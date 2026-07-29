@@ -35,7 +35,7 @@
 
 ### Fixed
 
-- 修复 Android Keystore AES-GCM 在 `randomizedEncryptionRequired=true` 时仍传入调用方 IV、导致真实设备拒绝保存 BLE/LAN/Gateway/device token/root 密文的问题（`BUG-040`）；改为使用 provider-generated IV，Phone 真机回归已通过，Watch 仍待接入。
+- 修复 Android Keystore AES-GCM 在 `randomizedEncryptionRequired=true` 时仍传入调用方 IV、导致真实设备拒绝保存 BLE/LAN/Gateway/device token/root 密文的问题（`BUG-040`）；改为使用 provider-generated IV，Phone 与 Watch 真机回归均已通过。
 - 修复加密 V2 只依赖应用启动/周期任务、训练刚结束时云端 MCP 可能暂时没有新记录的问题（`BUG-039`）；安全事件 exact-key/version 负测与唯一任务去重入口已补齐，真实后台/Doze/PC-off 仍按 `WT-025`、`PT-020`、`BLE-011` 验收。
 
 - 恢复历史详情的原始轨迹图；撤销把 `legacy` 记录中的 125m 迁移值当成逐点实测精度、继而隐藏整条路线的错误处理。现有室内测试尚未取得 GNSS fix，不能宣称已达到 35m；系统运动旧轨迹位于签名保护的 `sport_gps` 私有数据链，相关差异继续跟踪（`BUG-038`、`WT-024`）。

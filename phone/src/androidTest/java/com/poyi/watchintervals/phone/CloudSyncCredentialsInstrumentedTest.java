@@ -10,16 +10,35 @@ import android.os.Bundle;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.work.WorkInfo;
+import androidx.work.WorkManager;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /** Real-device gate for Keystore-wrapped encrypted-sync bootstrap. Lives only in the test APK. */
 @RunWith(AndroidJUnit4.class)
 public final class CloudSyncCredentialsInstrumentedTest {
+    @Test public void persistedCredentialsScheduleNetworkCatchUp() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertTrue(CloudSyncCredentials.readyForSync(context));
+        EncryptedWatchSyncWorker.schedule(context);
+        WorkManager manager = WorkManager.getInstance(context);
+        List<WorkInfo> immediate = manager.getWorkInfosForUniqueWork(
+                "encrypted-watch-sync-v1").get(15, TimeUnit.SECONDS);
+        List<WorkInfo> periodic = manager.getWorkInfosForUniqueWork(
+                "encrypted-watch-sync-periodic-v1").get(15, TimeUnit.SECONDS);
+        assertFalse("one-time catch-up must be persisted", immediate.isEmpty());
+        assertFalse("periodic recovery must be persisted", periodic.isEmpty());
+        assertFalse(immediate.get(0).getState() == WorkInfo.State.CANCELLED);
+        assertFalse(periodic.get(0).getState() == WorkInfo.State.CANCELLED);
+    }
+
     @Test public void persistedKeystoreStateSurvivesUpgradeRestart() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertTrue("persisted device token/root must decrypt after process restart",

@@ -387,14 +387,14 @@
 
 ### BUG-040：真实 Android Keystore 拒绝调用方提供的 GCM IV，所有凭据包装失败
 
-- 状态：Fixed；Phone 真机 Verified，Watch 真机待验证
+- 状态：Verified
 - 严重度：P0
 - 影响：Watch 0.21.0 / Phone 0.22.0 加密候选
 - 环境：真实 Phone、Android 15；JVM 单测无法提供 `AndroidKeyStore`
 - 现象：V2 debug provisioning 不生成 `encrypted_watch_sync_v1.xml`，device token/root 无法保存；同一模式也影响 Phone pairing/LAN/Gateway secret 和 Watch pairing secret。
 - 根因：Keystore AES key 设置了 `randomizedEncryptionRequired=true`，但 encryption 又调用 `Cipher.init(ENCRYPT_MODE, key, GCMParameterSpec)` 注入自生成 IV；真实 Keystore2 以 `InvalidAlgorithmParameterException: Caller-provided IV not permitted` fail closed。
 - 处理：三个 Keystore wrapper 统一改为 `Cipher.init(ENCRYPT_MODE, key)`，从 provider 读取并校验 12-byte `Cipher.getIV()` 后与 ciphertext 一起持久化；decrypt 格式保持兼容。
-- 验证：关联 `PT-021`。真实 Phone androidTest 验证 nonce 不重复、正确 AAD 回解、错误 AAD 拒绝，以及 staging device token/root 均以 ciphertext/nonce 保存、旧 plaintext v1 配置清除。真实 Watch 当前未连接，Watch 端覆盖安装与重启回归仍开放。
+- 验证：关联 `PT-021`。真实 Phone androidTest 验证 nonce 不重复、正确 AAD 回解、错误 AAD 拒绝，以及 staging device token/root 均以 ciphertext/nonce 保存、旧 plaintext v1 配置清除；force-stop 后仍可回解，并持久化网络约束的一次性/周期 WorkManager。真实 Watch 覆盖安装后通过 provider-generated nonce、正确/错误 AAD 回解，并在进程停止后确认自定义 action 与显式伪造 `BOOT_COMPLETED` 均不能拉起进程。未执行设备重启，不把本项证据扩张为 PC-off 完成。
 
 ## 2. 已修复/历史项
 

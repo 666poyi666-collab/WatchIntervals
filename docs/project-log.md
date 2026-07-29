@@ -515,5 +515,7 @@
 
 - Worker staging 已完成 `0005_authority_observation.sql`、authority checkpoint trigger 安装和 audited deployment；Phone provisioning 随后在真实设备 fail closed，未把失败当成完成证据。
 - androidTest 直接复现 Keystore2 `Caller-provided IV not permitted`，定位到 Watch/Phone 三个 AES-GCM wrapper 在 `randomizedEncryptionRequired=true` 下仍注入调用方 IV。统一改为让 provider 生成 IV，并校验/持久化 `Cipher.getIV()`；decrypt wire shape 不变。
-- 真实 Phone 已通过两次 nonce 唯一性、正确/错误 AAD、device token/root Keystore 包装、旧明文配置清除和 debug instrumentation bootstrap。测试凭据正文、deviceId 与 serial 均未进入文档或日志。
-- 版本升为 Watch 0.21.1（32）/Phone 0.22.1（18）。真实 Watch 尚未接入 ADB，BLE/Watch Keystore/三轮 PC-off 继续保持硬阻断，`supportsPcOff=false`。
+- 真实 Phone 已通过两次 nonce 唯一性、正确/错误 AAD、device token/root Keystore 包装、旧明文配置清除、force-stop 后回解和 debug instrumentation bootstrap；新增真机测试确认网络约束的一次性/周期 WorkManager 均持久化且未取消。测试凭据正文、deviceId 与 serial 均未进入文档或日志。
+- 真实 Watch 覆盖安装 Watch 0.21.1（32）及 test APK 后，Keystore nonce/AAD 仪器测试通过；force-stop 后自定义 action 与显式伪造 `BOOT_COMPLETED` 均未启动应用，负测结束后已重开。Phone 为 0.22.1（18）。
+- Worker 复核为 55 项本地测试、TypeScript typecheck 全绿；staging `/healthz` attestation 指向 audited Worker commit，`/readyz` 的 storage/OAuth/authority observation 均 ready，D1 最新 migration 为 `0005_authority_observation.sql`、两张 authority 表和 10 个 checkpoint trigger 齐全。产品 observation 公网访问为非 200；Gateway 经中央 service binding 读取 Watch 时仍 fail closed 为 `authority_source_unavailable`，对应 revision 7 的不可变 observation 已按合同过期。
+- 真实 Phone 无线 ADB 在网络 exchange 取证前离线，BLE indication、真实移动网络补传、中央两跳和三轮 PC-off 继续保持硬阻断；没有执行 production 灰度，`supportsPcOff=false`。

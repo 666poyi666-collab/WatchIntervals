@@ -178,7 +178,9 @@ git diff --check
 
 - 真实 Phone 首次执行暴露 `Caller-provided IV not permitted`：三个 Keystore AES-GCM 包装器错误地在 `randomizedEncryptionRequired=true` 时传入自生成 IV。
 - 修复后 androidTest 在真实 Phone 验证通用 secret store 连续两次 nonce 不重复、正确 AAD 回解且错误 AAD 失败；staging device token 与显式初始化 root 均以 ciphertext/nonce 持久化，旧 v1 endpoint/key 和 plaintext key 名不存在。
-- Watch 端使用同一修复，但真实 Watch 当前未接入 ADB，覆盖安装与 Watch Keystore 回归仍为 PT-021 硬门禁；不能据此标记 PC-off 完成。
+- 同一真实 Phone 在 force-stop/重新连接后仍可解密既有 device token/root；`persistedCredentialsScheduleNetworkCatchUp` 验证网络约束的一次性与 15 分钟周期 WorkManager 均进入持久队列且未取消。
+- 真实 Watch 覆盖安装同一候选后，`WatchSecretStoreInstrumentedTest` 验证 provider-generated nonce、正确 AAD 回解和错误 AAD 拒绝；进程停止后，自定义 action 与显式伪造 `BOOT_COMPLETED` 均未启动应用，随后已正常重开。
+- 本轮没有重启设备，也没有完成真实 Phone 网络 exchange、BLE indication 或三轮 PC-off；这些门禁继续保持未验证。
 
 ### 0.21.1 手机直连云端与 ChatGPT 验收（2026-07-27）
 
