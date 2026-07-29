@@ -95,6 +95,41 @@ public class EncryptedWatchSyncTest {
         assertFalse(entityId.contains("1722222222000"));
     }
 
+    @Test public void mcpReadProjectionContainsOnlyNamesAndBoundedWorkoutSummary()
+            throws Exception {
+        JSONObject plan = localEntity("plan-1")
+                .put("payload", new JSONObject().put("name", "户外间歇")
+                        .put("credential", "must-not-leave-device"));
+        JSONObject workout = new JSONObject().put("entityType", "workout")
+                .put("entityId", "w:" + "a".repeat(64)).put("confirmedRevision", 1)
+                .put("deleted", false).put("payload", new JSONObject()
+                        .put("startedAt", 1000).put("endedAt", 2000).put("durationMs", 900)
+                        .put("distanceMeters", 1200.5).put("steps", 1500)
+                        .put("planName", "户外间歇")
+                        .put("route", new JSONArray().put(new JSONObject()
+                                .put("latitude", 1).put("longitude", 2)))
+                        .put("heartRateSamples", new JSONArray().put(120))
+                        .put("sleep", new JSONObject().put("score", 90))
+                        .put("credential", "must-not-leave-device"));
+        JSONObject state = EncryptedWatchSync.Store.fresh().put("entities",
+                new JSONObject().put("plan\u0000plan-1", plan)
+                        .put("workout\u0000w:" + "a".repeat(64), workout));
+
+        JSONObject projection = EncryptedWatchSync.Store.forTesting(state).readProjection();
+        assertEquals(List.of("entityKey", "name"),
+                sortedKeys(projection.getJSONArray("plans").getJSONObject(0)));
+        assertEquals(List.of("distanceMeters", "durationMs", "endedAt", "entityKey",
+                        "startedAt", "steps", "workoutType"),
+                sortedKeys(projection.getJSONArray("workouts").getJSONObject(0)));
+        String serialized = projection.toString();
+        assertFalse(serialized.contains("route"));
+        assertFalse(serialized.contains("latitude"));
+        assertFalse(serialized.contains("heartRate"));
+        assertFalse(serialized.contains("sleep"));
+        assertFalse(serialized.contains("credential"));
+        assertFalse(serialized.contains("plan-1"));
+    }
+
     @Test public void revisionsUseTheContractSafeIntegerRange() throws Exception {
         long baseRevision = (long) Integer.MAX_VALUE + 10L;
         JSONObject mutation = EncryptedWatchSync.mutation(root(), "plan", "large-revision",
@@ -314,6 +349,13 @@ public class EncryptedWatchSyncTest {
         return new JSONObject().put("outcome", "acknowledged")
                 .put("opId", mutation.getString("opId")).put("entityType", "plan")
                 .put("entityId", entityId).put("operation", "upsert").put("revision", 1);
+    }
+
+    private static List<String> sortedKeys(JSONObject value) {
+        List<String> result = new java.util.ArrayList<>();
+        value.keys().forEachRemaining(result::add);
+        java.util.Collections.sort(result);
+        return result;
     }
 
     private static JSONObject response(JSONArray acknowledgements, JSONArray conflicts,

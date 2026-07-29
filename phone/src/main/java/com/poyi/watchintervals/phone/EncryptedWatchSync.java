@@ -60,6 +60,7 @@ final class EncryptedWatchSync {
     private static final int MAX_PLAINTEXT_BYTES = 500_000;
     private static final int MAX_CIPHERTEXT_CHARS = 900_000;
     private static final int MAX_CONFLICTS = 1_000;
+    private static final int MAX_READ_PROJECTION_ITEMS = 500;
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
     private static final String[] WORKOUT_SUMMARY_FIELDS = {
             "schemaVersion", "id", "startedAt", "endedAt", "durationMs",
@@ -137,7 +138,8 @@ final class EncryptedWatchSync {
                     Claim pull = store.beginPull();
                     JSONObject response;
                     try {
-                        response = exchange(config, deviceId, store.cursor(), pull.mutations);
+                        response = exchange(config, deviceId, store.cursor(), pull.mutations,
+                                null);
                     } catch (Exception failure) {
                         store.retry(pull.leaseId, failure.getClass().getSimpleName());
                         throw failure;
@@ -159,7 +161,8 @@ final class EncryptedWatchSync {
                 Claim claim = store.claim();
                 JSONObject response;
                 try {
-                    response = exchange(config, deviceId, store.cursor(), claim.mutations);
+                    response = exchange(config, deviceId, store.cursor(), claim.mutations,
+                            store.readProjection());
                 } catch (Exception failure) {
                     store.retry(claim.leaseId, failure.getClass().getSimpleName());
                     throw failure;
@@ -301,7 +304,8 @@ final class EncryptedWatchSync {
     }
 
     private static JSONObject exchange(CloudSyncCredentials.Config config, String deviceId,
-                                       String cursor, JSONArray mutations) throws Exception {
+                                       String cursor, JSONArray mutations,
+                                       JSONObject readProjection) throws Exception {
         JSONObject body = new JSONObject()
                 .put("protocolVersion", PROTOCOL_VERSION)
                 .put("envelopeVersion", ENVELOPE_VERSION)
@@ -309,6 +313,7 @@ final class EncryptedWatchSync {
                 .put("deviceId", deviceId)
                 .put("cursor", cursor == null ? JSONObject.NULL : cursor)
                 .put("mutations", mutations);
+        if (readProjection != null) body.put("readProjection", readProjection);
         byte[] request = body.toString().getBytes(StandardCharsets.UTF_8);
         HttpURLConnection connection = (HttpURLConnection) new URL(config.endpoint).openConnection();
         try {
@@ -1046,6 +1051,74 @@ final class EncryptedWatchSync {
                 save();
                 return false;
             }
+        }
+
+        /**
+         * Deliberately decryptable cloud view for MCP. It is derived only from the already
+         * allowlisted local entity cache and exposes neither stable local ids nor detail fields.
+         */
+        synchronized JSONObject readProjection() throws Exception {
+            List<JSONObject> plans = new ArrayList<>();
+            List<JSONObject> workouts = new ArrayList<>();
+            JSONObject entities = state.getJSONObject("entities");
+            Iterator<String> keys = entities.keys();
+            while (keys.hasNext()) {
+                JSONObject entity = entities.optJSONObject(keys.next());
+                if (entity == null || entity.optBoolean("deleted", false) ||
+                        !(entity.opt("payload") instanceof JSONObject)) continue;
+                String entityType = entity.optString("entityType");
+                String entityId = entity.optString("entityId");
+                JSONObject payload = entity.optJSONObject("payload");
+                if ("plan".equals(entityType) && !PLAN_LIBRARY_ENTITY_ID.equals(entityId)) {
+                    String name = payload.optString("name", "").trim();
+                    if (!validEntityId(entityId) || name.isEmpty() || name.length() > 120) continue;
+                    plans.add(new JSONObject()
+                            .put("entityKey", "p:" + sha256(entityId))
+                            .put("name", name));
+                } else if ("workout".equals(entityType)) {
+                    Object startedAt = payload.opt("startedAt");
+                    Object endedAt = payload.opt("endedAt");
+                    Object durationMs = payload.opt("durationMs");
+                    Object distanceMeters = payload.opt("distanceMeters");
+                    Object steps = payload.opt("steps");
+                    if (!validProjectionInteger(startedAt) || !validProjectionInteger(endedAt) ||
+                            !validProjectionInteger(durationMs) ||
+                            !(distanceMeters instanceof Number) ||
+                            !Double.isFinite(((Number) distanceMeters).doubleValue()) ||
+                            ((Number) distanceMeters).doubleValue() < 0 ||
+                            !validProjectionInteger(steps)) continue;
+                    String key = entityId.startsWith("w:") && entityId.length() == 66
+                            ? entityId : workoutEntityId(entityId);
+                    String planName = payload.optString("planName",
+                            payload.optString("plan", "")).trim();
+                    workouts.add(new JSONObject()
+                            .put("entityKey", key)
+                            .put("workoutType", planName.isEmpty() ? "free" : "planned")
+                            .put("startedAt", ((Number) startedAt).longValue())
+                            .put("endedAt", ((Number) endedAt).longValue())
+                            .put("durationMs", ((Number) durationMs).longValue())
+                            .put("distanceMeters", ((Number) distanceMeters).doubleValue())
+                            .put("steps", ((Number) steps).longValue()));
+                }
+            }
+            Comparator<JSONObject> byKey =
+                    Comparator.comparing(value -> value.optString("entityKey"));
+            plans.sort(byKey);
+            workouts.sort(byKey);
+            if (plans.size() > MAX_READ_PROJECTION_ITEMS ||
+                    workouts.size() > MAX_READ_PROJECTION_ITEMS) {
+                throw new IllegalStateException("read_projection_capacity_exceeded");
+            }
+            return new JSONObject()
+                    .put("plans", new JSONArray(plans))
+                    .put("workouts", new JSONArray(workouts));
+        }
+
+        private static boolean validProjectionInteger(Object value) {
+            if (!(value instanceof Number)) return false;
+            double number = ((Number) value).doubleValue();
+            return Double.isFinite(number) && number >= 0 &&
+                    number <= MAX_SAFE_INTEGER && Math.rint(number) == number;
         }
 
         synchronized JSONObject snapshotForTesting() throws Exception {
