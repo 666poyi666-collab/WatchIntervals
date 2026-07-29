@@ -137,6 +137,7 @@ git diff --check
 | PT-018 | V2 PC-off 三轮 | 停止 Windows 全部本地服务；第二真实设备分别新建/更新/删除，手机在前台、后台 Doze、重启后三种条件自动 catch-up；验证 exactly-once、冲突、tombstone、outbox 和 cursor 单调 |
 | PT-019 | 凭据迁移与备份边界 | 从 0.21.1 覆盖安装后 pairing/LAN/Gateway token 自动迁到 Keystore 密文且连接不中断；备份/设备迁移不含受保护 prefs；第三方显式/隐式 watchdog 广播不能拉起服务，系统开机和 app-private alarm 仍可恢复 |
 | PT-020 | 训练完成自动上云 | 电脑保持关机/本地服务停止；手机分别使用蜂窝和 Wi-Fi，在前台、后台与 Doze 中接收手表完成提示；网络恢复后唯一 WorkManager 自动 catch-up，OAuth MCP 出现同一实际记录且无路线/心率/睡眠泄漏 |
+| PT-021 | Keystore provider IV | 在真实 Phone/Watch 分别执行两次凭据包装；encryption 由 Android Keystore 生成不同的 12-byte GCM IV，可回解且错误 AAD 失败；覆盖安装、进程重启后 device token/root/pairing secret 仍可用且 SharedPreferences 无 plaintext |
 
 ## 5. MCP/API 回归
 
@@ -172,6 +173,12 @@ git diff --check
 - `EncryptedWatchSyncTest` 覆盖稳定 JSON/AAD、AES-GCM 往返与篡改、严格 cursor、ACK/outbox/cursor 同提交、revision conflict 双候选留存。
 - `WatchSyncKeyPackagesTest` 覆盖恢复包正确/错误密钥，以及 RSA-OAEP + AES-GCM 设备批准的目标绑定与过期拒绝；`PhonePlanLibrarySyncFormatTest` 覆盖 schema 2→3 和显式 tombstone。
 - `:phone:testDebugUnitTest` 与 `:phone:assembleDebug` 已通过；这不是 Android Keystore 真机、staging 或 PC-off 证据，PT-016 至 PT-018 和 API-020 至 API-022 仍开放。
+
+### Phone 0.22.1 Keystore 真机门禁（2026-07-29，PT-021）
+
+- 真实 Phone 首次执行暴露 `Caller-provided IV not permitted`：三个 Keystore AES-GCM 包装器错误地在 `randomizedEncryptionRequired=true` 时传入自生成 IV。
+- 修复后 androidTest 在真实 Phone 验证通用 secret store 连续两次 nonce 不重复、正确 AAD 回解且错误 AAD 失败；staging device token 与显式初始化 root 均以 ciphertext/nonce 持久化，旧 v1 endpoint/key 和 plaintext key 名不存在。
+- Watch 端使用同一修复，但真实 Watch 当前未接入 ADB，覆盖安装与 Watch Keystore 回归仍为 PT-021 硬门禁；不能据此标记 PC-off 完成。
 
 ### 0.21.1 手机直连云端与 ChatGPT 验收（2026-07-27）
 

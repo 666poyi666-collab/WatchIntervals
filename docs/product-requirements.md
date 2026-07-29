@@ -84,7 +84,7 @@
 | REQ-SYNC-010 | 蓝牙配对和会话具备应用层安全 | 首次一次性验证码、公钥交换和长期密钥；重连挑战响应；消息认证加密和防重放 | 已实现并通过真机重放验证 |
 | REQ-SYNC-011 | 手机在不依赖电脑的情况下同步只读云端快照 | Phone 0.21.1 的 `/sync/push` 快照链路曾通过关机等价测试；迁移后旧路由必须返回 410，旧 `SYNC_KEY` 不得升级为双向设备凭据 | 历史已实现，现已废弃 |
 | REQ-SYNC-012 | 手机使用端到端加密的双向增量同步 | `/sync/v2/exchange` 仅传输 AES-256-GCM 密文、nonce、AAD hash、revision、tombstone 和最小索引；计划、计划库元数据与训练摘要支持 push/pull，ACK、materialize、cursor 和 outbox 同一持久化边界提交 | 本地实现，待 staging/真机/PC-off 验收 |
-| REQ-SYNC-013 | 同步根密钥可安全恢复和跨设备批准 | 设备 token 与根密钥分别由 Android Keystore 包装；新设备不得静默生成不兼容根密钥，可使用 PBKDF2-HMAC-SHA256 离线恢复包或 10 分钟一次性 RSA-OAEP 设备批准包恢复 | 本地实现，待 Android 真机验证 |
+| REQ-SYNC-013 | 同步根密钥可安全恢复和跨设备批准 | 设备 token 与根密钥分别由 Android Keystore 包装；新设备不得静默生成不兼容根密钥，可使用 PBKDF2-HMAC-SHA256 离线恢复包或 10 分钟一次性 RSA-OAEP 设备批准包恢复 | Phone 真机 Keystore 包装已验证；恢复包、批准包和 Watch 端仍待真机闭环 |
 | REQ-SYNC-014 | 云同步具备后台恢复且不误删数据 | 首次/换钥后先 pull 再 push；WorkManager 在网络恢复、Doze 和重启后继续；删除只来自 schema 3 显式 tombstone，本地暂时缺项不得推断为删除；冲突保留双方候选 | 本地实现，自动化通过，待故障注入/真机验证 |
 | REQ-SYNC-015 | 训练完成后由手表主动触发手机上云 | 训练成功落盘后，手表仅通过已认证加密 BLE 发送版本化 `history_changed` 提示；提示不含训练、位置、健康或凭据数据；手机用网络约束唯一 WorkManager 任务去重并执行 canonical `/sync/v2/exchange`，BLE 重连和 15 分钟周期补偿漏事件 | 本地实现，自动化通过，待手机/手表真机与 PC-off 验收 |
 | REQ-SYNC-016 | 云端 MCP 读取实际最小数据面 | OAuth `watch:read` 可读取同步状态、计划名、粗粒度训练以及由训练次数/时长/距离/步数派生的活动健康汇总；设备 token 只能替换本设备 projection，OAuth token 不能写 exchange；轨迹、坐标、逐点心率、睡眠、凭据和未知字段一律拒绝 | Worker 本地实现，合同测试通过，待 staging/真实账户验收 |

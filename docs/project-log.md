@@ -511,3 +511,9 @@
 - 轨迹数据仍来自 `WorkoutService`/历史文件原始合法点；只在观察层转换坐标，不读取签名保护的系统 `sport_gps`，不复制系统 AK，不吸附或重写路线。地图保持系统资源 164dp，包络横向 15dp/纵向 25dp，3dp 圆帽轨迹，离页暂停和 5 秒镜头节流继续保留。
 - 当前 Chrome 中的百度账号已登录，但尚停在开发者身份登记页；创建开发者身份和 Android AK 会修改外部账号，未在无确认情况下提交。代码在占位 AK 下会明确显示“地图授权待配置”，不再静默退回错误底图。
 - `:app:compileDebugJavaWithJavac :app:testDebugUnitTest` 与 `git diff --check` 已通过。由于缺少绑定 `com.poyi.watchintervals` 和实际签名 SHA-1 的有效 AK，本批次尚未安装新地图候选，WT-023 继续开放。
+## 2026-07-29：0.21.1 / 0.22.1 真机 Keystore provider-IV 修复（BUG-040、PT-021）
+
+- Worker staging 已完成 `0005_authority_observation.sql`、authority checkpoint trigger 安装和 audited deployment；Phone provisioning 随后在真实设备 fail closed，未把失败当成完成证据。
+- androidTest 直接复现 Keystore2 `Caller-provided IV not permitted`，定位到 Watch/Phone 三个 AES-GCM wrapper 在 `randomizedEncryptionRequired=true` 下仍注入调用方 IV。统一改为让 provider 生成 IV，并校验/持久化 `Cipher.getIV()`；decrypt wire shape 不变。
+- 真实 Phone 已通过两次 nonce 唯一性、正确/错误 AAD、device token/root Keystore 包装、旧明文配置清除和 debug instrumentation bootstrap。测试凭据正文、deviceId 与 serial 均未进入文档或日志。
+- 版本升为 Watch 0.21.1（32）/Phone 0.22.1（18）。真实 Watch 尚未接入 ADB，BLE/Watch Keystore/三轮 PC-off 继续保持硬阻断，`supportsPcOff=false`。

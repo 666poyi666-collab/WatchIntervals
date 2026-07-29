@@ -15,8 +15,9 @@ android {
         applicationId 'com.poyi.watchintervals'
         minSdk 30
         targetSdk 30
-        versionCode 31
-        versionName '0.21.0'
+        versionCode 32
+        versionName '0.21.1'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders = [BAIDU_MAP_AK: (project.findProperty('BAIDU_MAP_AK') ?: 'TOKEN')]
         buildConfigField 'String', 'BAIDU_MAP_AK', '"' + (project.findProperty('BAIDU_MAP_AK') ?: 'TOKEN') + '"'
     }
@@ -38,4 +39,6 @@ dependencies {
     implementation files('libs/baidu-map-7.5.9-local.jar')
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }

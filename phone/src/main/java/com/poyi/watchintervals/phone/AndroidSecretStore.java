@@ -5,7 +5,6 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
-import java.security.SecureRandom;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -23,18 +22,16 @@ public final class AndroidSecretStore {
     }
 
     private static final String KEY_ALIAS = "poyi.watchintervals.phone.secrets.v1";
-    private static final SecureRandom RANDOM = new SecureRandom();
-
     private AndroidSecretStore() {}
 
     public static EncryptedValue encrypt(String plaintext, String aad) throws Exception {
         if (plaintext == null || plaintext.isEmpty() || aad == null || aad.isEmpty()) {
             throw new IllegalArgumentException("invalid_secret");
         }
-        byte[] nonce = new byte[12];
-        RANDOM.nextBytes(nonce);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+        byte[] nonce = cipher.getIV();
+        if (nonce == null || nonce.length != 12) throw new IllegalStateException("invalid_keystore_iv");
         cipher.updateAAD(aad.getBytes(StandardCharsets.UTF_8));
         byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
         return new EncryptedValue(encode(ciphertext), encode(nonce));

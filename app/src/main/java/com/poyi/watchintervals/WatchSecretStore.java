@@ -6,7 +6,6 @@ import android.util.Base64;
 import android.util.Log;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
-import java.security.SecureRandom;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -22,8 +21,6 @@ import javax.crypto.spec.GCMParameterSpec;
 final class WatchSecretStore {
     private static final String TAG = "WatchSecretStore";
     private static final String KEY_ALIAS = "poyi.watchintervals.watch.secrets.v1";
-    private static final SecureRandom RANDOM = new SecureRandom();
-
     private WatchSecretStore() {}
 
     /** Result of an encryption operation: ciphertext + nonce, both Base64url-encoded. */
@@ -48,10 +45,12 @@ final class WatchSecretStore {
             return null;
         }
         try {
-            byte[] nonce = new byte[12];
-            RANDOM.nextBytes(nonce);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+            cipher.init(Cipher.ENCRYPT_MODE, key());
+            byte[] nonce = cipher.getIV();
+            if (nonce == null || nonce.length != 12) {
+                throw new IllegalStateException("invalid_keystore_iv");
+            }
             cipher.updateAAD(aad.getBytes(StandardCharsets.UTF_8));
             byte[] ciphertext = cipher.doFinal(plaintext);
             return new EncryptedValue(encode(ciphertext), encode(nonce));

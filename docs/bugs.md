@@ -385,6 +385,17 @@
 - 自动化：双端纯 Java 合同测试覆盖事件最小字段、敏感字段不存在、版本/状态/replyTo/多余字段拒绝；完整 Gradle 门禁见 `project-log.md`。
 - 剩余：需按 `WT-025`、`PT-020`、`BLE-011` 在真实 OWW221/手机上验证 indication、后台蜂窝/Wi-Fi、重复事件、断联重连和 Doze。
 
+### BUG-040：真实 Android Keystore 拒绝调用方提供的 GCM IV，所有凭据包装失败
+
+- 状态：Fixed；Phone 真机 Verified，Watch 真机待验证
+- 严重度：P0
+- 影响：Watch 0.21.0 / Phone 0.22.0 加密候选
+- 环境：真实 Phone、Android 15；JVM 单测无法提供 `AndroidKeyStore`
+- 现象：V2 debug provisioning 不生成 `encrypted_watch_sync_v1.xml`，device token/root 无法保存；同一模式也影响 Phone pairing/LAN/Gateway secret 和 Watch pairing secret。
+- 根因：Keystore AES key 设置了 `randomizedEncryptionRequired=true`，但 encryption 又调用 `Cipher.init(ENCRYPT_MODE, key, GCMParameterSpec)` 注入自生成 IV；真实 Keystore2 以 `InvalidAlgorithmParameterException: Caller-provided IV not permitted` fail closed。
+- 处理：三个 Keystore wrapper 统一改为 `Cipher.init(ENCRYPT_MODE, key)`，从 provider 读取并校验 12-byte `Cipher.getIV()` 后与 ciphertext 一起持久化；decrypt 格式保持兼容。
+- 验证：关联 `PT-021`。真实 Phone androidTest 验证 nonce 不重复、正确 AAD 回解、错误 AAD 拒绝，以及 staging device token/root 均以 ciphertext/nonce 保存、旧 plaintext v1 配置清除。真实 Watch 当前未连接，Watch 端覆盖安装与重启回归仍开放。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。

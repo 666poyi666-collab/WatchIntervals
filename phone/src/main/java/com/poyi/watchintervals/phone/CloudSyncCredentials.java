@@ -351,10 +351,12 @@ final class CloudSyncCredentials {
     }
 
     private static EncryptedValue encrypt(String plaintext, String aad) throws Exception {
-        byte[] nonce = new byte[12];
-        RANDOM.nextBytes(nonce);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+        // Android Keystore keys created with randomizedEncryptionRequired reject caller-supplied
+        // IVs. Let the provider generate the nonce and persist the exact value it returns.
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+        byte[] nonce = cipher.getIV();
+        if (nonce == null || nonce.length != 12) throw new IllegalStateException("invalid_keystore_iv");
         cipher.updateAAD(aad.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         byte[] encrypted = cipher.doFinal(plaintext.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         return new EncryptedValue(

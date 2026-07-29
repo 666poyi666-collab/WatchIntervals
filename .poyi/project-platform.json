@@ -11,7 +11,7 @@
       "dataPlane": "cloud_primary",
       "mcpExposure": "tool",
       "coverage": "partial",
-      "reason": "The Android V2 client now stages plans, plan-library metadata and immutable workout summaries into an encrypted outbox; staging deployment and real-device evidence remain missing."
+      "reason": "The Android V2 client stages plans, plan-library metadata and immutable workout summaries into an encrypted outbox; Worker staging and Phone Keystore bootstrap are verified, while Watch/PC-off evidence remains missing."
     },
     {
       "id": "raw-health-and-route-data",
@@ -47,7 +47,7 @@
     "supportsBidirectionalDelta": false
   },
   "knownGaps": [
-    "Android Keystore recovery/approval sharing, Doze/boot recovery and second-device conflict/tombstone behavior need real-device validation.",
-    "Staging deployment revision, remote encrypted exchange probes and three PC-off rounds are missing; supportsPcOff and supportsBidirectionalDelta therefore remain false."
+    "Android Keystore recovery/approval sharing, Watch-side Keystore, Doze/boot recovery and second-device conflict/tombstone behavior need real-device validation.",
+    "Central signed authority verification, a real Watch and three PC-off rounds are missing; supportsPcOff and supportsBidirectionalDelta therefore remain false."
   ]
 }

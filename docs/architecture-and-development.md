@@ -168,7 +168,7 @@ Phone 0.22.0 将 `CloudSnapshotSync` 收口为兼容调用入口，实际数据�
 
 本地 `state` 在一次 SharedPreferences `commit()` 中保存实体、加密 outbox、flight lease、冲突副本、projection 待办和 cursor。网络前先提交 outbox；服务端 ACK 与 change 均验证 schema、UUID、revision、AAD hash、nonce 和 page 上限。change 成功解密后，materialize、ACK 移除、projection 待办和 cursor 推进一次提交；随后把计划 projection 幂等写入 schema 3 计划库，成功后才清除待办。崩溃或 projection 失败会在下一次同步开始前重放，不能静默吞掉。revision conflict 将本地加密 candidate 留在 outbox 的 `conflict` 状态，并保存远端候选，禁止自动覆盖。训练实体为 immutable；计划删除只读取计划库 schema 3 的显式 tombstone，绝不扫描“缺少的本地计划”来推断远端删除。
 
-根同步密钥不会由网络或 token 派生。设备 token 和根密钥分别由 Android Keystore AES key 包装；更换同一 deviceId 的旋转 token 保留根密钥，更换 deviceId 或确认 root fingerprint 变化时先把旧 state 隔离备份，再清空 active state。缺少根密钥时同步保持未就绪，不会静默生成新密钥。首台空白空间必须由用户显式初始化；已有空间通过 PBKDF2-HMAC-SHA256（310,000 次）恢复包，或由已授权设备针对目标 3072-bit Android Keystore RSA 公钥生成 10 分钟一次性混合加密批准包。批准包绑定 target deviceId、一次性 nonce、公钥 fingerprint 和有效期；相同 root fingerprint 的恢复保留现有 state，不同 root 才重新执行 pull-first bootstrap。
+根同步密钥不会由网络或 token 派生。设备 token 和根密钥分别由 Android Keystore AES key 包装；GCM encryption 必须由启用 `randomizedEncryptionRequired` 的 Keystore provider 生成 IV，再持久化 `Cipher.getIV()`，禁止调用方预生成 IV。更换同一 deviceId 的旋转 token 保留根密钥，更换 deviceId 或确认 root fingerprint 变化时先把旧 state 隔离备份，再清空 active state。缺少根密钥时同步保持未就绪，不会静默生成新密钥。首台空白空间必须由用户显式初始化；已有空间通过 PBKDF2-HMAC-SHA256（310,000 次）恢复包，或由已授权设备针对目标 3072-bit Android Keystore RSA 公钥生成 10 分钟一次性混合加密批准包。批准包绑定 target deviceId、一次性 nonce、公钥 fingerprint 和有效期；相同 root fingerprint 的恢复保留现有 state，不同 root 才重新执行 pull-first bootstrap。
 
 `EncryptedWatchSyncWorker` 使用网络约束、指数退避的一次性恢复任务和 15 分钟唯一周期任务，覆盖断网、Doze、进程回收与重启。训练成功落盘时，`WatchLinkService` 向当前已认证且订阅 indication 的手机发送严格两字段 `history_changed` 提示；提示本身不含业务数据。`WatchConnectionManager` 严格解析后只 enqueue `ExistingWorkPolicy.KEEP` 的同一个任务，重复提示不会形成并行上传；BLE/LAN 每次成功重连也 enqueue 一次，补偿断联期间漏掉的提示。未配置 token/根密钥时任务成功退出且不会形成无限重试。旧 `/sync/push` 和 plaintext snapshot 只保留历史记录；旧 `SYNC_KEY` 会被删除且不迁移为 V2 设备 token，旧路由的目标行为为 410。
 
@@ -176,7 +176,7 @@ Worker 的 encrypted entity/change 表仍是 canonical authority。为了让 OAu
 
 Watch Worker 另提供仅命名 service binding 可达的 authority observation entrypoint。请求必须精确使用 vendor `Accept`、`Authorization: Capability <产品独立 secret>` 和完整 HTTPS `/authority/watch` audience；公网同路径固定拒绝。D1 trigger 只在真实设备、同步 change/state/operation/audit、projection 或撤销状态变化时推进 authority checkpoint；每个 revision 的 exact-field observation 首次生成后持久化，后续读取保持 truth、`observedAt`、`expiresAt` 完全一致，中央签名 authority 因而得到稳定 observationHash。过期、损坏、额外字段、依赖或 revision 不可用时返回非 200，Watch Worker 不生成签名。
 
-当前证据只覆盖本地 JVM、Android 编译与 Worker 合同。尚未部署 staging、未验证 Android Keystore 真机恢复/批准、未执行三轮 PC-off，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
+当前证据覆盖本地 JVM/Android/Worker 合同、Worker staging migration/deployment，以及真实 Phone 上 provider-generated IV、device token/root Keystore 包装。恢复/批准、真实 Watch、中央两跳和三轮 PC-off 尚未完成，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
 
 `POST /v1/auth/token` 用于一次性签发独立 Watch MCP Bearer Token。未迁移设备可使用当前 6 位配对码 bootstrap；完成安全 BLE 配对且旧码已清除的设备，使用已配对长期 LAN 凭据 bootstrap。签发请求仍要求 UUID `requestId` 与 `expectedRevision`，重复请求返回首次 token，旧 revision 或已有 token 的新请求返回 409。token 不写入日志、仓库或命令行。
 
