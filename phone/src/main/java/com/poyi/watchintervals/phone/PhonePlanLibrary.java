@@ -43,7 +43,7 @@ final class PhonePlanLibrary {
 
     static synchronized JSONObject saveAndSync(Context context, JSONObject source) {
         JSONObject saved = save(context, source);
-        EncryptedWatchSync.syncAsync(context);
+        CloudV3Sync.syncAsync(context);
         return saved;
     }
 
@@ -67,7 +67,7 @@ final class PhonePlanLibrary {
         library.put("plans", result).put("revision", nextRevision(library));
         removeSyncDelete(library, id);
         JSONObject saved = save(context, library);
-        EncryptedWatchSync.syncAsync(context);
+        CloudV3Sync.syncAsync(context);
         return saved;
     }
 
@@ -79,7 +79,7 @@ final class PhonePlanLibrary {
         if (id.equals(library.optString("selectedPlanId"))) library.put("selectedPlanId", result.length() == 0 ? "" : result.getJSONObject(0).optString("id"));
         if (found && validPlanId(id)) markSyncDelete(library, id);
         JSONObject saved = save(context, library);
-        if (found) EncryptedWatchSync.syncAsync(context);
+        if (found) CloudV3Sync.syncAsync(context);
         return saved;
     }
 
@@ -89,7 +89,38 @@ final class PhonePlanLibrary {
         for (int i = 0; i < plans.length(); i++) if (id.equals(plans.getJSONObject(i).optString("id"))) found = true;
         if (!found) throw new IllegalArgumentException("plan_not_found");
         library.put("selectedPlanId", id).put("revision", nextRevision(library));
-        JSONObject saved = save(context, library); EncryptedWatchSync.syncAsync(context); return saved;
+        JSONObject saved = save(context, library); CloudV3Sync.syncAsync(context); return saved;
+    }
+
+    /** Applies the full cloud-authoritative V3 library without scheduling retired V2 sync. */
+    static synchronized JSONObject applyCloudV3(Context context, JSONObject cloud) throws Exception {
+        JSONArray sourceGroups = cloud.optJSONArray("groups"), sourcePlans = cloud.optJSONArray("plans");
+        if (sourceGroups == null || sourcePlans == null) throw new IllegalArgumentException("invalid_cloud_library");
+        JSONArray groups = new JSONArray(sourceGroups.toString()), plans = new JSONArray();
+        for (int index = 0; index < sourcePlans.length(); index++) {
+            JSONObject source = sourcePlans.getJSONObject(index);
+            plans.put(new JSONObject(source.toString())
+                    .put("updatedAt", System.currentTimeMillis())
+                    .put("revision", Math.max(1, cloud.optLong("revision"))));
+        }
+        Object selectedValue = cloud.opt("selectedPlanId");
+        String selected = selectedValue == null || selectedValue == JSONObject.NULL
+                ? "" : String.valueOf(selectedValue);
+        JSONObject local = new JSONObject().put("schemaVersion", SCHEMA)
+                .put("revision", Math.max(1, cloud.optLong("revision")))
+                .put("groups", groups).put("plans", plans).put("selectedPlanId", selected)
+                .put("deletedPlanIds", new JSONArray());
+        return save(context, local);
+    }
+
+    static synchronized JSONObject selectFromCloud(Context context, String id) throws Exception {
+        JSONObject library = load(context); boolean found = false;
+        JSONArray plans = library.getJSONArray("plans");
+        for (int index = 0; index < plans.length(); index++)
+            if (id.equals(plans.getJSONObject(index).optString("id"))) found = true;
+        if (!found) throw new IllegalArgumentException("plan_not_found");
+        library.put("selectedPlanId", id).put("revision", nextRevision(library));
+        return save(context, library);
     }
 
     static synchronized JSONObject createGroup(Context context, String name) throws Exception {
@@ -98,7 +129,7 @@ final class PhonePlanLibrary {
         for (int i = 0; i < groups.length(); i++) if (clean.equals(groups.getJSONObject(i).optString("name"))) return groups.getJSONObject(i);
         JSONObject group = new JSONObject().put("id", UUID.randomUUID().toString()).put("name", clean).put("sortOrder", groups.length());
         groups.put(group); library.put("revision", System.currentTimeMillis()); save(context, library);
-        EncryptedWatchSync.syncAsync(context); return group;
+        CloudV3Sync.syncAsync(context); return group;
     }
 
     static synchronized JSONObject renameGroup(Context context, String id, String name) throws Exception {
@@ -107,7 +138,7 @@ final class PhonePlanLibrary {
         for (int i = 0; i < groups.length(); i++) if (id.equals(groups.getJSONObject(i).optString("id"))) { found = groups.getJSONObject(i); found.put("name", clean); }
         if (found == null) throw new IllegalArgumentException("group_not_found");
         library.put("revision", System.currentTimeMillis()); save(context, library);
-        EncryptedWatchSync.syncAsync(context); return found;
+        CloudV3Sync.syncAsync(context); return found;
     }
 
     static synchronized JSONObject deleteGroup(Context context, String id) throws Exception {
@@ -117,7 +148,7 @@ final class PhonePlanLibrary {
         String fallback = ensureGroup(groups, "我的计划"); JSONArray plans = library.getJSONArray("plans");
         for (int i = 0; i < plans.length(); i++) if (id.equals(plans.getJSONObject(i).optString("groupId"))) plans.getJSONObject(i).put("groupId", fallback);
         library.put("groups", groups).put("revision", System.currentTimeMillis());
-        JSONObject saved = save(context, library); EncryptedWatchSync.syncAsync(context); return saved;
+        JSONObject saved = save(context, library); CloudV3Sync.syncAsync(context); return saved;
     }
 
     static String groupName(JSONObject library, String groupId) {
@@ -236,7 +267,7 @@ final class PhonePlanLibrary {
         }
         if (changed) {
             save(context, library.put("deletedPlanIds", confirmed));
-            EncryptedWatchSync.syncAsync(context);
+            CloudV3Sync.syncAsync(context);
         }
     }
 

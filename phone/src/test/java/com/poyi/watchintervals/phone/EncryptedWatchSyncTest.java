@@ -28,11 +28,11 @@ public class EncryptedWatchSyncTest {
 
     @Test public void revokedCredentialsDoNotRequestAnotherWorkerRetry() {
         assertFalse(EncryptedWatchSyncWorker.shouldRetry(
-                EncryptedWatchSync.SyncOutcome.PERMANENT_FAILURE, false));
+                CloudV3Sync.SyncOutcome.PERMANENT_FAILURE, false));
         assertTrue(EncryptedWatchSyncWorker.shouldRetry(
-                EncryptedWatchSync.SyncOutcome.TRANSIENT_FAILURE, true));
+                CloudV3Sync.SyncOutcome.TRANSIENT_FAILURE, true));
         assertFalse(EncryptedWatchSyncWorker.shouldRetry(
-                EncryptedWatchSync.SyncOutcome.SUCCESS, true));
+                CloudV3Sync.SyncOutcome.SUCCESS, true));
     }
 
     @Test public void onlyRetryableCloudStatusesRemainTransient() {

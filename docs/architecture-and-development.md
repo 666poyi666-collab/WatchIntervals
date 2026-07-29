@@ -176,7 +176,7 @@ Worker 的 encrypted entity/change 表仍是 canonical authority。为了让 OAu
 
 Watch Worker 另提供仅命名 service binding 可达的 authority observation entrypoint。请求必须精确使用 vendor `Accept`、`Authorization: Capability <产品独立 secret>` 和完整 HTTPS `/authority/watch` audience；公网同路径固定拒绝。D1 trigger 只在真实设备、同步 change/state/operation/audit、projection 或撤销状态变化时推进 authority checkpoint；每个 revision 的 exact-field observation 首次生成后持久化，后续读取保持 truth、`observedAt`、`expiresAt` 完全一致，中央签名 authority 因而得到稳定 observationHash。过期、损坏、额外字段、依赖或 revision 不可用时返回非 200，Watch Worker 不生成签名。
 
-当前证据覆盖本地 JVM/Android/Worker 合同、Worker staging migration/deployment，以及真实 Phone 上 provider-generated IV、device token/root Keystore 包装。恢复/批准、真实 Watch、中央两跳和三轮 PC-off 尚未完成，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
+当前证据覆盖本地 JVM/Android/Worker 合同、Worker staging migration/deployment/current build attestation，以及真实 Phone 上 provider-generated IV、device token/root Keystore 包装。2026-07-30 只读审计确认 staging 服务依赖全绿，但真实 read projection 与 receipt 均为 0；恢复/批准、真实 Phone 上行、非空 MCP 回读、中央两跳和三轮 PC-off 尚未完成，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
 
 `POST /v1/auth/token` 用于一次性签发独立 Watch MCP Bearer Token。未迁移设备可使用当前 6 位配对码 bootstrap；完成安全 BLE 配对且旧码已清除的设备，使用已配对长期 LAN 凭据 bootstrap。签发请求仍要求 UUID `requestId` 与 `expectedRevision`，重复请求返回首次 token，旧 revision 或已有 token 的新请求返回 409。token 不写入日志、仓库或命令行。
 

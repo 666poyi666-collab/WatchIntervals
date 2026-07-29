@@ -396,6 +396,18 @@
 - 处理：三个 Keystore wrapper 统一改为 `Cipher.init(ENCRYPT_MODE, key)`，从 provider 读取并校验 12-byte `Cipher.getIV()` 后与 ciphertext 一起持久化；decrypt 格式保持兼容。
 - 验证：关联 `PT-021`。真实 Phone androidTest 验证 nonce 不重复、正确 AAD 回解、错误 AAD 拒绝，以及 staging device token/root 均以 ciphertext/nonce 保存、旧 plaintext v1 配置清除；force-stop 后仍可回解，并持久化网络约束的一次性/周期 WorkManager。真实 Watch 覆盖安装后通过 provider-generated nonce、正确/错误 AAD 回解，并在进程停止后确认自定义 action 与显式伪造 `BOOT_COMPLETED` 均不能拉起进程。未执行设备重启，不把本项证据扩张为 PC-off 完成。
 
+### BUG-041：staging 服务全绿但没有真实 read projection，MCP 只能返回空业务数据
+
+- 状态：Open，阻断 `REQ-SYNC-016` / `API-023`
+- 严重度：P0（发布阻断）
+- 发现版本：Watch 0.21.1 / Phone 0.22.1 候选，Watch Cloud MCP `44e9a91`
+- 环境：`watch-mcp-staging`、D1 `watch-mcp-staging-watch-suixin`
+- 现象：公网 `/healthz` 返回当前 40 位 build commit，`/readyz` 的 storage/OAuth/authority observation 全部 ready，Protected Resource Metadata 与匿名 401 challenge 正常；D1 有 2 个未撤销设备且旧 V2 exchange 最晚发生于 2026-07-28，但 `watch_read_projection` 和 `watch_read_projection_state` 均为 0 行。
+- 影响：OAuth 成功不等于用户需求成功；`watch_list_plans`、`watch_list_workouts` 和活动汇总没有实际计划/训练可返回，不能宣称 ChatGPT 或 PC-off 可用。
+- 根因：当前 staging 上没有任何真实 Phone 在包含 `readProjection` 的新客户端代码下完成一次成功 exchange。Worker 合同能够接收并读取 projection，但部署后的真实设备上行证据缺失。
+- 处理：Watch Cloud MCP 新增 `npm run test:staging:mcp` 只读门禁，依次验证 metadata、readiness、MCP initialize、tools/list 和五个实际读取工具；计划、训练、活动时长必须非空，步数必须为有效整数。脚本不注册 OAuth client、不写 authority、不打印 token，空 projection 必然失败。
+- 关闭条件：真实 Phone 在不依赖 Windows 服务的条件下向当前 staging 完成 exchange；D1 receipt/plan/workout 非空；短期 `watch:read` token 运行门禁通过，并记录 build commit、计划数、训练数、总时长、总步数和最后 projection 时间。随后再执行 `PT-020` 与三轮 `PT-018`。
+
 ## 2. 已修复/历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。

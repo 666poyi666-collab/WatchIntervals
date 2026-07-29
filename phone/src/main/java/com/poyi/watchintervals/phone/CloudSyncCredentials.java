@@ -102,7 +102,7 @@ final class CloudSyncCredentials {
                 context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE).edit()
                         .remove("sync_key").remove("endpoint").apply();
                 if (deviceChanged) deleteTransferKey();
-                if (readyForSync(context)) EncryptedWatchSyncWorker.schedule(context);
+                if (readyForCloudV3(context)) EncryptedWatchSyncWorker.schedule(context);
                 else EncryptedWatchSyncWorker.cancel(context);
             }
             return saved;
@@ -140,6 +140,11 @@ final class CloudSyncCredentials {
             finally { Arrays.fill(root, (byte) 0); }
         }
         catch (Exception unavailable) { return false; }
+    }
+
+    /** V3 reuses the Keystore-wrapped device token but does not require the retired E2EE root. */
+    static synchronized boolean readyForCloudV3(Context context) {
+        return load(context).configured();
     }
 
     /** Stops background retries after the server has revoked this device credential. */
@@ -312,7 +317,8 @@ final class CloudSyncCredentials {
         try {
             URI uri = URI.create(value);
             return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
-                    && "/sync/v2/exchange".equals(uri.getPath()) && uri.getQuery() == null
+                    && ("/sync/v3/exchange".equals(uri.getPath())
+                    || "/sync/v2/exchange".equals(uri.getPath())) && uri.getQuery() == null
                     && uri.getFragment() == null;
         } catch (IllegalArgumentException invalid) {
             return false;

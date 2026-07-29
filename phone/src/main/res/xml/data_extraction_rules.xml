@@ -3,6 +3,7 @@
     <cloud-backup disableIfNoEncryptionCapabilities="true">
         <exclude domain="sharedpref" path="encrypted_watch_sync_v1.xml" />
         <exclude domain="sharedpref" path="cloud_snapshot_sync.xml" />
+        <exclude domain="sharedpref" path="watch_cloud_v3.xml" />
         <exclude domain="sharedpref" path="gateway_api_auth.xml" />
         <exclude domain="sharedpref" path="watch_identity.xml" />
         <exclude domain="sharedpref" path="connection.xml" />
@@ -16,6 +17,7 @@
     <device-transfer>
         <exclude domain="sharedpref" path="encrypted_watch_sync_v1.xml" />
         <exclude domain="sharedpref" path="cloud_snapshot_sync.xml" />
+        <exclude domain="sharedpref" path="watch_cloud_v3.xml" />
         <exclude domain="sharedpref" path="gateway_api_auth.xml" />
         <exclude domain="sharedpref" path="watch_identity.xml" />
         <exclude domain="sharedpref" path="connection.xml" />

@@ -5,17 +5,17 @@ import android.content.Context;
 /**
  * Compatibility entry point for older phone call sites.
  *
- * <p>It no longer uploads snapshots or accepts /sync/push credentials. Every invocation now
- * enters the encrypted V2 exchange client, whose retry is owned by WorkManager.
+ * <p>Phone 0.23 routes every invocation to server-readable Cloud V3. The encrypted V2 source
+ * and state remain available only for migration rollback and are not dual-written.
  */
 final class CloudSnapshotSync {
     private CloudSnapshotSync() {}
 
     static void syncAsync(Context context) {
-        EncryptedWatchSync.syncAsync(context);
+        CloudV3Sync.syncAsync(context);
     }
 
     static boolean sync(Context context) {
-        return EncryptedWatchSync.sync(context) == EncryptedWatchSync.SyncOutcome.SUCCESS;
+        return CloudV3Sync.sync(context) == CloudV3Sync.SyncOutcome.SUCCESS;
     }
 }

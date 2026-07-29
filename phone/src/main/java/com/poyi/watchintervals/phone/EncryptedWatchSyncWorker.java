@@ -13,38 +13,37 @@ import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 import java.util.concurrent.TimeUnit;
 
-/** WorkManager owns network, reboot and Doze recovery for encrypted watch sync. */
+/** WorkManager owns network, reboot and Doze recovery for Cloud V3 sync. */
 public final class EncryptedWatchSyncWorker extends Worker {
-    private static final String UNIQUE_NAME = "encrypted-watch-sync-v1";
-    private static final String PERIODIC_NAME = "encrypted-watch-sync-periodic-v1";
+    private static final String UNIQUE_NAME = "watch-cloud-v3-sync";
+    private static final String PERIODIC_NAME = "watch-cloud-v3-sync-periodic";
 
     public EncryptedWatchSyncWorker(@NonNull Context context, @NonNull WorkerParameters parameters) {
         super(context, parameters);
     }
 
     @NonNull @Override public Result doWork() {
-        if (!CloudSyncCredentials.readyForSync(getApplicationContext())) {
+        if (!CloudSyncCredentials.readyForCloudV3(getApplicationContext())) {
             cancel(getApplicationContext());
             return Result.success();
         }
-        EncryptedWatchSync.SyncOutcome outcome =
-                EncryptedWatchSync.sync(getApplicationContext());
-        if (outcome == EncryptedWatchSync.SyncOutcome.PERMANENT_FAILURE) {
+        CloudV3Sync.SyncOutcome outcome = CloudV3Sync.sync(getApplicationContext());
+        if (outcome == CloudV3Sync.SyncOutcome.PERMANENT_FAILURE) {
             cancel(getApplicationContext());
             return Result.success();
         }
-        return shouldRetry(outcome, CloudSyncCredentials.readyForSync(getApplicationContext()))
+        return shouldRetry(outcome, CloudSyncCredentials.readyForCloudV3(getApplicationContext()))
                 ? Result.retry() : Result.success();
     }
 
-    static boolean shouldRetry(EncryptedWatchSync.SyncOutcome outcome,
+    static boolean shouldRetry(CloudV3Sync.SyncOutcome outcome,
                                boolean credentialsStillReady) {
-        return outcome == EncryptedWatchSync.SyncOutcome.TRANSIENT_FAILURE &&
+        return outcome == CloudV3Sync.SyncOutcome.TRANSIENT_FAILURE &&
                 credentialsStillReady;
     }
 
     public static void schedule(Context context) {
-        if (!CloudSyncCredentials.readyForSync(context)) return;
+        if (!CloudSyncCredentials.readyForCloudV3(context)) return;
         Constraints constraints = networkConstraints();
         ensurePeriodic(context, constraints);
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(EncryptedWatchSyncWorker.class)
@@ -56,7 +55,7 @@ public final class EncryptedWatchSyncWorker extends Worker {
     }
 
     static void ensurePeriodic(Context context) {
-        if (!CloudSyncCredentials.readyForSync(context)) return;
+        if (!CloudSyncCredentials.readyForCloudV3(context)) return;
         ensurePeriodic(context, networkConstraints());
     }
 

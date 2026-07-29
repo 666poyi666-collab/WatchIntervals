@@ -441,16 +441,15 @@ public class MainActivity extends Activity {
         String key = cloudKey.getText().toString().trim();
         if (key.isEmpty()) key = current.deviceToken;
         if (!CloudSyncCredentials.save(this, cloudEndpoint.getText().toString(), key)) {
-            Toast.makeText(this, "请输入 HTTPS /sync/v2/exchange 地址和有效设备 token", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "请输入 HTTPS /sync/v3/exchange 地址和有效设备 token", Toast.LENGTH_LONG).show();
             return;
         }
         cloudKey.setText(""); cloudKey.setHint("已安全保存设备 token");
-        if (CloudSyncCredentials.readyForSync(this)) {
+        if (CloudSyncCredentials.readyForCloudV3(this)) {
             CloudSnapshotSync.syncAsync(this);
             Toast.makeText(this, "云同步配置已保存，正在后台测试", Toast.LENGTH_SHORT).show();
         } else {
-            Toast.makeText(this, "设备 token 已保存，请初始化或恢复同步密钥", Toast.LENGTH_LONG).show();
-            showCloudKeyMenu();
+            Toast.makeText(this, "设备 token 保存失败", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -463,7 +462,7 @@ public class MainActivity extends Activity {
             cloudEndpoint.setText(endpoint); cloudKey.setText("");
             cloudKey.setHint("已安全保存设备 token");
             intent.removeExtra("poyi_cloud_endpoint"); intent.removeExtra("poyi_cloud_key");
-            if (CloudSyncCredentials.readyForSync(this)) CloudSnapshotSync.syncAsync(this);
+            if (CloudSyncCredentials.readyForCloudV3(this)) CloudSnapshotSync.syncAsync(this);
         }
     }
 

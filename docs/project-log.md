@@ -519,3 +519,10 @@
 - 真实 Watch 覆盖安装 Watch 0.21.1（32）及 test APK 后，Keystore nonce/AAD 仪器测试通过；force-stop 后自定义 action 与显式伪造 `BOOT_COMPLETED` 均未启动应用，负测结束后已重开。Phone 为 0.22.1（18）。
 - Worker 复核为 55 项本地测试、TypeScript typecheck 全绿；staging `/healthz` attestation 指向 audited Worker commit，`/readyz` 的 storage/OAuth/authority observation 均 ready，D1 最新 migration 为 `0005_authority_observation.sql`、两张 authority 表和 10 个 checkpoint trigger 齐全。产品 observation 公网访问为非 200；Gateway 经中央 service binding 读取 Watch 时仍 fail closed 为 `authority_source_unavailable`，对应 revision 7 的不可变 observation 已按合同过期。
 - 真实 Phone 无线 ADB 在网络 exchange 取证前离线，BLE indication、真实移动网络补传、中央两跳和三轮 PC-off 继续保持硬阻断；没有执行 production 灰度，`supportsPcOff=false`。
+
+## 2026-07-30：独立 Watch staging 真相审计与非空 MCP 门禁（BUG-041、API-025）
+
+- 只读核对公网 staging：`/healthz` 证明线上为仓库当前提交 `44e9a911d62cd1554bf16c1afa514cad384487b2`；`/readyz` 的 D1、OAuth、authority observation 全绿；Protected Resource Metadata、authorization-server metadata、JWKS 与匿名 OAuth challenge 均可由公网访问。migration 列表为空，Worker dry-run binding 正确。
+- 直接查询 staging D1 后确认真正阻断：已有 2 个未撤销设备，旧 V2 state 最晚 exchange 为 2026-07-28，但 `watch_read_projection`/receipt 为 0。此前“服务 ready”不能推出“ChatGPT 可读实际计划/训练”，本轮明确登记 BUG-041，禁止用空数组或 fixture 宣称完成。
+- `watch-cloud-mcp` 新增 `npm run test:staging:mcp`：只接收环境中的短期 OAuth `watch:read` token，不写 authorization server；验证 MCP initialize、tools/list、status、计划、训练、活动汇总与 sync overview，并以计划/训练/时长非空作为硬门禁。
+- 本轮未操作 ADB、未安装 APK、未停止其他产品服务、未写 OAuth authority、未部署 production。Worker 56 项分层测试与 typecheck、staging dry-run、Watch/Phone 单元测试通过；真实 Phone 需要在后续独占设备窗口运行当前 APK 并完成一次 V2 exchange，随后才能执行 API-025、PT-020 和 PT-018。

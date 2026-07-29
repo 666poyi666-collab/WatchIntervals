@@ -46,6 +46,6 @@
 1. OWW221 + 手机真实 `history_changed` indication 与重复事件/断联重连测试（`WT-025`、`BLE-011`）。
 2. 手机 Keystore 恢复包/设备批准真机负测（`PT-016`、`PT-017`）。
 3. 蜂窝、Wi-Fi、后台 Doze、重启三轮 PC-off catch-up（`PT-018`、`PT-020`）。
-4. staging Worker migration、OAuth 实际连接和 MCP 实际计划/训练/状态/活动汇总回读。
+4. staging Worker migration、build attestation、OAuth metadata/readiness 已通过；仍需真实 Phone 产生非空 read projection，并用短期 `watch:read` token 执行 `watch-cloud-mcp` 的 `npm run test:staging:mcp`，完成实际计划/训练/状态/活动汇总回读。
 
 在上述证据齐全前，项目 manifest 必须保持 `supportsPcOff=false`，不得把本地绿色门禁描述为生产可用。

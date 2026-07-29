@@ -167,6 +167,15 @@ git diff --check
 | API-022 | `/sync/push` 和 `/sync/v1/exchange` 按迁移策略拒绝；V2 device token 不能访问 MCP，OAuth token 不能访问 exchange；日志、D1、MCP 响应和 APK 扫描不到 token、根密钥、plaintext payload、原始轨迹/心率/睡眠 |
 | API-023 | device-authenticated `readProjection` 只接受计划名与粗粒度训练 exact fields；OAuth `watch:read` 实际读取计划、训练、encrypted status 和活动健康汇总；多余字段、坐标、路线、逐点心率、睡眠、凭据、错误 deviceId、错误 scope 全部 fail closed |
 | API-024 | authority observation 仅经命名 service binding 读取；要求 vendor `Accept`、独立 `Capability` 和完整 `/authority/watch` audience；响应 exact fields，revision 来自 D1 authority checkpoint，同 revision 的原始响应/hash/truth/时间稳定；缺 binding/capability、错误 audience、过期/额外字段、依赖或 revision 不可用均非 200 且 Worker 不签名 |
+| API-025 | `WATCH_OAUTH_ACCESS_TOKEN=<短期 watch:read token> npm run test:staging:mcp` 对公网 staging 完成 Protected Resource Metadata、ready、MCP initialize、tools/list、status、计划、训练、活动汇总和 sync overview；计划/训练/总时长非空，步数为有效整数，build commit 与待验提交一致；不得以 mock/fixture/手工 D1 写入替代真实 Phone projection |
+
+### 2026-07-30 staging 只读审计（BUG-041）
+
+- `watch-mcp-staging` 的 `/healthz` 为 200，`buildCommit=44e9a911d62cd1554bf16c1afa514cad384487b2`；`/readyz` 为 200，storage/OAuth/authority observation 均为 ready。
+- Protected Resource Metadata 精确广告 staging `/mcp`、staging authorization server 与 `watch:read`；authorization-server metadata、JWKS 和匿名 MCP `WWW-Authenticate resource_metadata=...` 均通过公网探测。
+- staging D1 migration 无待应用项；2 个未撤销设备存在，V2 device state 最近 exchange 为 `2026-07-28T17:52:24.609Z`。
+- `watch_read_projection` 与 receipt 均为 0；因此 API-023/API-025 未通过。本轮未操作 ADB、未安装 APK、未写 OAuth authority、未用 fixture 回填业务数据。
+- Worker 本地门禁：static 8、schema 5、D1 8、Worker 35（合计 56）全通过；TypeScript typecheck 与 staging dry-run 通过。Android `:app:testDebugUnitTest :phone:testDebugUnitTest` 通过，但不替代真实 Phone 上行。
 
 ### Phone 0.22.0 加密 V2 本地门禁（2026-07-28）
 
