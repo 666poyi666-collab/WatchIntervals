@@ -1,51 +1,75 @@
-# 步序云同步（加密 V2）
+# 步序云同步（Cloud V3）
 
-> 基线：2026-07-29。目标是电脑关机后，由手表、手机和 Watch Cloud MCP 完成只读数据链；旧 `/sync/push`/电脑同步代理已经退役。
+> 基线：2026-07-30。目标生产链路是 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`。电脑、本地 MCP、Tunnel 和手机 8766 不属于最终链路。
 
 ## 当前数据流
 
 ```text
-手表训练成功落盘
-  -> 已认证 AES-GCM BLE history_changed（只含事件名和版本）
-  -> 手机读取 authenticated /v1/history
-  -> WorkManager（网络约束、唯一任务、指数退避、15 分钟周期）
-  -> HTTPS /sync/v2/exchange（device token）
-       -> canonical encrypted_sync_*：AES-256-GCM 密文、revision、ACK、cursor、conflict
-       -> watch_read_projection：严格允许字段的最小可读 projection
-  -> OAuth watch:read
-  -> Watch Cloud MCP
+手表 WorkoutService / HistoryStore / SystemSleepBridge
+  <-> 安全 BLE 主链路（LAN 仅加速）
+手机 Phone 0.23.0
+  -> HTTPS POST /sync/v3/exchange（Device Bearer Token）
+  -> WSS /sync/v3/channel（只接收 sync_needed）
+  -> D1 V3 authority
+  -> Cloud MCP（watch:read / watch:write / watch:control）
   -> ChatGPT
 ```
 
-电脑、Windows Watch MCP、Tunnel、ADB 和同一局域网都不在这条云端读取路径上。手机可以使用蜂窝或 Wi-Fi；手表只需通过 BLE 把变化提示给手机。提示丢失时，BLE/LAN 成功重连和 15 分钟周期任务会再次执行 catch-up。
+手机保存离线计划缓存、V3 outbox/cursor/receipt/conflict 和 Keystore 包装的 device token。云端是计划主版本；手表 `WorkoutService` 仍是活动训练状态唯一权威。V2 源码/state 暂时保留用于迁移回退，但 Phone 0.23.0 不启用、不双写，也不会在 V3 失败时自动退回。
 
-## 权限和数据边界
+## 云端保存范围
 
-- `/sync/v2/exchange` 只接受专用 device token；OAuth token 不能调用同步路由。
-- `/mcp` 只接受签名、issuer/audience/resource/scope/introspection 均通过的 OAuth `watch:read` token；device token 不能调用 MCP。
-- authority observation 不是公网或 Gateway 数据面：中央签名 authority 只经命名 service binding，以 vendor `Accept`、独立 `Capability` 和完整 HTTPS `/authority/watch` audience 读取。Worker 返回 exact-field、checkpoint 派生且同 revision 不可变的 observation，本身不签名。
-- canonical 计划和训练摘要只以 AES-256-GCM 密文存储；根密钥不离开已授权设备。
-- 为满足用户允许的云端实际读取，手机在同一次设备认证 exchange 中附带严格最小 projection：
-  - 计划：哈希实体键、名称；
-  - 训练：哈希实体键、计划/自由类型、开始/结束、活动时长、距离、步数。
-- MCP 隐藏实体键，只返回计划名、粗粒度训练、encrypted sync 状态/新鲜度，以及次数、时长、距离、步数活动健康汇总。
-- 原始轨迹、坐标、逐点心率、睡眠、凭据、根密钥、设备私钥和诊断正文不上传到 projection；未知或多余字段在写入前拒绝，D1 行在读取前再次验证。
+允许永久保存：
 
-## 可靠性边界
+- 完整计划组、计划、阶段、当前选择和单调 revision；
+- 训练摘要、阶段结果、公里分段、距离、配速、步数、步频、速度、爬升、平均/最低/最高心率和数据来源摘要；
+- 睡眠 record、session、stage、评分、血氧、心率、呼吸及系统原始字段；
+- 设备 checkpoint、同步新鲜度、实时状态、操作幂等结果、命令和审计。
 
-- 手机本地 `state` 同时持久化 entity、outbox、flight lease、conflict、projection pending 和 cursor。
-- ACK 移除、远端 materialize、冲突留存和 cursor 推进必须同一次 `commit()` 成功。
-- 首次/换 root 必须先 pull bootstrap；计划删除只来自 schema 3 显式 tombstone；训练是 create-once immutable fact。
-- WorkManager 使用 `ExistingWorkPolicy.KEEP` 去重一次性工作；网络恢复、Doze、进程回收和开机由持久任务/receiver 恢复。
-- 未配置或 Keystore 解密失败时 fail closed，不生成替代 token/root，也不无限重试。
+始终 local-only：
+
+- 原始轨迹数组、经纬度、坐标集合；
+- 逐点心率样本；
+- 配对码、设备/OAuth token、第三方凭据、私钥和诊断正文。
+
+Phone 只从手表 `/v1/history` 读取 summary；任何 V3 请求出现 `route`、`latitude`、`longitude`、`coordinates` 或 `heartRateSamples` 都在 Phone 端拒绝，Worker 再做一次 exact-field 校验。业务正文不做应用层 E2EE，HTTPS、安全 BLE、OAuth 和 Keystore token 包装继续保留。
+
+## Exchange 可靠性
+
+- `POST /sync/v3/exchange` 使用 requestId/deviceId/cursor，plan/workout/sleep 各最多 25 项；重复 ID 同正文返回首次结果，不同正文复用 ID 拒绝。
+- 所有进程内 exchange 串行。active request 在网络前 `commit()`，失败后原样重试；`cursor_ahead` 只按服务器 `resetCursor` 清 active request 并重建，不丢 outbox。
+- plan 使用 expected revision OCC。普通 conflict 从 outbox 移入持久 conflict store，保留本地 candidate、ACK 和服务器计划库；HTTP 往返期间本地 revision/fingerprint 变化时，旧响应不得覆盖新编辑。
+- workout 是 create-once fact；同 ID 同内容幂等，不同内容冲突。训练删除只在手表 command ACK 后由云端写独立 tombstone，后续上传不能复活。
+- 睡眠首次回填最近 31 天，此后增量更新；暂时读不到不推断删除。
+- `watch_cloud_v3.xml` 被 Auto Backup 和 device transfer 排除。
+
+## 命令通道
+
+- `/sync/v3/channel` 只发送 exact `{type:"sync_needed"}`；业务正文仍由 exchange 拉取。
+- WebSocket 消息直接触发轻量 command exchange，不先扫描训练历史或 31 天睡眠；WorkManager 只做后台/重启补偿。
+- Phone 运行中补配置凭据后会自动重连；同一实例最多保留一个 reconnect timer。
+- 成功执行命令后，同一次 `sync()` 立即做第二次 exchange 回传结果。Cloud MCP 最多等待 10 秒，超时返回可查询的 pending。
+- 手表离线时 Phone 不提前写失败 ACK；命令保持 pending/delivered，30 秒后由云端过期。Phone 每次执行前检查 expiresAt，恢复连接后绝不执行旧命令。
+- 删除训练走 `/v1/control/delete_workout`，复用手表持久 command cache；相同 ID 返回首次结果，不同正文复用 ID 返回 409。
+
+## OAuth 和 MCP
+
+- `watch:read`：状态、同步新鲜度、计划、训练、统计和睡眠。
+- `watch:write`：计划组、计划、选择计划和删除训练。
+- `watch:control`：开始、暂停、继续、停止和命令状态。
+- `offline_access` 只作为连接协议 scope，不授予 Watch 数据权限。
+- device token 不能调用 MCP，OAuth token 不能调用 exchange。
+- authority observation 只读取 V3 checkpoint/device/cursor；真实验收前 `supportsPcOff=false`。
 
 ## 尚未完成的验收
 
-当前本地实现和自动化不能代替真实设备结论。必须继续完成：
+本地自动化和 APK 构建不能替代以下门禁：
 
-1. OWW221 + 手机真实 `history_changed` indication 与重复事件/断联重连测试（`WT-025`、`BLE-011`）。
-2. 手机 Keystore 恢复包/设备批准真机负测（`PT-016`、`PT-017`）。
-3. 蜂窝、Wi-Fi、后台 Doze、重启三轮 PC-off catch-up（`PT-018`、`PT-020`）。
-4. staging Worker migration、build attestation、OAuth metadata/readiness 已通过；仍需真实 Phone 产生非空 read projection，并用短期 `watch:read` token 执行 `watch-cloud-mcp` 的 `npm run test:staging:mcp`，完成实际计划/训练/状态/活动汇总回读。
+1. 用户手动重新授权真实 ChatGPT connector 新 scope；代理不得代点 consent。
+2. 完成一条真实超过 1 公里的训练，使云端出现非空公里分段；现有真实训练已回读摘要和平均心率，但没有 splits。
+3. D1/MCP/运行日志最终扫描确认无坐标、轨迹数组、逐点心率、凭据和 token。
+4. 实际关闭电脑与全部 Windows 服务，完成手机前台、后台 Doze、手机重启三轮 PC-off。
 
-在上述证据齐全前，项目 manifest 必须保持 `supportsPcOff=false`，不得把本地绿色门禁描述为生产可用。
+已完成的 staging 真机证据：真实 Phone receipt、5 个计划、3 条训练、24 条睡眠；最新睡眠包含 session/stage；start/pause/resume/stop 均在 10 秒内 ACK；离线 start 命令 30 秒过期且恢复后未 delivered、未执行；Cloud MCP 临时计划经 Phone 和安全 BLE outbox 到达 Watch，随后云端、Phone、Watch 三处精确回滚。
+
+V3 staging 已完成基础远端合同，但生产发布、ChatGPT OAuth consent、Windows 服务卸载和本地 MCP 删除仍需在对应门禁后由用户确认执行。生产非空 MCP 回读、三轮 PC-off 和服务卸载全部通过前，不关闭 `BUG-041`，不设置 `supportsPcOff=true`。

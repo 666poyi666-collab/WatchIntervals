@@ -26,6 +26,10 @@ public class CloudV3SyncTest {
                 .put("heartRateRange", new JSONObject().put("min", 90).put("max", 180))));
     }
 
+    @Test public void idleLiveStatusAcceptsMissingWorkoutBlock() throws Exception {
+        assertNull(CloudV3Sync.normalizeOptionalLiveWorkout(null));
+    }
+
     @Test public void conflictMovesCandidateToPersistentConflictStoreWithoutReceipt() throws Exception {
         JSONObject state = stateWithOutbox(new JSONObject().put("kind", "plan")
                 .put("entityId", "library").put("fingerprint", "10")
@@ -90,6 +94,93 @@ public class CloudV3SyncTest {
         assertEquals(1, state.getJSONArray("outbox").length());
     }
 
+    @Test public void exchangeDiagnosticsKeepOnlyBoundedServerErrorCodes() throws Exception {
+        assertEquals("", CloudV3Sync.responseErrorCode(200, "not-json"));
+        assertEquals("invalid_request", CloudV3Sync.responseErrorCode(400,
+                new JSONObject().put("error", "invalid_request")
+                        .put("detail", "must not be persisted").toString()));
+        assertEquals("http_error", CloudV3Sync.responseErrorCode(500, "upstream body"));
+        assertEquals("http_error", CloudV3Sync.responseErrorCode(400,
+                new JSONObject().put("error", "contains spaces").toString()));
+    }
+
+    @Test public void normalizesLegacyNumericSleepStringsBeforeExchange() throws Exception {
+        JSONObject legacy = sleepRecordWithNumericStrings();
+
+        JSONObject normalized = CloudV3Sync.normalizeSleepRecord(legacy);
+
+        assertEquals(-1L, normalized.getLong("osaResult"));
+        assertTrue(normalized.get("osaResult") instanceof Number);
+        assertTrue(normalized.getJSONObject("heartRateRangeBpm").get("minimum") instanceof Number);
+        assertTrue(normalized.getJSONArray("sessions").getJSONObject(0)
+                .getJSONArray("stages").getJSONObject(0).get("type") instanceof Number);
+    }
+
+    @Test public void pendingSleepNormalizationForcesActiveRequestRebuild() throws Exception {
+        JSONObject legacy = sleepRecordWithNumericStrings();
+        JSONObject sleep = new JSONObject().put("kind", "sleep").put("entityId", "sleep:1")
+                .put("fingerprint", "old").put("payload", new JSONObject()
+                        .put("operationId", "00000000-0000-4000-8000-000000000001")
+                        .put("recordId", "sleep:1").put("sourceRevision", "old")
+                        .put("record", legacy));
+        JSONObject state = stateWithOutbox(sleep)
+                .put("activeRequest", new JSONObject().put("body", new JSONObject()));
+
+        assertTrue(CloudV3Sync.normalizePendingSleepOutbox(state));
+        assertTrue(state.getJSONArray("outbox").getJSONObject(0).getJSONObject("payload")
+                .getJSONObject("record").get("osaResult") instanceof Number);
+        assertEquals(0, state.getJSONArray("conflicts").length());
+    }
+
+    @Test public void uploadedSleepPrunesOnlyItsLegacySchemaConflict() throws Exception {
+        JSONObject state = emptyState();
+        state.getJSONObject("sleepReceipts").put("sleep:1", "uploaded-revision");
+        state.getJSONArray("conflicts")
+                .put(new JSONObject().put("kind", "sleep").put("entityId", "sleep:1")
+                        .put("error", "local_schema_invalid").put("candidate", new JSONObject()))
+                .put(new JSONObject().put("kind", "sleep").put("entityId", "sleep:2")
+                        .put("error", "local_schema_invalid").put("candidate", new JSONObject()))
+                .put(new JSONObject().put("kind", "plan").put("entityId", "library")
+                        .put("error", "revision_conflict").put("candidate", new JSONObject()));
+
+        assertTrue(CloudV3Sync.pruneResolvedLocalSleepConflicts(state));
+
+        assertEquals(2, state.getJSONArray("conflicts").length());
+        assertEquals("sleep:2", state.getJSONArray("conflicts").getJSONObject(0)
+                .getString("entityId"));
+        assertEquals("library", state.getJSONArray("conflicts").getJSONObject(1)
+                .getString("entityId"));
+        assertFalse(CloudV3Sync.pruneResolvedLocalSleepConflicts(state));
+    }
+
+    @Test public void deviceRotationDoesNotReuseOldCursorOutboxOrActiveRequest() throws Exception {
+        JSONObject previous = stateWithOutbox(new JSONObject().put("kind", "workout")
+                .put("entityId", "old-workout").put("payload", new JSONObject()
+                        .put("operationId", "old-operation")))
+                .put("cursor", "v3c9")
+                .put("activeRequest", new JSONObject().put("body", new JSONObject()
+                        .put("deviceId", "watch-old")));
+
+        JSONObject rotated = CloudV3Sync.bindStateToDevice(previous, "watch-new");
+
+        assertNotSame(previous, rotated);
+        assertEquals("watch-new", rotated.getString("deviceId"));
+        assertFalse(rotated.has("cursor"));
+        assertFalse(rotated.has("outbox"));
+        assertFalse(rotated.has("activeRequest"));
+        assertEquals("v3c9", previous.getString("cursor"));
+    }
+
+    @Test public void sameDeviceKeepsExistingV3State() throws Exception {
+        JSONObject current = emptyState().put("deviceId", "watch-current")
+                .put("cursor", "v3c2");
+
+        JSONObject rebound = CloudV3Sync.bindStateToDevice(current, "watch-current");
+
+        assertSame(current, rebound);
+        assertEquals("v3c2", rebound.getString("cursor"));
+    }
+
     @Test public void commandResultRequiresImmediateFollowUpAndSurvivesRestartState() throws Exception {
         JSONObject state = emptyState();
         AtomicInteger executions = new AtomicInteger();
@@ -138,6 +229,23 @@ public class CloudV3SyncTest {
     private static JSONObject command(String id, Instant expiresAt) throws Exception {
         return new JSONObject().put("commandId", id).put("type", "pause")
                 .put("expiresAt", expiresAt.toString()).put("controlRevision", 1);
+    }
+
+    private static JSONObject sleepRecordWithNumericStrings() throws Exception {
+        JSONObject range = new JSONObject().put("minimum", "48").put("maximum", "83");
+        JSONObject stage = new JSONObject().put("type", "2").put("label", "system_2")
+                .put("startTime", "1000").put("endTime", "2000");
+        JSONObject session = new JSONObject().put("startTime", "1000").put("endTime", "2000")
+                .put("sleepDurationMinutes", "10").put("deepDurationMinutes", "2")
+                .put("lightDurationMinutes", "6").put("remDurationMinutes", "1")
+                .put("awakeDurationMinutes", "1").put("stages", new JSONArray().put(stage));
+        return new JSONObject().put("timestamp", "1000").put("totalDurationMinutes", "10")
+                .put("sleepScore", "80").put("spo2AveragePercent", "97")
+                .put("osaResult", "-1").put("heartRateBenchmarkBpm", "58")
+                .put("breathRateBenchmarkPerMinute", "15.5")
+                .put("heartRateRangeBpm", range)
+                .put("breathRateRangePerMinute", new JSONObject(range.toString()))
+                .put("sessions", new JSONArray().put(session));
     }
 
     private static JSONObject localLibrary(long revision, String name) throws Exception {

@@ -2,6 +2,7 @@ package com.poyi.watchintervals.phone;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
@@ -13,6 +14,10 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
+import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -51,6 +56,69 @@ public final class CloudSyncCredentialsInstrumentedTest {
         assertTrue(encrypted.contains("root_ciphertext"));
         assertFalse(encrypted.contains("device_token"));
         assertFalse(encrypted.contains("root_key"));
+    }
+
+    @Test public void repointPersistedDeviceCredential() {
+        Bundle arguments = InstrumentationRegistry.getArguments();
+        String endpoint = arguments.getString("cloud_endpoint", "");
+        assertTrue("canonical HTTPS endpoint argument required", endpoint.startsWith("https://"));
+
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        CloudSyncCredentials.Config existing = CloudSyncCredentials.load(context);
+        assertTrue("persisted device credential required", existing.configured());
+        assertTrue("existing credential must be rewrapped for the new endpoint",
+                CloudSyncCredentials.save(context, endpoint, existing.deviceToken));
+
+        CloudSyncCredentials.Config updated = CloudSyncCredentials.load(context);
+        assertEquals(endpoint, updated.endpoint);
+        assertEquals(existing.deviceId(), updated.deviceId());
+        assertTrue(CloudSyncCredentials.readyForCloudV3(context));
+    }
+
+    @Test public void cloudV3FullExchangeSucceeds() {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertTrue("persisted V3 credential required", CloudSyncCredentials.readyForCloudV3(context));
+        assertEquals(CloudV3Sync.SyncOutcome.SUCCESS, CloudV3Sync.sync(context));
+        String state = context.getSharedPreferences("watch_cloud_v3", Context.MODE_PRIVATE)
+                .getString("state", "");
+        assertTrue("successful exchange receipt must be persisted",
+                state != null && state.contains("firstSuccessfulExchangeAt"));
+    }
+
+    @Test public void cloudV3LiveStatusExchangeSucceeds() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        SharedPreferences state = context.getSharedPreferences("watch_cloud_v3", Context.MODE_PRIVATE);
+        assertTrue(state.edit().remove("last_active_session").commit());
+        WatchConnectionManager manager = WatchConnectionManager.get(context);
+        manager.connect().get(25, TimeUnit.SECONDS);
+        assertFalse("direct Watch status response must not be empty",
+                manager.requestBlocking("GET", "/v1/status", "", 20_000L).isEmpty());
+        assertNotNull("current Watch status must be readable before live exchange",
+                CloudV3Sync.readLiveStatus(context));
+        assertEquals(CloudV3Sync.SyncOutcome.SUCCESS, CloudV3Sync.syncLive(context));
+        assertTrue("live exchange must read a real Watch status", state.contains("last_active_session"));
+    }
+
+    @Test public void cloudPlanOutboxDrainsToWatch() throws Exception {
+        String planId = InstrumentationRegistry.getArguments().getString("cloud_plan_id", "");
+        assertFalse("cloud_plan_id argument required", planId.isEmpty());
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        WatchConnectionManager manager = WatchConnectionManager.get(context);
+        manager.connect().get(25, TimeUnit.SECONDS);
+        JSONObject drained = PhoneSyncOutbox.drain(context, manager);
+        assertEquals("secure plan outbox must be fully acknowledged", 0,
+                drained.optInt("pendingOperations", -1));
+        JSONObject library = new JSONObject(manager.requestBlocking(
+                "GET", "/v1/plan-library", "", 20_000L));
+        JSONArray plans = library.getJSONArray("plans");
+        boolean found = false;
+        for (int index = 0; index < plans.length(); index++) {
+            if (planId.equals(plans.getJSONObject(index).optString("id"))) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue("Cloud MCP plan must be readable from Watch after BLE outbox ACK", found);
     }
 
     @Test public void phoneSecretStoreUsesProviderGeneratedNonce() throws Exception {

@@ -2,6 +2,34 @@
 
 本文件记录用户可感知的版本变化，格式参考 Keep a Changelog。手表端和手机端版本独立，在标题中分别标明。
 
+## [Watch 0.21.1 / Phone 0.23.0] - 未发布
+
+### Added
+
+- 新增 server-readable Cloud V3：Device Bearer Token 认证的 `/sync/v3/exchange`、持久 outbox/active request/cursor/receipt/conflict，以及 D1 计划、训练摘要、睡眠、实时状态和命令数据面。
+- 手机前台新增 OkHttp WebSocket `/sync/v3/channel`；通道只接收 `sync_needed`，命令正文仍由轻量 exchange 拉取，断线和运行中补配置均自动重连。
+- Cloud MCP 新增 `watch:read`、`watch:write`、`watch:control` 权限隔离，可读取真实计划、训练摘要/分段/聚合心率、睡眠和新鲜度，并创建计划或训练控制命令。
+- 手表新增 `/v1/control/delete_workout` 幂等命令；相同 commandId 返回首次结果，不同正文复用 ID 拒绝，云端只在手表 ACK 后写训练 tombstone。
+
+### Changed
+
+- 云端成为计划主版本，手机计划库改为离线缓存；首次 V3 可引导空云端，之后所有计划写入使用 expected revision，旧 revision conflict 保留本地 candidate 和服务器库。
+- 业务数据不再做应用层 E2EE；HTTPS、安全 BLE、OAuth 和 Android Keystore device-token 包装继续保留。V2 源码/state 暂留迁移回退，但 0.23.0 不启用、不双写。
+- 训练中每 10 秒、空闲每 60 秒上传实时状态；live/command exchange 不再重复扫描完整历史和 31 天睡眠。
+- 原始轨迹、坐标和逐点心率固定为 local-only；云端允许完整计划、训练摘要/分段/聚合心率与睡眠 record/session/stage。
+
+### Fixed
+
+- 修复 WorkManager 与前台同步并发读写同一 V3 state、cursor ahead 无限重试、conflict 被误当 ACK、旧云端响应覆盖 HTTP 往返期间新本地编辑的问题。
+- 修复命令成功后仅等待下一次 WorkManager 才回传 ACK 的延迟；现在同一次同步立即二次 exchange。手表离线不提前上报失败，30 秒过期后不再执行旧命令。
+- 修复 WebSocket 未配置凭据时永不补连和 close/failure 重复安排 reconnect；`watch_cloud_v3.xml` 现同时排除 Auto Backup 与设备迁移。
+- 修复厂商睡眠 OSA 负数哨兵被 V3 schema 拒绝，以及已成功上传睡眠仍长期保留旧 `local_schema_invalid` 大对象的问题。
+- 修复 Cloud V3 小整数计划 revision 被手表迁移前时间戳 revision 误判为旧数据；云端下发现在使用独立 `cloud_replace` revision 域并保持单调回退保护。
+
+### Verification
+
+- Watch/Phone JVM 单测、双模块 `lintDebug`、debug/release 构建已通过。staging 已有真实 Phone receipt、5 个计划、3 条训练、24 条睡眠，四类在线控制均在 10 秒内完成；离线 start 命令 30 秒过期后恢复不执行，Cloud MCP 临时计划已到达手表并精确回滚。真实公里分段、ChatGPT 用户重绑和三轮 PC-off 尚未执行，`BUG-041` 保持开放。
+
 ## [Watch 0.21.1 / Phone 0.22.1] - 未发布
 
 ### Added

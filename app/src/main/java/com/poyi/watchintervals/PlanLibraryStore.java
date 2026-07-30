@@ -13,6 +13,9 @@ import java.util.UUID;
 final class PlanLibraryStore {
     private static final String PREF = "plan_library_v2";
     private static final String KEY = "snapshot";
+    private static final String PROCESSED_PREF = "processed_operations";
+    private static final String PROCESSED_KEY = "items";
+    private static final String CLOUD_REVISION_KEY = "cloud_plan_revision";
     private static final int SCHEMA = 2;
 
     private PlanLibraryStore() {}
@@ -52,6 +55,62 @@ final class PlanLibraryStore {
         library.put("selectedPlanId", planId);
         write(context, library);
         return selected;
+    }
+
+    static synchronized JSONObject applySyncOperations(Context context, JSONObject request)
+            throws Exception {
+        JSONArray operations = request.optJSONArray("operations"), acks = new JSONArray();
+        if (operations == null) return new JSONObject().put("acks", acks);
+        SharedPreferences preferences = context.getSharedPreferences(
+                PROCESSED_PREF, Context.MODE_PRIVATE);
+        JSONObject processed;
+        try { processed = new JSONObject(preferences.getString(PROCESSED_KEY, "{}")); }
+        catch (Exception ignored) { processed = new JSONObject(); }
+        long cloudRevision = preferences.getLong(CLOUD_REVISION_KEY, 0L);
+        for (int index = 0; index < operations.length(); index++) {
+            JSONObject operation = operations.optJSONObject(index);
+            if (operation == null) continue;
+            String operationId = operation.optString("operationId");
+            JSONObject ack = new JSONObject().put("operationId", operationId);
+            if (processed.has(operationId)) {
+                acks.put(ack.put("status", "already_applied"));
+                continue;
+            }
+            JSONObject payload = operation.optJSONObject("payload");
+            if (!"plan_library".equals(operation.optString("entityType")) || payload == null) {
+                acks.put(ack.put("status", "invalid"));
+                continue;
+            }
+            JSONObject current = load(context);
+            long incomingRevision = payload.optLong("revision");
+            boolean cloudReplace = "cloud_replace".equals(operation.optString("operation"));
+            if (shouldRejectIncomingRevision(cloudReplace, incomingRevision,
+                    current.optLong("revision"), cloudRevision)) {
+                acks.put(ack.put("status", "conflict")
+                        .put("libraryRevision", current.optLong("revision")));
+                continue;
+            }
+            JSONObject saved = replace(context, payload);
+            processed.put(operationId, System.currentTimeMillis());
+            if (cloudReplace) cloudRevision = incomingRevision;
+            acks.put(ack.put("status", "applied")
+                    .put("libraryRevision", saved.optLong("revision")));
+        }
+        JSONArray names = processed.names();
+        while (names != null && names.length() > 500) {
+            processed.remove(names.optString(0));
+            names = processed.names();
+        }
+        SharedPreferences.Editor editor = preferences.edit().putString(
+                PROCESSED_KEY, processed.toString());
+        if (cloudRevision > 0) editor.putLong(CLOUD_REVISION_KEY, cloudRevision);
+        editor.apply();
+        return new JSONObject().put("acks", acks);
+    }
+
+    static boolean shouldRejectIncomingRevision(boolean cloudReplace, long incomingRevision,
+                                                long currentRevision, long cloudRevision) {
+        return incomingRevision < (cloudReplace ? cloudRevision : currentRevision);
     }
 
     static String groupName(JSONObject library, String groupId) {

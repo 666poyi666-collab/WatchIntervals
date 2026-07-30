@@ -1,12 +1,12 @@
 # 产品需求文档（PRD）
 
 状态：维护中  
-基线：2026-07-29
+基线：2026-07-30
 产品：步序（WatchIntervals）
 
 ## 1. 产品目标
 
-为 OPPO Watch 4 Pro 提供可脱离手机独立运行的间歇训练工具，并通过手机伴侣和本地 MCP 完成计划管理、训练控制、历史查看与轨迹同步。核心原则是训练不中断、数据来源透明、手表小屏可操作、设备数据优先保存在本地。
+为 OPPO Watch 4 Pro 提供可独立执行的间歇训练工具，并通过手机伴侣、云端和 Cloud MCP 完成计划管理、训练控制、历史与睡眠回读。核心原则是训练不中断、数据来源透明、云端计划有唯一主版本，且原始轨迹和逐点心率只保留在设备侧。
 
 ## 2. 用户与核心场景
 
@@ -16,7 +16,7 @@
 | 训练者 | 户外跑步时查看距离、时间、配速、步数、心率和轨迹 | 指标持续更新且明确数据来源 |
 | 训练者 | GPS/厂商能力暂时不可用 | 训练仍可开始，并使用可用传感器降级 |
 | 训练者 | 在手机上维护多个命名计划和分组 | 可保存、编辑、选择并同步至手表 |
-| 高级用户 | 通过本地 MCP 查询与控制训练 | 配对后可读取计划/历史并控制训练状态 |
+| 高级用户 | 通过 Cloud MCP 查询、规划与控制训练 | ChatGPT 不依赖电脑即可读取云端真实数据并控制手表训练 |
 | 训练者 | 在手机或 MCP 查看手表睡眠 | 经系统授权后读取评分、阶段、血氧、心率和呼吸数据 |
 
 ## 3. 功能需求
@@ -30,7 +30,7 @@
 | REQ-PLAN-003 | 内置“1 千米跑 + 200 米快走”计划 | 首次启动或计划损坏时可加载该默认计划 | 已实现 |
 | REQ-PLAN-004 | 提供法特莱克模板 | 2 分钟跑/1 分钟走，共 6 组 | 已实现 |
 | REQ-PLAN-005 | 计划包含名称、分组、训练要求和阶段列表 | 手机计划库保存后可再次编辑并同步 | 已实现 |
-| REQ-PLAN-006 | 手机计划库是多计划管理的主数据源 | MCP 的分组/计划管理以手机端为准，选择后同步手表 | 已实现 |
+| REQ-PLAN-006 | 云端计划库是多计划管理的主版本，手机保留离线缓存 | 首次 V3 只在空云端接受手机 bootstrap；此后 MCP 和手机写入均使用云端 revision，云端变化经手机同步手表 | staging 单设备通过，待多设备验收 |
 
 ### 3.2 训练执行
 
@@ -74,21 +74,23 @@
 | REQ-HISTORY-003 | 支持查看详情、轨迹和删除记录 | 删除后列表与 API 都不再返回该记录 | 已实现 |
 | REQ-SYNC-001 | 手机自动发现同网手表 | 通过 `_watchintervals._tcp.` mDNS 发现 8765 端口 | 已实现 |
 | REQ-SYNC-002 | 使用六位码配对本地 API | 未提供正确 `X-Pairing-Code` 时返回 401 | 已实现 |
-| REQ-SYNC-003 | 独立 Watch MCP 支持计划、统计、历史和训练控制 | 仅注册 `watch_*` 工具；长轨迹、心率和睡眠明细使用 `watch://` Resource | 24 个工具已通过 ChatGPT；Resource 本地通过、ChatGPT 返回 Unknown resource |
-| REQ-SYNC-004 | ChatGPT 使用 Watch 专属长效 MCP 通道 | `PoyiWatchMcp` 与 `PoyiWatchTunnel` 独立自启动；应用固定绑定 Watch Tunnel ID；Runtime Key 不明文落盘 | 已绑定并通过 Tunnel doctor；待 Windows 重启恢复 |
-| REQ-SYNC-005 | Windows 自动重新发现手机 | 手机广播稳定设备 ID；Watch MCP 在旧地址失败后通过 mDNS 验证并更新运行时端点 | IPv6 URL 已修复；mDNS 消失/跨网络仍待真机验证 |
+| REQ-SYNC-003 | Cloud MCP 支持计划、统计、历史、睡眠和训练控制 | OAuth scope 按 `watch:read`、`watch:write`、`watch:control` 隔离；工具读取 D1 V3 真实数据，不依赖本地 MCP | staging 真数据与控制通过，待 ChatGPT 用户重绑 |
+| REQ-SYNC-004 | ChatGPT 使用 Watch 云端长效 MCP 通道 | 生产链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`；电脑关闭不影响读写和控制 | 本地实现，`supportsPcOff=false`，待三轮 PC-off |
+| REQ-SYNC-005 | Windows 本地发现仅作为迁移期兼容能力 | 手机 mDNS/8766 与 Windows MCP/Tunnel 不进入 V3 生产链路；Cloud MCP 验收后删除 | Deprecated，尚未执行卸载 |
 | REQ-SYNC-006 | 计划修改支持可靠 LAN 队列 | 手机先写持久 outbox，手表按 operationId 去重并 ACK，失败操作保留重试 | 已实现基础链路 |
 | REQ-SYNC-007 | MCP 计划写入支持 revision 与请求幂等 | 手机 8766 写计划/选择计划接受 `requestId`、`expectedRevision`；重复请求返回首次结果，复用 ID 或旧 revision 返回 409，崩溃恢复不重复执行 | 已实现，待真机故障注入 |
 | REQ-SYNC-008 | 手机与手表以 BLE 作为主控制链路 | 手机 Central/GATT Client 自动连接手表 Peripheral/GATT Server；状态、控制、计划小增量和定位不依赖共同 Wi-Fi | 基础链路已实现，待完整门禁 |
 | REQ-SYNC-009 | BLE 与 LAN 共享业务路由并自动选择传输 | 控制、计划和定位优先 BLE；历史/睡眠可使用已验证 LAN 加速；LAN 失败回退 BLE | 已实现基础选择与路由 |
 | REQ-SYNC-010 | 蓝牙配对和会话具备应用层安全 | 首次一次性验证码、公钥交换和长期密钥；重连挑战响应；消息认证加密和防重放 | 已实现并通过真机重放验证 |
 | REQ-SYNC-011 | 手机在不依赖电脑的情况下同步只读云端快照 | Phone 0.21.1 的 `/sync/push` 快照链路曾通过关机等价测试；迁移后旧路由必须返回 410，旧 `SYNC_KEY` 不得升级为双向设备凭据 | 历史已实现，现已废弃 |
-| REQ-SYNC-012 | 手机使用端到端加密的双向增量同步 | `/sync/v2/exchange` 仅传输 AES-256-GCM 密文、nonce、AAD hash、revision、tombstone 和最小索引；计划、计划库元数据与训练摘要支持 push/pull，ACK、materialize、cursor 和 outbox 同一持久化边界提交 | 本地实现，待 staging/真机/PC-off 验收 |
-| REQ-SYNC-013 | 同步根密钥可安全恢复和跨设备批准 | 设备 token 与根密钥分别由 Android Keystore 包装；新设备不得静默生成不兼容根密钥，可使用 PBKDF2-HMAC-SHA256 离线恢复包或 10 分钟一次性 RSA-OAEP 设备批准包恢复 | Phone token/root 与 Watch secret store 真机 Keystore 包装已验证；恢复包、批准包和跨设备 PC-off 仍待闭环 |
-| REQ-SYNC-014 | 云同步具备后台恢复且不误删数据 | 首次/换钥后先 pull 再 push；WorkManager 在网络恢复、Doze 和重启后继续；删除只来自 schema 3 显式 tombstone，本地暂时缺项不得推断为删除；冲突保留双方候选 | 本地实现，自动化通过，待故障注入/真机验证 |
-| REQ-SYNC-015 | 训练完成后由手表主动触发手机上云 | 训练成功落盘后，手表仅通过已认证加密 BLE 发送版本化 `history_changed` 提示；提示不含训练、位置、健康或凭据数据；手机用网络约束唯一 WorkManager 任务去重并执行 canonical `/sync/v2/exchange`，BLE 重连和 15 分钟周期补偿漏事件 | 本地实现，自动化通过，待手机/手表真机与 PC-off 验收 |
-| REQ-SYNC-016 | 云端 MCP 读取实际最小数据面 | OAuth `watch:read` 可读取同步状态、计划名、粗粒度训练以及由训练次数/时长/距离/步数派生的活动健康汇总；设备 token 只能替换本设备 projection，OAuth token 不能写 exchange；轨迹、坐标、逐点心率、睡眠、凭据和未知字段一律拒绝 | Worker staging 与 OAuth discovery 已验证；staging projection 为 0，待真实 Phone 上传后完成非空 MCP 回读 |
-| REQ-SYNC-017 | Watch 产品提供统一 authority observation | 仅中央签名 authority 可经命名 service binding、vendor `Accept`、本产品独立 `Capability` 和完整 HTTPS `/authority/watch` audience 读取 exact-field observation；revision 由真实 D1 authority checkpoint 推进，同 revision 的 truth/时间及派生 observationHash 稳定；无效、过期、依赖失败或 revision 缺失全部 fail closed，Worker 本身不签名 | Worker 本地实现，合同测试通过，待中央 authority/Gateway staging 验收 |
+| REQ-SYNC-012 | V2 端到端加密同步只保留迁移回退 | 0.22.x `/sync/v2/exchange` 源码和旧 state 在首次 V3 成功前保留；Phone 0.23.0 只启用 V3，不双写、不自动回退 | Superseded by V3 |
+| REQ-SYNC-013 | V3 设备凭据继续由 Android Keystore 包装 | Device token 不以明文 SharedPreferences 保存；业务数据不再做应用层 E2EE，不再依赖同步 root | 本地实现，待覆盖安装真机确认 |
+| REQ-SYNC-014 | V3 云同步具备后台恢复且不误删数据 | 持久 outbox/active request/cursor/receipt/conflict 同步；WorkManager 覆盖断网、Doze 和重启；cursor ahead 可重建请求；冲突保留双方候选 | 本地实现，自动化通过，待真机故障注入 |
+| REQ-SYNC-015 | 训练完成后由手表主动触发手机上云 | `history_changed` 只提示变化；手机读取不含坐标和逐点心率的 `/v1/history` summary，经 `/sync/v3/exchange` 上传；重连和周期任务补偿 | 本地实现，待手机/手表真机与 PC-off 验收 |
+| REQ-SYNC-016 | 云端永久保存允许的数据并由 MCP 精确回读 | 云端保存完整计划库、训练摘要/分段/平均最低最高心率和睡眠 record/session/stage/评分/血氧/心率/呼吸；原始轨迹、坐标和逐点心率仅在手表/手机 | staging 非空回读通过，待真实公里分段 |
+| REQ-SYNC-017 | Watch 产品提供统一 V3 authority observation | observation 的 revision/freshness/device state 只来自 V3 checkpoint/device/cursor；`supportsPcOff` 在真实三轮验收前固定 false | Worker 合同通过，待中央 authority/Gateway staging 验收 |
+| REQ-SYNC-018 | 云端是计划主版本 | 首次 V3 由手机现有库引导空云端；随后所有写入带 expected revision，旧 revision 冲突保留本地 candidate 与服务器库且不得自动覆盖 | staging 单设备到表通过，待多设备真机验收 |
+| REQ-SYNC-019 | 云端命令 10 秒内确认且离线不迟到执行 | WebSocket 只发送 `sync_needed`；Phone 轻量 exchange 拉命令，手表 ACK 后同次调用立即二次 exchange；离线保持 pending，30 秒过期后永不执行 | staging 在线/离线真机通过，待 PC-off 三轮 |
 
 ### 3.5 手表交互和适配
 
@@ -116,21 +118,21 @@
 | --- | --- | --- |
 | REQ-NFR-001 | 数据真实性 | 缺失传感器值不以估造数字伪装；估算值必须标注来源 |
 | REQ-NFR-002 | 训练可靠性 | Activity 重建、息屏、短时断网不应终止本地训练 |
-| REQ-NFR-003 | 本地优先 | 计划、训练和轨迹默认保存在手表/手机/本机，不依赖云服务 |
+| REQ-NFR-003 | 云端主版本、本地可执行 | 云端是计划主版本；手机保留离线缓存；`WorkoutService` 始终是活动训练状态唯一权威 |
 | REQ-NFR-004 | 可诊断性 | 关键服务失败应有结构化日志；当前实现不足，关联 `BUG-005` |
 | REQ-NFR-005 | 兼容性 | 手表最低 Android 11（API 30）；手机最低 API 29 |
 | REQ-NFR-006 | 发布可追溯 | 版本号、提交、APK SHA-256、测试结果和已知问题可追溯 |
-| REQ-NFR-007 | 云端最小知情 | 云端和 MCP 不持有根密钥、设备私钥、第三方凭据、原始轨迹、逐点心率、睡眠明细或业务明文；无法验证时明确返回 unknown/stale，而非伪造在线状态 |
+| REQ-NFR-007 | 云端受限知情 | 云端可读允许的计划、训练摘要和睡眠明细；不得持有设备私钥、第三方凭据、原始轨迹、坐标或逐点心率；无法验证时返回 unknown/stale |
 
 ## 5. 明确边界
 
 - 当前目标设备为 OWW221，不承诺其他 Wear OS/Android 手表的布局和厂商健康接口兼容性。
 - BLE 已接入计划 outbox、训练控制和手机定位中继；安全配对、防重放、无共同 Wi-Fi/无线 ADB、5 分钟息屏、10 次重连、100 次请求和 15 分钟连续运行已通过真机验证。双端重启、蓝牙开关恢复、分页续传及非充电状态功耗仍待验证。
 - 厂商 HealthKit 能力由运行时探测决定；当前实机固件能力映射为空时走 GPS/步数链路。
-- 当前 APK 是 debug 签名构建，不等同于正式生产发布；加密 V2 已取得可追溯 staging build commit 和 readiness 证据，但尚无真实 projection、实际 MCP 非空回读、设备密钥恢复或 PC-off 三轮证据，不能标记 `supportsPcOff=true`。
-- 云同步只包含完整计划/计划库元数据和训练历史摘要；原始轨迹、逐点心率、睡眠明细、设备凭据和诊断日志保持 local-only。
+- 当前 APK 是 staging 候选，不等同于正式生产发布；V3 Worker/OAuth/migration 已部署且远端空数据合同通过，但没有 Phone receipt、实际 MCP 非空回读、在线手表 ACK 或 PC-off 三轮证据，不能标记 `supportsPcOff=true`。
+- 云同步包含完整计划库、训练摘要/分段/心率统计和睡眠明细；原始轨迹、坐标、逐点心率、设备凭据和诊断日志保持 local-only。
 - 应用是训练记录工具，不提供医疗判断。
-- 睡眠数据仅按请求读取，不复制厂商私有数据库、不在本应用持久化；OSA/血氧等字段仅展示系统原值。
+- 睡眠数据从公开 Store API 读取并按原始 record/session/stage 增量上传云端；暂时读取失败不得推断删除，OSA/血氧等字段只保存系统原值。
 
 ## 6. 后续候选需求
 

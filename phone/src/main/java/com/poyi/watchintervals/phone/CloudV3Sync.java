@@ -29,6 +29,7 @@ final class CloudV3Sync {
 
     private static final String PREFS = "watch_cloud_v3";
     private static final String STATE = "state";
+    private static final String STATE_BACKUP_PREFIX = "state_backup_device_change_";
     private static final int MAX_ITEMS = 25;
     private static final int MAX_RESPONSE_BYTES = 1_500_000;
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
@@ -98,12 +99,24 @@ final class CloudV3Sync {
         return sync(context, true, true);
     }
 
+    static SyncOutcome syncLive(Context context) {
+        return sync(context, false, true);
+    }
+
     private static synchronized SyncOutcome sync(Context context, boolean collectDeviceData,
                                                  boolean includeLiveStatus) {
         if (!CloudSyncCredentials.readyForCloudV3(context)) return SyncOutcome.PERMANENT_FAILURE;
         CloudSyncCredentials.Config config = CloudSyncCredentials.load(context);
-        JSONObject state = loadState(context);
+        JSONObject state = loadState(context, config.deviceId());
         try {
+            boolean normalizedSleep = normalizePendingSleepOutbox(state);
+            boolean prunedSleepConflicts = pruneResolvedLocalSleepConflicts(state);
+            if (normalizedSleep) {
+                state.remove("activeRequest");
+            }
+            if (normalizedSleep || prunedSleepConflicts) {
+                saveState(context, state);
+            }
             boolean collectBeforeBuild = collectDeviceData
                     && state.optJSONObject("activeRequest") == null;
             int cursorResets = 0;
@@ -119,6 +132,7 @@ final class CloudV3Sync {
                 }
                 JSONObject request = active.getJSONObject("body");
                 HttpResult result = exchange(config, request);
+                recordDiagnostic(context, result.status, responseErrorCode(result.status, result.body));
                 if (applyCursorReset(state, result.status, result.body) && cursorResets++ == 0) {
                     saveState(context, state);
                     collectBeforeBuild = false;
@@ -151,6 +165,7 @@ final class CloudV3Sync {
             }
             return SyncOutcome.SUCCESS;
         } catch (Exception error) {
+            recordDiagnostic(context, 0, "transport_" + error.getClass().getSimpleName());
             return SyncOutcome.TRANSIENT_FAILURE;
         }
     }
@@ -243,8 +258,11 @@ final class CloudV3Sync {
         if (records == null) return;
         JSONObject receipts = state.getJSONObject("sleepReceipts");
         for (int i = 0; i < records.length(); i++) {
-            JSONObject record = records.optJSONObject(i);
-            if (record == null || containsForbidden(record)) continue;
+            JSONObject source = records.optJSONObject(i);
+            if (source == null || containsForbidden(source)) continue;
+            JSONObject record;
+            try { record = normalizeSleepRecord(source); }
+            catch (Exception invalid) { continue; }
             String id = "sleep:" + record.optLong("timestamp");
             String revision = sha256(canonical(record));
             if (revision.equals(receipts.optString(id)) || hasEntity(outbox, "sleep", id)) continue;
@@ -254,6 +272,111 @@ final class CloudV3Sync {
             outbox.put(new JSONObject().put("kind", "sleep").put("entityId", id)
                     .put("fingerprint", revision).put("payload", payload));
         }
+    }
+
+    static boolean normalizePendingSleepOutbox(JSONObject state) throws Exception {
+        JSONArray source = state.getJSONArray("outbox");
+        JSONArray normalizedOutbox = new JSONArray();
+        boolean changed = false;
+        for (int i = 0; i < source.length(); i++) {
+            JSONObject item = source.getJSONObject(i);
+            if (!"sleep".equals(item.optString("kind"))) {
+                normalizedOutbox.put(item);
+                continue;
+            }
+            try {
+                JSONObject payload = item.getJSONObject("payload");
+                JSONObject record = payload.getJSONObject("record");
+                JSONObject normalized = normalizeSleepRecord(record);
+                if (!canonical(record).equals(canonical(normalized))) {
+                    payload.put("record", normalized);
+                    item.put("fingerprint", sha256(canonical(normalized)));
+                    changed = true;
+                }
+                normalizedOutbox.put(item);
+            } catch (Exception invalid) {
+                state.getJSONArray("conflicts").put(new JSONObject()
+                        .put("kind", "sleep").put("entityId", item.optString("entityId"))
+                        .put("error", "local_schema_invalid")
+                        .put("candidate", new JSONObject(item.toString()))
+                        .put("recordedAt", System.currentTimeMillis()));
+                changed = true;
+            }
+        }
+        if (changed) state.put("outbox", normalizedOutbox);
+        return changed;
+    }
+
+    static JSONObject normalizeSleepRecord(JSONObject source) throws Exception {
+        JSONObject record = new JSONObject()
+                .put("timestamp", nonNegativeLong(source, "timestamp"))
+                .put("totalDurationMinutes", nonNegativeLong(source, "totalDurationMinutes"))
+                .put("sleepScore", nonNegativeLong(source, "sleepScore"))
+                .put("spo2AveragePercent", nonNegativeLong(source, "spo2AveragePercent"))
+                .put("osaResult", signedLong(source, "osaResult"))
+                .put("heartRateBenchmarkBpm", nonNegativeLong(source, "heartRateBenchmarkBpm"))
+                .put("breathRateBenchmarkPerMinute",
+                        nonNegativeDouble(source, "breathRateBenchmarkPerMinute"))
+                .put("heartRateRangeBpm", normalizeRange(source, "heartRateRangeBpm"))
+                .put("breathRateRangePerMinute",
+                        normalizeRange(source, "breathRateRangePerMinute"));
+        JSONArray sessions = source.getJSONArray("sessions"), normalizedSessions = new JSONArray();
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject session = sessions.getJSONObject(i);
+            JSONObject normalizedSession = new JSONObject()
+                    .put("startTime", nonNegativeLong(session, "startTime"))
+                    .put("endTime", nonNegativeLong(session, "endTime"))
+                    .put("sleepDurationMinutes", nonNegativeLong(session, "sleepDurationMinutes"))
+                    .put("deepDurationMinutes", nonNegativeLong(session, "deepDurationMinutes"))
+                    .put("lightDurationMinutes", nonNegativeLong(session, "lightDurationMinutes"))
+                    .put("remDurationMinutes", nonNegativeLong(session, "remDurationMinutes"))
+                    .put("awakeDurationMinutes", nonNegativeLong(session, "awakeDurationMinutes"));
+            JSONArray stages = session.getJSONArray("stages"), normalizedStages = new JSONArray();
+            for (int j = 0; j < stages.length(); j++) {
+                JSONObject stage = stages.getJSONObject(j);
+                normalizedStages.put(new JSONObject()
+                        .put("type", nonNegativeLong(stage, "type"))
+                        .put("label", stage.getString("label"))
+                        .put("startTime", nonNegativeLong(stage, "startTime"))
+                        .put("endTime", nonNegativeLong(stage, "endTime")));
+            }
+            normalizedSessions.put(normalizedSession.put("stages", normalizedStages));
+        }
+        return record.put("sessions", normalizedSessions);
+    }
+
+    private static JSONObject normalizeRange(JSONObject source, String key) throws Exception {
+        JSONObject range = source.getJSONObject(key);
+        return new JSONObject().put("minimum", nonNegativeDouble(range, "minimum"))
+                .put("maximum", nonNegativeDouble(range, "maximum"));
+    }
+
+    private static long nonNegativeLong(JSONObject source, String key) throws Exception {
+        long parsed = signedLong(source, key);
+        if (parsed < 0) throw new IllegalArgumentException(key);
+        return parsed;
+    }
+
+    private static long signedLong(JSONObject source, String key) throws Exception {
+        Object value = source.get(key);
+        long parsed;
+        if (value instanceof Number) {
+            double numeric = ((Number) value).doubleValue();
+            parsed = ((Number) value).longValue();
+            if (!Double.isFinite(numeric) || numeric != parsed) throw new IllegalArgumentException(key);
+        } else if (value instanceof String && ((String) value).matches("^-?[0-9]+$")) {
+            parsed = Long.parseLong((String) value);
+        } else throw new IllegalArgumentException(key);
+        return parsed;
+    }
+
+    private static double nonNegativeDouble(JSONObject source, String key) throws Exception {
+        Object value = source.get(key);
+        double parsed = value instanceof Number ? ((Number) value).doubleValue()
+                : value instanceof String ? Double.parseDouble((String) value)
+                : Double.NaN;
+        if (!Double.isFinite(parsed) || parsed < 0d) throw new IllegalArgumentException(key);
+        return parsed;
     }
 
     private static JSONObject buildRequest(Context context, CloudSyncCredentials.Config config,
@@ -305,7 +428,7 @@ final class CloudV3Sync {
         return active;
     }
 
-    private static JSONObject readLiveStatus(Context context) {
+    static JSONObject readLiveStatus(Context context) {
         long now = System.currentTimeMillis();
         try {
             WatchConnectionManager manager = WatchConnectionManager.get(context);
@@ -314,7 +437,7 @@ final class CloudV3Sync {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                     .putBoolean("last_active_session", active).apply();
             JSONObject workout = status.optJSONObject("workout");
-            JSONObject liveWorkout = JSONObject.NULL == workout ? null : normalizeLiveWorkout(workout);
+            JSONObject liveWorkout = normalizeOptionalLiveWorkout(workout);
             return new JSONObject().put("statusRevision", now).put("observedAt", now)
                     .put("expiresAt", now + (active ? 20_000L : 70_000L))
                     .put("connectionState", manager.snapshot().state.name())
@@ -323,6 +446,10 @@ final class CloudV3Sync {
                     .put("planState", status.optString("planState", "UNKNOWN"))
                     .put("workout", liveWorkout == null ? JSONObject.NULL : liveWorkout);
         } catch (Exception unavailable) { return null; }
+    }
+
+    static JSONObject normalizeOptionalLiveWorkout(JSONObject workout) throws Exception {
+        return workout == null ? null : normalizeLiveWorkout(workout);
     }
 
     private static JSONObject normalizeLiveWorkout(JSONObject value) throws Exception {
@@ -360,7 +487,7 @@ final class CloudV3Sync {
                 state.put("lastPlanLocalRevision", saved.optLong("revision"))
                         .remove("planUploadBlockedRevision");
                 try {
-                    PhoneSyncOutbox.enqueueLibrary(context, saved, "upsert", "library");
+                    PhoneSyncOutbox.enqueueLibrary(context, saved, "cloud_replace", "library");
                     PhoneSyncOutbox.drain(context, WatchConnectionManager.get(context));
                 } catch (Exception offline) { /* Existing secure BLE outbox remains pending. */ }
             } else if ("conflict".equals(planOutcome)
@@ -417,6 +544,24 @@ final class CloudV3Sync {
                     .put(id, item.optString("fingerprint"));
         }
         state.put("outbox", remaining);
+        pruneResolvedLocalSleepConflicts(state);
+    }
+
+    static boolean pruneResolvedLocalSleepConflicts(JSONObject state) throws Exception {
+        JSONObject receipts = state.getJSONObject("sleepReceipts");
+        JSONArray conflicts = state.getJSONArray("conflicts");
+        JSONArray remaining = new JSONArray();
+        boolean changed = false;
+        for (int index = 0; index < conflicts.length(); index++) {
+            JSONObject conflict = conflicts.getJSONObject(index);
+            boolean resolvedLegacySleep = "sleep".equals(conflict.optString("kind"))
+                    && "local_schema_invalid".equals(conflict.optString("error"))
+                    && receipts.has(conflict.optString("entityId"));
+            if (resolvedLegacySleep) changed = true;
+            else remaining.put(conflict);
+        }
+        if (changed) state.put("conflicts", remaining);
+        return changed;
     }
 
     private static void preserveConflict(JSONObject state, JSONObject item, JSONObject ack,
@@ -628,10 +773,34 @@ final class CloudV3Sync {
         }
     }
 
-    private static JSONObject loadState(Context context) {
+    static String responseErrorCode(int status, String body) {
+        if (status >= 200 && status < 300) return "";
         try {
-            JSONObject value = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getString(STATE, "{}"));
+            String code = new JSONObject(body).optString("error");
+            return code.matches("^[a-z0-9_]{1,80}$") ? code : "http_error";
+        } catch (Exception invalid) {
+            return "http_error";
+        }
+    }
+
+    private static void recordDiagnostic(Context context, int status, String errorCode) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putLong("last_attempt_at", System.currentTimeMillis())
+                .putInt("last_http_status", Math.max(0, status))
+                .putString("last_error_code", errorCode == null ? "" : errorCode)
+                .apply();
+    }
+
+    private static JSONObject loadState(Context context, String deviceId) {
+        SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String encoded = preferences.getString(STATE, "{}");
+        try {
+            JSONObject previous = new JSONObject(encoded);
+            JSONObject value = bindStateToDevice(previous, deviceId);
+            if (value != previous && encoded != null && !"{}".equals(encoded)) {
+                preferences.edit().putString(STATE_BACKUP_PREFIX + System.currentTimeMillis(), encoded)
+                        .remove(STATE).commit();
+            }
             if (!value.has("cursor")) value.put("cursor", JSONObject.NULL);
             if (!(value.opt("outbox") instanceof JSONArray)) value.put("outbox", new JSONArray());
             if (!(value.opt("commandResults") instanceof JSONArray)) value.put("commandResults", new JSONArray());
@@ -643,13 +812,28 @@ final class CloudV3Sync {
         } catch (Exception corrupted) {
             JSONObject value = new JSONObject();
             try {
-                value.put("cursor", JSONObject.NULL).put("outbox", new JSONArray())
+                value.put("deviceId", deviceId).put("cursor", JSONObject.NULL)
+                        .put("outbox", new JSONArray())
                         .put("commandResults", new JSONArray()).put("workoutReceipts", new JSONObject())
                         .put("sleepReceipts", new JSONObject()).put("executedCommands", new JSONObject())
                         .put("conflicts", new JSONArray());
             } catch (Exception impossible) { throw new IllegalStateException(impossible); }
             return value;
         }
+    }
+
+    static JSONObject bindStateToDevice(JSONObject state, String deviceId) throws Exception {
+        String boundDeviceId = state.optString("deviceId");
+        if (boundDeviceId.isEmpty()) {
+            JSONObject active = state.optJSONObject("activeRequest");
+            JSONObject body = active == null ? null : active.optJSONObject("body");
+            if (body != null) boundDeviceId = body.optString("deviceId");
+        }
+        if (!boundDeviceId.isEmpty() && !boundDeviceId.equals(deviceId)) {
+            return new JSONObject().put("deviceId", deviceId);
+        }
+        state.put("deviceId", deviceId);
+        return state;
     }
 
     private static void saveState(Context context, JSONObject state) {
@@ -741,10 +925,6 @@ final class CloudV3Sync {
 
     private static String deterministicUuid(String value) {
         return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8)).toString();
-    }
-
-    private static String encodePath(String value) {
-        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static final class HttpResult {

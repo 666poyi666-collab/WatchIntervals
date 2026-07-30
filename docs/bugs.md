@@ -396,17 +396,26 @@
 - 处理：三个 Keystore wrapper 统一改为 `Cipher.init(ENCRYPT_MODE, key)`，从 provider 读取并校验 12-byte `Cipher.getIV()` 后与 ciphertext 一起持久化；decrypt 格式保持兼容。
 - 验证：关联 `PT-021`。真实 Phone androidTest 验证 nonce 不重复、正确 AAD 回解、错误 AAD 拒绝，以及 staging device token/root 均以 ciphertext/nonce 保存、旧 plaintext v1 配置清除；force-stop 后仍可回解，并持久化网络约束的一次性/周期 WorkManager。真实 Watch 覆盖安装后通过 provider-generated nonce、正确/错误 AAD 回解，并在进程停止后确认自定义 action 与显式伪造 `BOOT_COMPLETED` 均不能拉起进程。未执行设备重启，不把本项证据扩张为 PC-off 完成。
 
-### BUG-041：staging 服务全绿但没有真实 read projection，MCP 只能返回空业务数据
+### BUG-041：Cloud V3 尚无 staging 真数据与 PC-off 证据，不能退役本地 MCP
 
-- 状态：Open，阻断 `REQ-SYNC-016` / `API-023`
+- 状态：Open，阻断 `REQ-SYNC-004`、`REQ-SYNC-016` 至 019、`API-025` 至 027
 - 严重度：P0（发布阻断）
-- 发现版本：Watch 0.21.1 / Phone 0.22.1 候选，Watch Cloud MCP `44e9a91`
-- 环境：`watch-mcp-staging`、D1 `watch-mcp-staging-watch-suixin`
-- 现象：公网 `/healthz` 返回当前 40 位 build commit，`/readyz` 的 storage/OAuth/authority observation 全部 ready，Protected Resource Metadata 与匿名 401 challenge 正常；D1 有 2 个未撤销设备且旧 V2 exchange 最晚发生于 2026-07-28，但 `watch_read_projection` 和 `watch_read_projection_state` 均为 0 行。
-- 影响：OAuth 成功不等于用户需求成功；`watch_list_plans`、`watch_list_workouts` 和活动汇总没有实际计划/训练可返回，不能宣称 ChatGPT 或 PC-off 可用。
-- 根因：当前 staging 上没有任何真实 Phone 在包含 `readProjection` 的新客户端代码下完成一次成功 exchange。Worker 合同能够接收并读取 projection，但部署后的真实设备上行证据缺失。
-- 处理：Watch Cloud MCP 新增 `npm run test:staging:mcp` 只读门禁，依次验证 metadata、readiness、MCP initialize、tools/list 和五个实际读取工具；计划、训练、活动时长必须非空，步数必须为有效整数。脚本不注册 OAuth client、不写 authority、不打印 token，空 projection 必然失败。
-- 关闭条件：真实 Phone 在不依赖 Windows 服务的条件下向当前 staging 完成 exchange；D1 receipt/plan/workout 非空；短期 `watch:read` token 运行门禁通过，并记录 build commit、计划数、训练数、总时长、总步数和最后 projection 时间。随后再执行 `PT-020` 与三轮 `PT-018`。
+- 发现版本：Watch 0.21.1 / Phone 0.22.1 V2 staging；延续影响 Phone 0.23.0 Cloud V3 候选
+- 环境：V3 staging Watch deployment `824ca395-5f63-4d73-9a61-aea29c1b04ee` / commit `74e90b6888eba55ec47cfdaa5f3706f4a7f6c758`；OAuth deployment `acc012e0-06bf-44cb-a973-bc7bb6ba6b5c`
+- 现象：V2 staging 曾出现 health/ready/OAuth 全绿但 projection 0 行，证明“服务在线”不能替代实际业务数据。V3 现已有真实 Phone receipt、非空计划/训练/睡眠回读、在线控制、离线不迟到执行和计划到表证据；真实公里分段、用户 ChatGPT 重绑、Doze/重启和三轮 PC-off 仍未完成。
+- 影响：不能宣称 ChatGPT 已获得真实训练计划和任务数据，不能设置 `supportsPcOff=true`，也不能删除本地 MCP、Tunnel、手机 8766 或卸载 Windows 服务。
+- 已处理：V3 authority 改为只读 V3 checkpoint/device/cursor；Phone 持久化 outbox/active request/cursor/receipt/conflict，保护并发计划编辑；WebSocket 直接轻量 exchange；成功命令同次二次 exchange；离线命令不提前 ACK；训练删除经手表幂等控制 ACK 后才写云端 tombstone；route/坐标/逐点心率双端拒绝。
+- 验证：Android 双模块单测、Lint、debug/release 构建通过；Worker static/schema/D1/Worker 为 8/5/8/38，OAuth Worker/script 为 35/6，均通过 typecheck。staging 真实数据为 1 个活跃设备、5 个计划、3 条训练、24 条睡眠；四类在线控制为 6412/7394/7213/9199 ms。离线 start 命令恢复后保持 expired、从未 delivered；Cloud MCP 临时计划已在 Phone/Watch 双端回读并回滚。现有训练无 splits，因此公里分段仍开放。
+- 关闭条件：V3 staging migration 和固定 revision 部署；用户手动重新授权新 scope；ChatGPT 创建计划并到达手表；真实训练摘要/分段/心率和真实睡眠非空回读；四类在线控制均在 10 秒内 exactly-once；离线命令过期后不迟到执行；D1/MCP/日志隐私扫描通过；关闭电脑完成前台、Doze、手机重启三轮；生产非空回读后卸载本地服务。全部完成后才关闭本项并设置 `supportsPcOff=true`。
+
+### BUG-042：Cloud V3 revision 被手表本地时间戳 revision 拒绝
+
+- 状态：Verified
+- 严重度：P1
+- 影响：Watch 0.21.1 / Phone 0.23.0 Cloud V3 staging 候选
+- 根因：Cloud V3 使用从 1 开始的单调 revision，迁移前 Phone/Watch 计划库使用毫秒时间戳；手表把两者放在同一数值域比较，导致首个 Cloud MCP 计划下发返回 conflict。
+- 处理：Cloud 下发使用显式 `cloud_replace` 操作；Watch 为云端 revision 单独持久化单调水位，云端替换不再与本地时间戳比较，旧 cloud revision 仍拒绝。BLE/LAN 两条传输共用 `PlanLibraryStore.applySyncOperations`。
+- 验证：`PlanLibraryStoreTest` 覆盖迁移与回退；真机 Cloud MCP 创建临时计划后 Phone revision 8 与 Watch 均回读命中，安全 outbox pending 归零，删除后云端/Phone/Watch 均回到 0 条临时计划。
 
 ## 2. 已修复/历史项
 

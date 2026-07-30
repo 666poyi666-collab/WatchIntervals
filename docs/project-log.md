@@ -526,3 +526,31 @@
 - 直接查询 staging D1 后确认真正阻断：已有 2 个未撤销设备，旧 V2 state 最晚 exchange 为 2026-07-28，但 `watch_read_projection`/receipt 为 0。此前“服务 ready”不能推出“ChatGPT 可读实际计划/训练”，本轮明确登记 BUG-041，禁止用空数组或 fixture 宣称完成。
 - `watch-cloud-mcp` 新增 `npm run test:staging:mcp`：只接收环境中的短期 OAuth `watch:read` token，不写 authorization server；验证 MCP initialize、tools/list、status、计划、训练、活动汇总与 sync overview，并以计划/训练/时长非空作为硬门禁。
 - 本轮未操作 ADB、未安装 APK、未停止其他产品服务、未写 OAuth authority、未部署 production。Worker 56 项分层测试与 typecheck、staging dry-run、Watch/Phone 单元测试通过；真实 Phone 需要在后续独占设备窗口运行当前 APK 并完成一次 V2 exchange，随后才能执行 API-025、PT-020 和 PT-018。
+
+## 2026-07-30：Phone 0.23.0 与 Cloud MCP 全云端 V3 本地闭环（REQ-SYNC-012 至 019、BUG-041）
+
+- 最终链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`。V2 root/recovery/approval 与本地 MCP/Tunnel/8766 仅暂留迁移回退，Phone 0.23.0 不调用 V2、不双写；Cloud MCP 验收和三轮 PC-off 前不删除任何旧服务。
+- Phone 新增 server-readable `/sync/v3/exchange` client 和 `/sync/v3/channel`：device token 继续由 Keystore 包装；V3 state 持久保存 outbox、active request、cursor、receipt、conflict、命令结果和重启去重记录，并排除 Auto Backup/device transfer。
+- 计划首次可引导空云端，之后云端 revision 为主。普通 conflict 保存本地 candidate、ACK 和服务器库；HTTP 往返期间本地 revision/fingerprint 变化时拒绝旧响应覆盖，cursor ahead 按服务端 reset cursor 重建 active request。workout 为 create-once，sleep 首次读取 31 天且读取失败不推断删除。
+- WebSocket 只收 exact `sync_needed` 并直接触发轻量 exchange，不先读取完整历史/睡眠；live、command、full 三类同步入口合并但进程内统一串行。命令成功后同次调用立即二次 exchange，手表不可达则不写失败 ACK，30 秒过期后不再执行。
+- 训练删除改走手表 `/v1/control/delete_workout`，复用持久 command cache 和请求签名；不同正文复用 commandId 返回 409。只有手表成功结果到达云端后才写 tombstone，Phone 收到 `workout_deleted` 后写 receipt 防止复活。
+- 本地 Android 门禁：`:app:testDebugUnitTest :phone:testDebugUnitTest`、双模块 `lintDebug`、debug/release assemble 全部通过。V3 staging migration、OAuth 重新授权、真实计划/训练/睡眠非空回读、10 秒控制、离线过期与三轮 PC-off 均未执行，`supportsPcOff=false`、BUG-041 继续开放。
+- 收尾复核：Watch Worker static/schema/D1/Worker 合同分别 8/5/8/38 项通过，OAuth Worker/script 分别 35/6 项通过，两个 TypeScript 仓库 typecheck、三仓 `git diff --check` 和 19 个 Markdown 本地链接均通过。受版本控制源码的静态隐私门禁确认 Phone/Worker 双端递归拒绝原始轨迹、坐标、逐点心率和凭据字段，V3 D1 无对应原始列，MCP 只返回 `local_only` 标记，生产 V3 路径无正文日志调用；staging D1/MCP/运行日志扫描仍未执行。
+- 本地候选 APK SHA-256：Watch debug `96431E64AAAED54AE4FE7E5F952A1137AC6520AD29BDFDD3C1DD145718B08CF0`、Watch release unsigned `0ED74E781C81E778B2A738A28B51A1CD96CAE25D3E778852F87BFE20357C263C`、Phone debug `4885472DCAFCB26DBF6F52C69E294DD28E52314A61AE9DA7D2201577B19AC1F4`、Phone release unsigned `DA1D719E6C4B84CDCB4313C631F623E27F8FDC1F7713A34289BC3FA752876054`。
+
+## 2026-07-30：Cloud V3 staging 部署与远端专项验收（BUG-041、API-025 至 027）
+
+- 部署前分别导出 Watch/OAuth staging D1。OAuth D1 为 Watch 新增 `watch:write`/`watch:control` policy，并为 28 个既有动态客户端补齐 grant；OAuth Worker deployment `acc012e0-06bf-44cb-a973-bc7bb6ba6b5c` 的 metadata 与 ready 全绿。
+- Watch D1 应用 `0006_cloud_v3.sql`。远端 exchange 探针发现 `cursor_ahead` 的 `resetCursor` 仍为 null；修复为服务器 `latestCursor`、补合同断言后本地 Worker 38/38 通过，提交 `89ed26e7ed716f2c8933ef675d97ca3fd34fee00` 部署为 Version `1befdd04-1ff0-486d-8c5c-555fd138867f`，公网 health 精确 attestation 命中该提交。
+- Watch 专项 OAuth/MCP 探针完成 3 次 DCR+PKCE+合成 consent、read/write/control 正向调用和跨 scope 拒绝；临时 device 完成 exchange/replay/request reuse/cursor reset/隐私/device mismatch/channel 合同；无设备 stop 命令在 Worker 10 秒等待后返回 pending，30 秒后 expired。所有 device/command/operation/change 测试行均清理，凭据未输出。
+- 收尾 V3 device/plan/workout/sleep/command/operation/change 仍全 0，明确证明没有用 fixture 冒充真实数据。真实 Phone receipt、计划到表、训练/睡眠非空 MCP 回读、在线四类控制 ACK、恢复后不执行旧命令、中央两跳和三轮 PC-off 仍未执行；`supportsPcOff=false`，本地 MCP/8766/Windows 服务不退役。
+
+## 2026-07-30：Cloud V3 staging 真机闭环与计划 revision 迁移修复（BUG-041、BUG-042）
+
+- 中国网络无法稳定访问 staging `workers.dev`，为 Watch staging 增加 Custom Domain；Phone 0.23.0 保留 Keystore、BLE/LAN 配对和本地数据覆盖升级后，完成首个真实 V3 exchange。D1 最终保留 1 个活跃设备、5 个计划、3 条训练、24 条睡眠，Cloud MCP 非空回读与 local-only 边界通过。
+- 真机在线控制 start/pause/resume/stop 分别为 6412/7394/7213/9199 ms。手机进程停止时 start 命令先 pending、30 秒后 expired；保留 expired 行再恢复 exchange，命令从未 delivered、无 result，Watch 保持 STOPPED，测试命令随后清理。
+- Cloud MCP 临时计划首次到 Phone 后，Watch 因迁移前时间戳 revision 大于 Cloud revision 6 而返回 conflict。新增 `cloud_replace` revision 域和 Watch 单独 cloud 水位，统一 BLE/LAN 同一应用函数；定向单测与真机迁移通过。第二轮 Cloud MCP 计划在 Phone/Watch 双端均命中，安全 outbox pending 归零，删除后两端及云端均精确回滚。
+- 24 条成功睡眠对应的旧 `local_schema_invalid` candidate 已按 receipt 清理为 0；真实 V3 state 不再长期保留重复大对象。完整 Android 双模块 unit/Lint/debug/release、Worker 59 项、OAuth 41 项、TypeScript typecheck 全绿。
+- 仍未完成真实公里分段、用户 ChatGPT connector 重绑、Doze/手机重启、三轮 PC-off、生产发布和本地服务卸载。BUG-041 保持 Open，`supportsPcOff=false`。
+- 本轮候选产物 SHA-256：Watch debug `2FF2D11E0E85EA835E611897B60162EC9063479D6D9E1C0A818476031F143EDB`、Watch release unsigned `41E1551C680AE4F24439DF05CF0C905196D5594369A0B5CE1598EE652847A757`、Phone debug `38B24D137889D541A14E595D88432C49CA8D6453A055F7970550CC52FA9E69B9`、Phone release unsigned `EF81628788976D74642CB92E5FC9A4AA68116A1D58426660795B4DE145C934E2`。
+- `watch-cloud-mcp` 将 OSA 负数哨兵合同、Custom Domain 配置和对应测试提交为 `74e90b6888eba55ec47cfdaa5f3706f4a7f6c758`，重新部署 staging Version `824ca395-5f63-4d73-9a61-aea29c1b04ee`。Custom Domain `/healthz` 精确命中该提交，`/readyz` 的 storage/OAuth/authority 全部 ready；部署后只读 OAuth/MCP 仍回读 5/3/24，D1 隐私关键词命中 0、临时计划和命令均为 0。
