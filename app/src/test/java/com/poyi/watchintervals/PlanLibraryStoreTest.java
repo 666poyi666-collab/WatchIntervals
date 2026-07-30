@@ -5,6 +5,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 public final class PlanLibraryStoreTest {
     @Test public void cloudRevisionUsesItsOwnMonotonicDomain() {
@@ -52,5 +58,36 @@ public final class PlanLibraryStoreTest {
                 false, 10, 11, 0));
         assertFalse(PlanLibraryStore.shouldRejectIncomingRevision(
                 false, 11, 11, 0));
+    }
+
+    @Test public void selectedProfileIsResolvedFromTheIncomingLibrary() throws Exception {
+        JSONObject incoming = new JSONObject().put("selectedPlanId", "plan-b")
+                .put("plans", new JSONArray()
+                        .put(new JSONObject().put("id", "plan-a").put("name", "Old"))
+                        .put(new JSONObject().put("id", "plan-b").put("name", "New")));
+
+        assertEquals("New", PlanLibraryStore.selectedPlanFrom(incoming).getString("name"));
+        assertEquals(null, PlanLibraryStore.selectedPlanFrom(
+                new JSONObject().put("selectedPlanId", "").put("plans", new JSONArray())));
+    }
+
+    @Test public void profileCommitPrecedesLibraryAndFailurePreventsAckableWrite()
+            throws Exception {
+        List<String> order = new ArrayList<>();
+        PlanLibraryStore.commitInSafetyOrder(
+                () -> order.add("profile"), () -> order.add("library"));
+        assertEquals(Arrays.asList("profile", "library"), order);
+
+        order.clear();
+        try {
+            PlanLibraryStore.commitInSafetyOrder(() -> {
+                order.add("profile");
+                throw new IllegalStateException("profile_commit_failed");
+            }, () -> order.add("library"));
+            throw new AssertionError("library commit must not run after profile failure");
+        } catch (IllegalStateException expected) {
+            assertEquals("profile_commit_failed", expected.getMessage());
+        }
+        assertEquals(Arrays.asList("profile"), order);
     }
 }

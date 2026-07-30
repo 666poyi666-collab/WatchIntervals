@@ -72,7 +72,7 @@
 
 ### 2.2 手机视觉层
 
-手机继续使用 Java 动态 View，不引入另一套 UI 框架。`Palette` 提供内容层、功能浮层和原创训练强调色；`MainActivity` 保持计划/训练/历史/睡眠四个顶级目的地，滚动内容与底部浮动导航分层。底栏和连接设置使用半透明深色渐变、细描边与同心圆角，内容卡保持实色，避免把 Liquid Glass 启发式效果扩散成卡片墙。系统栏采用深色 edge-to-edge，`WindowInsets` 是顶部、底栏和滚动尾部安全区的运行时事实，不再只依赖固定系统资源高度。
+手机继续使用 Java 动态 View，不引入另一套 UI 框架。`Palette`/`PhoneColorSpec` 提供内容层、功能浮层和原创训练强调色，并允许 JVM 直接验证对比度；`MainActivity` 保持计划/训练/历史/睡眠四个顶级目的地，滚动内容与底部浮动导航分层。底栏和独立可滚动连接设置层使用半透明深色渐变、细描边与同心圆角，内容卡保持实色，避免把 Liquid Glass 启发式效果扩散成卡片墙。系统栏采用深色 edge-to-edge，`WindowInsets` 是顶部、底栏和滚动尾部安全区的运行时事实，不再只依赖固定系统资源高度；底栏高度随 font scale 增长，避免大字体被固定 66dp 容器裁切。
 
 `PhoneNavigationSpec` 固定目的地顺序、短标签和可访问名称；`PhoneTabView` 提供至少 48dp 触控区、选中状态与胶囊反馈；`PhoneSymbolView` 在 24×24 视口绘制项目原创的计划、训练、历史、睡眠、返回与定位图形，不依赖 OEM 字体中的 Unicode 图标。启动器使用原创“间歇路线”自适应矢量，并提供 Android 13 monochrome 层。具体来源、许可边界与资源清单见 [phone-ui-design.md](phone-ui-design.md)；Apple UI Kit、SF 字体、SF Symbols 与 Activity Rings 路径均不进入 APK 或仓库。
 
@@ -99,11 +99,12 @@ Phone 0.23.0 的活动设置页只展示 Cloud V3 `/sync/v3/exchange` 与 Keysto
 13. 手表的 `history_changed` 仅是已认证 BLE 上的版本化提示，不携带训练、位置、健康、设备身份或凭据；真实数据必须由手机重新读取 authenticated Watch API 后进入 canonical sync。
 14. 云端只允许完整计划库、训练摘要/分段/聚合心率与睡眠明细；route、latitude、longitude、coordinates 和 `heartRateSamples` 在 Phone 请求前及 Worker exact-field 校验中双重拒绝。
 15. WebSocket 不承载业务正文；`sync_needed` 只触发轻量 exchange。手表不可达时 Phone 不写失败 ACK，命令保持 pending 并在 30 秒过期后永不执行。
-16. 每个成功 V3 exchange 必须携带 owner/library 级 `revisionDomainId`；domain、revision、fingerprint 和 Watch projection metadata 同步持久化。Watch 只允许 legacy source 单向升级到 `v3d.*`，绑定后拒绝其他 authority、legacy 或无 source 回退。
-17. Phone→Watch journal 保存完整当前快照；同一 pending 重试保留 operationId，但 A→B→A 的新一轮 A 必须使用新 ID。receipt 和 projection fingerprint 绑定 Watch device + pairing generation；journal 损坏先备份，再从 Phone 权威库重建。
-18. Watch 仅在计划库、selected profile、operation/source/revision 水位和去重记录全部同步提交成功后 ACK；Phone 在同次提交中写 ACK receipt 并删除 pending，提交失败不得报告 synced。网络 I/O 不持有 journal 锁，旧 ACK 不能删除并发新快照。
+16. 每个成功 V3 exchange 必须携带 owner/library 级 `revisionDomainId`；domain、revision、fingerprint 和 Watch projection metadata 同步持久化。仅尚未绑定 authority 的旧在途响应可一次使用 legacy source；Phone 或 Watch 一旦绑定 `v3d.*`，缺 domain、其他 authority、legacy 或无 source 都必须 fail closed。
+17. Phone→Watch journal 保存完整当前快照；同一 pending 重试保留 operationId，但 A→B→A 的新一轮 A 必须使用新 ID，即使历史 `lastAck` 也是 A 且仍有 pending B。完整库变更（包括删除）统一写 `upsert`，legacy `delete` 只在读取时兼容并升级。receipt 和 projection fingerprint 绑定 Watch device + pairing generation；journal 损坏先备份，再从 Phone 权威库重建。
+18. Watch 先从本次收到的 library materialize/clear selected profile，再提交计划库、operation/source/revision 水位和去重记录；任一步失败都不 ACK。Phone 在同次提交中写 ACK receipt 并删除 pending，提交失败不得报告 synced。网络 I/O 不持有 journal 锁，旧 ACK 不能删除并发新快照。
 19. `plans=[]` 或 `selectedPlanId=null` 是合法主库状态；Phone/Watch 均保存空选择，Watch 设置显式 empty marker、清理旧 profile 并拒绝新训练启动，不能回退到首次安装默认计划。
-20. Cloud active request 绑定精确 endpoint + device token generation；endpoint/device authority 改变时，旧 cursor/outbox/active request 先备份并整体换域，不得把旧响应标成新凭据来源。
+20. Cloud active request 绑定精确 endpoint + device token generation；endpoint/device authority 改变时，旧 cursor/outbox/active request 先备份并整体换域。网络响应的最终凭据复核与 `applyResponse()` 全部本地副作用在 `CloudSyncCredentials` 同一 class monitor 内完成，不得把旧响应标成新凭据来源。
+21. `start` 命令携带的 planId 是执行目标，不得静默退回当前选择。Watch 在任何训练副作用前同步提交 command signature、resolved explicit action 和 pending journal；`toggle` 首次只解析一次为 pause/resume。首次提交失败不执行，最终结果提交失败后的重试也只能执行已固化的幂等 action。
 
 ## 4. 数据和存储
 
@@ -113,6 +114,7 @@ Phone 0.23.0 的活动设置页只展示 Cloud V3 `/sync/v3/exchange` 与 Keysto
 | 多计划库 | D1 V3 + Phone SharedPreferences `plan_library_v2` + Watch `plan_library_v2` | 云端 revision；Phone schema 3；Watch schema 2 | 云端为主库；Phone 同步保存 authority domain/revision/fingerprint 和 projection operation/source；Watch 允许空库与空选择 |
 | Phone→Watch projection journal | Phone SharedPreferences `sync_outbox` | 完整 `plan_library` desired snapshot | `operations`、按 Watch+pairing generation 分域的 last ACK fingerprint、损坏备份；同一 pending 保留 ID，新业务事件使用新 ID |
 | Watch projection receipt | Watch SharedPreferences `processed_operations` | 最近 500 个 operationId + cloud source/revision | `cloud_plan_source`/`cloud_plan_revision` authority fence；关键写全部同步提交后才 ACK |
+| Watch command journal | Watch SharedPreferences `command_cache` | 最近 100 个 commandId + signature/resolved action/result | 副作用前同步提交 pending；toggle 固化显式 action；结果提交失败后按固定 action 幂等收敛 |
 | 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入；恢复时按已确认 offset 截断尾部 |
 | 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
 | BLE 身份 | SharedPreferences `watch_identity` / `bridge` | 稳定设备 ID + 过渡六位码 | 当前仅为 debug 认证；正式密钥与挑战响应关联 `BUG-015` |
@@ -168,7 +170,7 @@ Watch 与 Phone manifest 均设置 `allowBackup=false`；Phone 的 Auto Backup /
 | `GET /v1/history/{id}/heart?cursor=&limit=` | 分页读取心率样本 |
 | `GET /v1/sleep?days=1..31` | 系统睡眠记录、session 和原始阶段时间线；默认 7 天 |
 | `POST /v1/location` | 手机定位中继 |
-| `POST /v1/control/{start|pause|resume|toggle|stop|delete_workout}` | 带 commandId/expiresAt 的幂等训练控制与训练删除 |
+| `POST /v1/control/{start\|pause\|resume\|toggle\|stop\|delete_workout}` | 带 commandId/expiresAt 的幂等训练控制与训练删除；Cloud start 携带并严格执行 planId，迁移期本地调用省略时才使用当前选择 |
 | `POST /v1/sync/operations` | 计划 outbox 操作去重与 ACK |
 
 ### 手机 `:8766`
@@ -179,13 +181,13 @@ Watch 与 Phone manifest 均设置 `allowBackup=false`；Phone 的 Auto Backup /
 
 ### 手机 Cloud V3 同步
 
-Phone 0.23.0 的 canonical 路由为 Device Bearer Token 认证的 `POST /sync/v3/exchange`。请求严格包含 protocolVersion、requestId、deviceId、cursor、最多 25 项 planChanges/workoutFacts/sleepRecords、可选 liveStatus 和 commandResults；成功响应必须携带匹配 `^v3d\.[A-Za-z0-9_-]{8,64}$` 的 owner/library `revisionDomainId`。Worker 缺失或非法 domain 时 `/readyz` 与 exchange 均 fail closed。未知字段、路线、坐标、逐点心率和凭据字段在 Phone 组包与 Worker 入口两侧都 fail closed。业务正文不再做应用层 E2EE，HTTPS、Keystore token 包装、安全 BLE 与 OAuth 边界继续保留。
+Phone 0.23.0 的 canonical 路由为 Device Bearer Token 认证的 `POST /sync/v3/exchange`。请求严格包含 protocolVersion、requestId、deviceId、cursor、最多 25 项 planChanges/workoutFacts/sleepRecords、可选 liveStatus 和 commandResults；成功响应必须携带匹配 `^v3d\.[A-Za-z0-9_-]{8,64}$` 的 owner/library `revisionDomainId`。Worker 缺失或非法 domain 时 `/readyz` 与 exchange 均 fail closed；Phone 只有在本地尚未保存 cloud revision domain 时才兼容旧在途无字段响应，已绑定后缺字段也 fail closed。未知字段、路线、坐标、逐点心率和凭据字段在 Phone 组包与 Worker 入口两侧都 fail closed。业务正文不再做应用层 E2EE，HTTPS、Keystore token 包装、安全 BLE 与 OAuth 边界继续保留。
 
-`watch_cloud_v3` state 保存 outbox、active request、cursor、workout/sleep receipt、冲突双方、已执行命令和待回传结果。exchange 在进程内统一串行；active request 固化 endpoint + token credential fingerprint，endpoint/device authority 重绑时旧 state 先备份后重建；相同 active request 原样重试，HTTP 409 `cursor_ahead` 只按响应 `resetCursor` 清 active request并重建。ACK 才写 receipt；普通 conflict 从 outbox 移入持久 conflict store，并附带本地 candidate 和服务器计划库。HTTP 往返期间本地计划 revision/fingerprint 变化时，响应不得覆盖新编辑；Cloud library 通过 `PhonePlanLibrary` 单锁 compare-and-apply，原始 cloud 与 Phone projection 共用 null selection/group、显式 sortOrder 的 canonical fingerprint。
+`watch_cloud_v3` state 保存 outbox、active request、cursor、workout/sleep receipt、冲突双方、已执行命令和待回传结果。exchange 在进程内统一串行；active request 固化 endpoint + token credential fingerprint，endpoint/device authority 重绑时旧 state 先备份后重建；相同 active request 原样重试，HTTP 409 `cursor_ahead` 只按响应 `resetCursor` 清 active request并重建。网络返回后由 `CloudSyncCredentials.runIfCurrent` 持有与 save/load 相同的 class monitor，完成最后 credential generation 复核和 `applyResponse()` 全部本地副作用；不匹配时旧响应零写入。ACK 才写 receipt；普通 conflict 从 outbox 移入持久 conflict store，并附带本地 candidate 和服务器计划库。HTTP 往返期间本地计划 revision/fingerprint 变化时，响应不得覆盖新编辑；Cloud library 通过 `PhonePlanLibrary` 单锁 compare-and-apply，原始 cloud 与 Phone projection 共用 null selection/group、显式 sortOrder 的 canonical fingerprint。
 
 首次成功 V3 同步时，手机以现有计划库引导空云端；此后云端为主版本。云端 plan group/library 使用 revision OCC，workout 是 create-once fact，sleep 按 source revision 增量覆盖。Phone 从 `/v1/history` 只复制允许的 summary、splits、stage results、聚合心率和 data source summary；睡眠首次读 31 天，读取失败不生成删除。云端计划先与 Phone snapshot/projection metadata 同次提交，再由独立 `PhonePlanProjectionWorker` 重建或排空 journal；Cloud 响应不再同步等待最长 20 秒的 Watch 下发，`select_plan` 只做 5 秒直接选择，完整库在后台投影。一次下发失败由 boot/watchdog、连接 observer、10/60 秒前台心跳、一次性任务和唯一 `watch-plan-projection-periodic` 15 分钟任务补偿，均不依赖互联网或 Cloud token。`cloud_replace.cloudSourceId` 承载服务端 `revisionDomainId`；旧 Worker 在途响应才使用 `legacy.*` fallback，Watch 一旦绑定 `v3d.*` 就禁止跨 authority 回退。
 
-`CloudV3Channel` 由前台 `PhoneCompanionService` 使用 OkHttp 4.12.0 维持 `/sync/v3/channel`。通道只接收 exact `{type:"sync_needed"}`，收到后直接发起不读取历史/睡眠的轻量 exchange，并以 WorkManager 兜底。凭据尚未配置也持续指数补连，单实例只允许一个 reconnect timer。训练中 live status 每 10 秒、空闲每 60 秒上传；两者不重复扫描历史。命令执行成功后同一 `sync()` 立即进行第二次 exchange 回传 ACK；手表不可达时不提前上报 failed，云端维持 pending/delivered 并在 30 秒后过期，Phone 每次执行前再次检查过期时间。
+`CloudV3Channel` 由前台 `PhoneCompanionService` 使用 OkHttp 4.12.0 维持 `/sync/v3/channel`。通道只接收 exact `{type:"sync_needed"}`，收到后直接发起不读取历史/睡眠的轻量 exchange，并以 WorkManager 兜底。凭据尚未配置也持续指数补连，单实例只允许一个 reconnect timer。训练中 live status 每 10 秒、空闲每 60 秒上传；两者不重复扫描历史。`watch_start_workout(planId)` 的目标 planId 从 Cloud arguments 进入 Phone control body，Watch router 和仍可达的 LAN service 都必须从当前 library 选择/解析该计划再启动。Watch 控制入口共用副作用前两阶段 command journal；命令成功后同一 `sync()` 立即进行第二次 exchange 回传 ACK。手表不可达时不提前上报 failed，云端维持 pending/delivered 并在 30 秒后过期，Phone 每次执行前再次检查过期时间。
 
 删除训练通过 `/v1/control/delete_workout` 发送 commandId、expiresAt、controlRevision 和 workoutId。手表复用持久 `command_cache`，相同 ID/正文返回首次结果，不同正文复用 ID 返回 409；删除效果本身幂等。只有 Phone 回传手表成功结果后，云端才写独立 workout tombstone 并隐藏摘要，后续设备上传同一训练会得到 `workout_deleted` 且 receipt 阻止复活。
 
@@ -208,7 +210,7 @@ Watch MCP 使用手机 API v1 写入契约：`POST/PUT /v1/plans[/id]` 的正文
 
 - 请求/响应使用 UTF-8 JSON；请求体当前限制 256,000 字节。
 - 睡眠响应的 `state` 为 `ready`、`permission_required` 或 `error`，`source=system_healthkit`。duration 字段单位为分钟，时间戳单位为毫秒；stage 同时保留厂商 `type` 和不推断语义的 `system_N` 标签。
-- 2xx 表示处理成功；4xx 返回稳定错误码。控制接口使用 `commandId`、`expectedState`、`controlRevision` 与 `expiresAt`；重复命令返回缓存结果，不同正文复用 ID 返回 409，过期命令不执行。
+- 2xx 表示处理成功；4xx 返回稳定错误码。控制接口使用 `commandId`、`expectedState`、`controlRevision` 与 `expiresAt`；Cloud start 另要求 planId，迁移期本地调用省略时使用已持久选择。重复命令返回持久结果，不同正文复用 ID 返回 409，过期命令不执行。toggle 在首次处理时固化为显式 pause/resume，重放不得重新求值。
 - 手机计划写接口使用 UUID `requestId` 与 `expectedRevision`；409 响应区分 revision conflict 和 request ID reuse。幂等缓存最多保留 500 个最近请求。
 - 局域网 API 使用明文 HTTP，仅用于受信网络；安全改进见 `BUG-003`。
 

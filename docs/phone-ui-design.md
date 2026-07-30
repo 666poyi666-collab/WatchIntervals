@@ -15,16 +15,16 @@
 | [Apple HIG：Tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | 顶级目的地、短标签、稳定可见性 | 固定计划/训练/历史/睡眠四个目的地，底栏不承载动作 |
 | [Apple HIG：Typography](https://developer.apple.com/design/human-interface-guidelines/typography) 与 [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility) | 大标题层级、可读性、触控目标 | 页面标题 34sp；正文/标签使用系统字体；交互目标至少 48dp |
 | [Android edge-to-edge](https://developer.android.com/develop/ui/views/layout/edge-to-edge) | Android 15 系统栏与安全区 | 使用实时 `WindowInsets` 调整顶部、底栏和滚动尾部留白 |
-| [Android adaptive icons](https://developer.android.com/develop/ui/views/launch/icon_design_adaptive) | 自适应蒙版与主题图标 | 108dp 前景/背景分层，并提供 Android 13 monochrome 层 |
+| [Android adaptive icons](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive) | 自适应蒙版与主题图标 | 108dp 前景/背景分层，并提供 Android 13 monochrome 层 |
 
 Apple Design Resources 的[许可协议](https://developer.apple.com/support/downloads/terms/apple-design-resources/Apple-Design-Resources-License-20230621-English.pdf)只允许为 Apple OS 产品制作界面 mock-up，并排除非 Apple OS mock-up 与把模板内容嵌入软件。本项目因此不使用 Apple UI Kit、SF Pro、SF Symbols、Activity Rings 路径或其改造版本；Android 包内的图形全部是原创几何。
 
 ## 2. 视觉层级
 
 - 内容层：纯黑画布、`#1C1C1E` 主卡、`#2C2C2E` 高层卡，承载计划、训练指标、历史和睡眠事实。
-- 功能层：底部导航和连接设置使用半透明深色渐变、1dp 高光描边、同心圆角和轻微 elevation；不在内容卡中重复叠玻璃。
+- 功能层：底部导航和独立可滚动连接设置层使用半透明深色渐变、1dp 高光描边、同心圆角和轻微 elevation；不在内容卡中重复叠玻璃，也不让展开设置挤压业务页面。
 - 强调色：使用项目原创珊瑚 `#FF4D67`、薄荷 `#84E66A`、青蓝 `#48CBEA`，不复用 Apple Activity Rings 官方三色。
-- 排版：页面当前目的地使用 34sp 大标题；产品名缩为 18sp 品牌眉题，避免与页面标题等权重复；数字继续启用 tabular figures。
+- 排版：页面当前目的地使用 34sp 大标题；产品名缩为 18sp 品牌眉题，避免与页面标题等权重复；数字继续启用 tabular figures。浮动底栏高度随系统 font scale 增长，2.0× 字体仍保留完整图标和短标签。
 - 导航：滚动内容延伸到底栏之后，尾部留白保证最后一项可完整滚出；底栏始终浮于内容上方，四个目的地保留短中文标签。
 
 ## 3. 原创图标系统
@@ -41,5 +41,5 @@ Apple Design Resources 的[许可协议](https://developer.apple.com/support/dow
 ## 4. 验证边界
 
 - API 35 模拟器 1080×2400 已验证计划页、断连训练页、连接设置、四目的地浮动底栏、系统栏和无 Unicode 底栏图标；UI hierarchy 确认四个目的地均有独立中文可访问名称和选中状态。
-- `PhoneNavigationSpecTest` 固定四目的地顺序、唯一原创 symbol 与非空可访问名称；`PhoneCloudSetupSpecTest` 防止已退役 V2 加密流程重新进入活动设置页。
-- `PT-026` 的真实手机、长文案与大字体，以及 `PT-027` 的多启动器蒙版/主题图标仍需在发布候选真机执行；模拟器证据不能替代这些外部渲染差异。
+- `PhoneNavigationSpecTest` 固定四目的地顺序、唯一原创 symbol 与非空可访问名称；`PhoneCloudSetupSpecTest` 防止已退役 V2 加密流程重新进入活动设置页；`PhoneColorSpecTest` 验证正文、提示和所有按钮标签至少 4.5:1；`PhoneLauncherResourceTest` 验证普通/圆形入口、monochrome 引用及所有自适应 path 坐标均位于中央 66×66dp 安全方形。
+- `PT-026` 的真实手机与业务长文案，以及 `PT-027` 的多启动器蒙版/主题图标仍需在发布候选真机执行；模拟器 2.0× 字体证据不能替代厂商字体和启动器差异。

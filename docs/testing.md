@@ -130,7 +130,7 @@ git diff --check
 | PT-011 | BLE 首次连接 | 手机授权附近设备后自动扫描、连接、发现服务、协商 MTU、订阅并认证 |
 | PT-012 | BLE 计划同步 | 无 LAN 时计划 outbox 经 BLE ACK，手表 profile 回读一致 |
 | PT-013 | BLE 定位中继 | 训练中每 2–5 秒发送带 sequence/TTL 的手机定位，断联不补发旧点 |
-| PT-014 | BLE 控制 | 当前选择 A 时经 BLE 请求 start(B)，再重放 start/pause/resume/toggle/stop；副作用前/结果提交后各模拟一次进程边界 | 实际启动 B；同 commandId 返回首次结果且不重复作用，不同正文复用 ID 拒绝；toggle 重放保持首次解析出的显式 pause/resume，不反转状态 |
+| PT-014 | BLE 控制 | 当前选择 A 时经 BLE 请求 start(B)，再重放 start/pause/resume/toggle/stop，并在副作用前/结果提交后各模拟一次进程边界；实际启动 B，同 commandId 返回首次结果且不重复作用，不同正文复用 ID 拒绝，toggle 重放保持首次解析出的显式 pause/resume |
 | PT-015 | 手机直连 V3 云端 | 关闭全部 Windows MCP/Tunnel/watchdog 服务后由手机上行；Cloud MCP 可读非空计划、训练、睡眠和同步新鲜度 |
 | PT-016 | V2 root 迁移保留 | 覆盖安装 0.23.0 后旧 V2 state 在首次 V3 成功前仍存在，但新版不调用 V2、不双写、不生成新 root |
 | PT-017 | V3 计划 bootstrap/OCC | 空云端首次接受手机计划库；bootstrap 后旧 expected revision 返回 conflict，candidate 与服务器库均可恢复且不自动覆盖 |
@@ -142,8 +142,8 @@ git diff --check
 | PT-023 | 在线控制时延 | WebSocket 在线时以非当前 `planId` 调用 start，再执行 pause/resume/stop 各 3 次；从 Cloud MCP 创建到手表 ACK 均小于 10 秒，启动 profile 与请求目标一致，同 commandId 不重复执行 |
 | PT-024 | 离线命令过期 | 手机或手表离线创建命令；云端显示 pending/delivered 后 30 秒过期，恢复连接后旧命令不执行，迟到结果被拒绝 |
 | PT-025 | V3 state 恢复 | 在 active request、命令成功未回传、plan conflict 和 cursor ahead 各边界终止 Phone 进程；重启后 outbox/candidate/result 不丢且不会重复作用 |
-| PT-026 | 手机视觉与安全区 | API 35 模拟器及真实手机遍历四目的地、连接设置、计划编辑、训练断连/运行/暂停、历史有/无轨迹、睡眠有/无数据；再以长中文和系统大字体复核 | 内容卡与功能浮层层级稳定；系统栏、键盘、底部导航不遮挡内容；最后一项可滚出；标题/按钮不裁切；所有交互目标至少 48dp且状态不只靠颜色 |
-| PT-027 | 原创图标与启动器蒙版 | 检查普通/圆形/方圆/水滴启动器蒙版、Android 13 themed icon、深浅壁纸及底栏四种选中态 | “间歇路线”标志在安全区完整且单色层可辨；底栏不出现 OEM 字体替代符，四目的地有短标签、中文可访问名称和明确选中态 |
+| PT-026 | 手机视觉与安全区 | API 35 模拟器及真实手机遍历四目的地、连接设置、计划编辑、训练断连/运行/暂停、历史有/无轨迹、睡眠有/无数据，再以长中文和系统大字体复核；内容卡与功能浮层层级稳定，系统栏、键盘、底部导航不遮挡内容，最后一项可滚出，标题/按钮不裁切，所有交互目标至少 48dp且状态不只靠颜色 |
+| PT-027 | 原创图标与启动器蒙版 | 检查普通/圆形/方圆/水滴启动器蒙版、Android 13 themed icon、深浅壁纸及底栏四种选中态；“间歇路线”标志在安全区完整且单色层可辨，底栏不出现 OEM 字体替代符，四目的地有短标签、中文可访问名称和明确选中态 |
 
 ## 5. MCP/API 回归
 
@@ -185,7 +185,7 @@ git diff --check
 
 - `CloudV3SyncTest` 覆盖隐私字段递归拒绝、未绑定 legacy 兼容/绑定后缺 domain 拒绝、credential generation 最终锁、endpoint/device state reset、plan conflict 双候选、canonical null/group/sortOrder fingerprint、HTTP 往返并发编辑护栏、cursor ahead、start planId、命令 follow-up、离线过期和 tombstone。
 - `PhoneSyncOutboxTest` 覆盖同一 pending 保留 ID、`lastAck=A + pending B + desired A` 新 ID、pairing target、ACK-loss、新快照不被旧/非请求 ACK 删除、legacy `delete` 升级、旧 metadata 迁移和损坏结构 fail closed；`PhonePlanProjectionSyncTest` 覆盖可用 transport 与无 Cloud credential/互联网时独立 Worker retry。
-- `PhonePlanLibrarySyncFormatTest` 覆盖同步 compare-and-apply、null selection/group；`PlanLibraryStoreTest`/`PlanStoreTest` 覆盖单向 authority fence、从新 library 先 materialize profile、跨 preferences 失败不 ACK、空选择与显式 empty marker不复活默认计划；Watch command journal 回归覆盖 start(planId)、toggle 固化和两阶段提交失败。
+- `PhonePlanLibrarySyncFormatTest` 覆盖同步 compare-and-apply、null selection/group；`PlanLibraryStoreTest`/`PlanStoreTest` 覆盖单向 authority fence、从新 library 先 materialize profile、跨 preferences 失败不 ACK、空选择与显式 empty marker不复活默认计划；`WatchCommandRouterTest` 覆盖 start(planId)、toggle 固化和副作用前提交失败。
 - `CloudV3Sync.sync()` 在进程内串行；WebSocket 使用轻量 command exchange，live status 与 full history/sleep 采集分离；命令成功后同次调用立即二次 exchange。
 - Watch `/v1/control/delete_workout` 使用 commandId/expiresAt/controlRevision/workoutId 和持久 request signature cache；删除已不存在记录仍返回幂等成功，不同正文复用 ID 返回 409。
 - `:app:testDebugUnitTest :phone:testDebugUnitTest`、双模块 debug assemble 已通过；Lint/release 在本批次最终门禁记录。这里只证明本地构建与状态机合同，不替代真机传感器或手机后台恢复证据。
@@ -210,6 +210,7 @@ git diff --check
 ### Cloud V3 正式环境与 ChatGPT 分段/计划往返验收（2026-07-30，API-025/026/028/029）
 
 - 后续云集成验收按用户决定直接使用正式 Worker、正式 D1 与正式 OAuth；上方 staging 章节仅保留历史证据。可达 Custom Domain 的名称虽然含 `staging`，但路由已绑定正式 Worker，staging 配置不再声明该域名；ChatGPT 使用正式 canonical MCP audience。
+- revision-domain 终审实现提交 `396f57915d308d61f0106cdb93b9375c01f6da84` 已部署为 production Version `9d965771-e7cf-4716-819f-c8a771044b4d`；fresh/cache-buster 回读的 `buildCommit` 精确匹配，storage/OAuth/authority observation/revision domain 均为 ready。Worker typecheck、static 10/10、schema 5/5、D1 8/8、黑盒 39/39 通过；该证据只证明服务端合同，不证明新 Android source/空库/ACK-loss/命令 journal。
 - Watch 0.21.1（32）与 Phone 0.23.0（19）均已覆盖安装并保留配对/业务数据。Phone 使用 Keystore 包装的正式 device token，最近 exchange 为 HTTP 200；正式 `/readyz` 的 storage/OAuth/authority 均 ready。
 - `BUG-043` 修复后，显式标记“合成公里验收（非真实训练）”的 1.2 km 记录从真实 OWW221 历史索引经 Phone V3 上行。正式 ChatGPT connector 使用固定基础 scope `watch:read/watch:write/watch:control` 完成 owner consent；`watch_list_workouts` 返回 2 个分段：1000 m/300000 ms 与 200 m/60000 ms，均为 300 s/km；`watch_get_sync_overview` 返回 `cloud_authoritative/fresh`。
 - 验收后只允许一次 `watch_delete_workout`。手表返回 `DELETED`，ChatGPT 再列训练确认目标 ID 不存在且剩余 3 条；ADB 只读检查 `workout_index.json` 为 absent；正式 D1 保留 immutable workout fact 并写 1 条 tombstone，产品列表按 tombstone 隐藏。没有手工修改 D1。

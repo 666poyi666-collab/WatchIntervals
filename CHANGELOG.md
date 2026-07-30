@@ -32,6 +32,10 @@
 - 修复 Phone→Watch 投影在首次失败、ACK-loss、journal 损坏、A→B→A、换表/重配或无互联网时不能可靠收敛的问题；同一 pending 保留 ID、新事件使用新 UUID，receipt 按 pairing generation 分域，journal 可重建，ACK 与删除同提交，独立无网 Worker 由 boot/连接/心跳/15 分钟周期补偿，网络 I/O 不再阻塞云命令（`BUG-044`）。
 - 修复空云计划库在 Watch 被当成“缺少配置”而复活内置 1 km + 200 m 的问题；显式 empty marker 现在清除旧 profile、禁用主页开始并让远程 start 返回 `plan_unavailable`，选择新计划后可恢复（`BUG-045`）。
 - 统一 Cloud 与 Phone 的计划 canonical fingerprint，保留 null selection/group 与非连续 sortOrder，避免相同云快照被周期性重复应用或在 Watch 改变语义（`BUG-046`）。
+- 修复已绑定 `v3d.*` 的 Phone 仍接受缺失 domain 响应的问题；legacy fallback 现在只允许尚未绑定 authority 的旧在途响应。最终凭据复核与响应全部本地副作用也移入同一凭据锁，换 token/endpoint 后旧响应不能污染新 authority（`BUG-042`、`BUG-048`）。
+- 修复 `lastAck=A + pending B + desired A` 会误清计划队列，以及本地删除把完整库发送为无效 `delete` 的问题；新的 A 必须使用新 ID，完整库删除统一为 `upsert`，旧 `delete` journal 自动升级（`BUG-044`）。
+- 修复 Watch 先写空 library、后清旧 profile 的崩溃窗口；现在先从收到的 library materialize/clear profile，任一提交失败都不 ACK 并由同一 operationId 重试（`BUG-045`）。
+- 修复 `watch_start_workout(planId)` 在 Phone 控制体中丢失目标、Watch 总启动当前计划的问题；同时将 start/pause/resume/toggle/stop 改为副作用前两阶段 command journal，toggle 重放固定为首次解析的 pause/resume（`BUG-002`、`BUG-049`）。
 - 修复 Phone 0.23.0 设置仍展示 V2“加密云同步”、`/sync/v2/exchange`、恢复包和设备批准入口的问题；活动 UI 现在只配置 Cloud V3 与 Keystore device token，V2 源码/state 仅留迁移且不再提供调用入口（`BUG-047`）。
 
 ### Verification

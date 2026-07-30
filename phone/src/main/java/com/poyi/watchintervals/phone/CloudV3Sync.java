@@ -138,39 +138,56 @@ final class CloudV3Sync {
                 }
                 JSONObject request = active.getJSONObject("body");
                 HttpResult result = exchange(config, request);
-                if (!sameCredential(config, CloudSyncCredentials.load(context))) {
+                boolean[] resetApplied = {false};
+                boolean[] producedResults = {false};
+                SyncOutcome[] responseOutcome = {null};
+                JSONObject responseActive = active;
+                if (!CloudSyncCredentials.runIfCurrent(context, config, () -> {
+                    recordDiagnostic(context, result.status,
+                            responseErrorCode(result.status, result.body));
+                    if (applyCursorReset(state, result.status, result.body)) {
+                        saveState(context, state);
+                        resetApplied[0] = true;
+                        return;
+                    }
+                    if (result.status == 401 || result.status == 403 || result.status == 409) {
+                        responseOutcome[0] = SyncOutcome.PERMANENT_FAILURE;
+                        return;
+                    }
+                    if (result.status < 200 || result.status >= 300) {
+                        responseOutcome[0] = SyncOutcome.TRANSIENT_FAILURE;
+                        return;
+                    }
+                    JSONObject response = new JSONObject(result.body);
+                    if (containsForbidden(response) || response.optInt("protocolVersion") != 3
+                            || (response.has("revisionDomainId")
+                            && !validRevisionDomain(response.optString("revisionDomainId")))
+                            || (!response.has("revisionDomainId") && validRevisionDomain(
+                            PhonePlanLibrary.appliedCloudRevisionDomain(context)))) {
+                        responseOutcome[0] = SyncOutcome.PERMANENT_FAILURE;
+                        return;
+                    }
+                    applyResponse(context, state, responseActive, response, config);
                     state.remove("activeRequest");
+                    state.put("firstSuccessfulExchangeAt",
+                            state.optLong("firstSuccessfulExchangeAt", 0L) == 0L
+                                    ? System.currentTimeMillis()
+                                    : state.optLong("firstSuccessfulExchangeAt"));
                     saveState(context, state);
-                    return SyncOutcome.TRANSIENT_FAILURE;
-                }
-                recordDiagnostic(context, result.status, responseErrorCode(result.status, result.body));
-                if (applyCursorReset(state, result.status, result.body) && cursorResets++ == 0) {
+                    producedResults[0] = executeCommands(context, state,
+                            response.optJSONArray("pendingCommands"));
                     saveState(context, state);
-                    collectBeforeBuild = false;
-                    round--;
-                    continue;
-                }
-                if (result.status == 401 || result.status == 403 || result.status == 409) {
+                })) return SyncOutcome.TRANSIENT_FAILURE;
+                if (resetApplied[0]) {
+                    if (cursorResets++ == 0) {
+                        collectBeforeBuild = false;
+                        round--;
+                        continue;
+                    }
                     return SyncOutcome.PERMANENT_FAILURE;
                 }
-                if (result.status < 200 || result.status >= 300) return SyncOutcome.TRANSIENT_FAILURE;
-                JSONObject response = new JSONObject(result.body);
-                if (containsForbidden(response) || response.optInt("protocolVersion") != 3
-                        || (response.has("revisionDomainId")
-                        && !validRevisionDomain(response.optString("revisionDomainId")))) {
-                    return SyncOutcome.PERMANENT_FAILURE;
-                }
-                applyResponse(context, state, active, response, config);
-                state.remove("activeRequest");
-                state.put("firstSuccessfulExchangeAt",
-                        state.optLong("firstSuccessfulExchangeAt", 0L) == 0L
-                                ? System.currentTimeMillis()
-                                : state.optLong("firstSuccessfulExchangeAt"));
-                saveState(context, state);
-                boolean producedResults = executeCommands(context, state,
-                        response.optJSONArray("pendingCommands"));
-                saveState(context, state);
-                if (!producedResults) break;
+                if (responseOutcome[0] != null) return responseOutcome[0];
+                if (!producedResults[0]) break;
                 collectBeforeBuild = false;
             }
             if (state.optJSONArray("commandResults").length() > 0) {
@@ -494,7 +511,8 @@ final class CloudV3Sync {
         JSONObject cloudLibrary = response.optJSONObject("planLibrary");
         if (cloudLibrary != null) {
             long revision = cloudLibrary.optLong("revision");
-            String revisionDomain = revisionDomainId(response, config);
+            String revisionDomain = revisionDomainId(response, config,
+                    PhonePlanLibrary.appliedCloudRevisionDomain(context));
             String cloudFingerprint = cloudPlanFingerprint(cloudLibrary);
             String planOutcome = planOutcome(active.getJSONObject("body"), response);
             long previousCloudRevision = active.optLong("cloudPlanRevisionAtBuild", -1L);
@@ -702,11 +720,17 @@ final class CloudV3Sync {
         }
     }
 
-    private static JSONObject controlBody(JSONObject command) throws Exception {
-        return new JSONObject().put("commandId", command.optString("commandId"))
+    static JSONObject controlBody(JSONObject command) throws Exception {
+        JSONObject body = new JSONObject().put("commandId", command.optString("commandId"))
                 .put("expiresAt", commandExpiresAt(command))
                 .put("expectedState", command.opt("expectedState"))
                 .put("controlRevision", command.optLong("controlRevision"));
+        if ("start".equals(command.optString("type"))) {
+            JSONObject arguments = command.optJSONObject("arguments");
+            String planId = arguments == null ? "" : arguments.optString("planId");
+            if (!planId.isEmpty()) body.put("planId", planId);
+        }
+        return body;
     }
 
     private static long commandExpiresAt(JSONObject command) {
@@ -772,12 +796,20 @@ final class CloudV3Sync {
 
     static String revisionDomainId(JSONObject response, CloudSyncCredentials.Config config)
             throws Exception {
+        return revisionDomainId(response, config, "");
+    }
+
+    static String revisionDomainId(JSONObject response, CloudSyncCredentials.Config config,
+                                   String appliedRevisionDomain) throws Exception {
         String advertised = response == null ? "" : response.optString("revisionDomainId");
         if (!advertised.isEmpty()) {
             if (!validRevisionDomain(advertised)) {
                 throw new IllegalArgumentException("invalid_revision_domain");
             }
             return advertised;
+        }
+        if (validRevisionDomain(appliedRevisionDomain)) {
+            throw new IllegalArgumentException("missing_revision_domain");
         }
         // Additive protocol compatibility for an in-flight response from a pre-domain Worker.
         return legacyCloudSourceId(config);
@@ -810,9 +842,7 @@ final class CloudV3Sync {
 
     static boolean sameCredential(CloudSyncCredentials.Config first,
                                   CloudSyncCredentials.Config second) {
-        return first != null && second != null
-                && first.endpoint.equals(second.endpoint)
-                && first.deviceToken.equals(second.deviceToken);
+        return CloudSyncCredentials.sameCredential(first, second);
     }
 
     static boolean activeMatchesCredential(JSONObject active,

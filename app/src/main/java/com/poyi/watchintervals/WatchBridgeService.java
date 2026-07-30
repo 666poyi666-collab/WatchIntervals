@@ -182,33 +182,14 @@ public class WatchBridgeService extends Service {
     }
 
     private JSONObject control(String action, String body) throws Exception {
-        JSONObject command = body == null || body.isEmpty() ? new JSONObject() : new JSONObject(body);
-        String commandId = command.optString("commandId", java.util.UUID.randomUUID().toString());
-        JSONObject cached = commandCache().optJSONObject(commandId);
-        if (cached != null) return new JSONObject(cached.toString()).put("duplicate", true);
-        long expiresAt = command.optLong("expiresAt", Long.MAX_VALUE);
-        if (expiresAt < System.currentTimeMillis()) return cacheCommand(commandId, new JSONObject().put("accepted",false).put("error","command_expired").put("httpStatus",409));
-        String expected = command.optString("expectedState", "").toUpperCase(Locale.US);
-        String actual = WorkoutService.persistedSessionState(this);
-        if (!expected.isEmpty() && !expected.equals(actual)) return cacheCommand(commandId, new JSONObject().put("accepted",false).put("error","state_mismatch").put("actualState",actual).put("httpStatus",409));
-        Intent intent = new Intent(this, WorkoutService.class);
-        if ("start".equals(action)) {
-            java.util.ArrayList<Stage> stages = PlanStore.load(this);
-            if (stages.isEmpty()) return new JSONObject().put("accepted", false)
-                    .put("error", "plan_unavailable").put("httpStatus", 409);
-            intent.setAction(WorkoutService.ACTION_START).putExtra("plan", PlanStore.encode(stages));
-        }
-        else if ("pause".equals(action)) intent.setAction(WorkoutService.ACTION_PAUSE);
-        else if ("resume".equals(action)) intent.setAction(WorkoutService.ACTION_RESUME);
-        else if ("toggle".equals(action)) intent.setAction(WorkoutService.ACTION_TOGGLE);
-        else if ("stop".equals(action)) intent.setAction(WorkoutService.ACTION_STOP);
-        else return new JSONObject().put("accepted",false).put("error","invalid_action").put("httpStatus",422);
-        startForegroundService(intent);
-        return cacheCommand(commandId, new JSONObject().put("accepted",true).put("commandId",commandId).put("action",action));
+        if (commandRouter == null) return new JSONObject().put("accepted", false)
+                .put("error", "command_router_unavailable").put("httpStatus", 503);
+        WatchCommandRouter.Result routed = commandRouter.route(
+                "POST", "/v1/control/" + action, body == null ? "" : body);
+        JSONObject value = new JSONObject(routed.body);
+        if (routed.status != 200) value.put("httpStatus", routed.status);
+        return value;
     }
-
-    private JSONObject commandCache() { try { return new JSONObject(getSharedPreferences("command_cache",MODE_PRIVATE).getString("items","{}")); } catch(Exception ignored){return new JSONObject();} }
-    private JSONObject cacheCommand(String id,JSONObject result){try{JSONObject cache=commandCache();cache.put(id,new JSONObject(result.toString()));JSONArray names=cache.names();if(names!=null&&names.length()>100)cache.remove(names.optString(0));getSharedPreferences("command_cache",MODE_PRIVATE).edit().putString("items",cache.toString()).apply();}catch(Exception ignored){}return result;}
     private String deviceId(){android.content.SharedPreferences p=getSharedPreferences("bridge",MODE_PRIVATE);String id=p.getString("device_id","");if(id.isEmpty()){id=java.util.UUID.randomUUID().toString();p.edit().putString("device_id",id).apply();}return id;}
     private String historyId(String path,String suffix){int start="/v1/history/".length(),end=path.indexOf(suffix,start);return path.substring(start,end);}
     private int queryInt(String path,String name,int fallback,int min,int max){int q=path.indexOf('?');if(q<0)return fallback;for(String item:path.substring(q+1).split("&")){String[] pair=item.split("=",2);if(pair.length==2&&name.equals(pair[0]))try{return Math.max(min,Math.min(max,Integer.parseInt(pair[1])));}catch(Exception ignored){return fallback;}}return fallback;}

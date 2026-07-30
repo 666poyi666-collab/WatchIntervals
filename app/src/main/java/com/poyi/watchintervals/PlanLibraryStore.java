@@ -11,6 +11,9 @@ import java.util.UUID;
 
 /** Phone-authoritative plan library mirrored locally for offline watch selection. */
 final class PlanLibraryStore {
+    @FunctionalInterface
+    interface CheckedOperation { void run() throws Exception; }
+
     private static final String PREF = "plan_library_v2";
     private static final String KEY = "snapshot";
     private static final String PROCESSED_PREF = "processed_operations";
@@ -34,11 +37,11 @@ final class PlanLibraryStore {
 
     static synchronized JSONObject replace(Context context, JSONObject source) throws Exception {
         JSONObject normalized = normalize(new JSONObject(source.toString()), context);
-        write(context, normalized);
-        String selectedPlanId = normalized.optString("selectedPlanId");
-        if (normalized.getJSONArray("plans").length() == 0 || selectedPlanId.isEmpty()) {
-            PlanStore.clearProfile(context);
-        } else select(context, selectedPlanId);
+        // The profile is the start-workout source. Materialize/clear it first so a crash between
+        // the two SharedPreferences commits can never leave a newly empty library with an old
+        // startable profile. A failed library commit is retried by the operation journal.
+        commitInSafetyOrder(() -> materializeSelectedProfile(context, normalized),
+                () -> write(context, normalized));
         return normalized;
     }
 
@@ -51,13 +54,45 @@ final class PlanLibraryStore {
             if (item != null && planId.equals(item.optString("id"))) { selected = item; break; }
         }
         if (selected == null) throw new IllegalArgumentException("plan_not_found");
-        ArrayList<Stage> stages = PlanStore.decode(selected.optJSONArray("stages").toString());
-        if (stages.isEmpty()) throw new IllegalArgumentException("invalid_plan");
-        PlanStore.saveProfile(context, selected.optString("name", "训练计划"), groupName(library, selected.optString("groupId")),
-                selected.optString("requirement", "按阶段顺序完成训练。"), stages);
         library.put("selectedPlanId", planId);
-        write(context, library);
+        commitInSafetyOrder(() -> materializeSelectedProfile(context, library),
+                () -> write(context, library));
         return selected;
+    }
+
+    static void commitInSafetyOrder(CheckedOperation profileCommit,
+                                    CheckedOperation libraryCommit) throws Exception {
+        profileCommit.run();
+        libraryCommit.run();
+    }
+
+    static JSONObject selectedPlanFrom(JSONObject library) throws Exception {
+        String selectedPlanId = library.optString("selectedPlanId");
+        JSONArray plans = library.optJSONArray("plans");
+        if (selectedPlanId.isEmpty() || plans == null || plans.length() == 0) return null;
+        for (int index = 0; index < plans.length(); index++) {
+            JSONObject item = plans.optJSONObject(index);
+            if (item != null && selectedPlanId.equals(item.optString("id"))) {
+                return item;
+            }
+        }
+        throw new IllegalArgumentException("plan_not_found");
+    }
+
+    private static void materializeSelectedProfile(Context context, JSONObject library)
+            throws Exception {
+        JSONObject selected = selectedPlanFrom(library);
+        if (selected == null) {
+            PlanStore.clearProfile(context);
+            return;
+        }
+        JSONArray encodedStages = selected.optJSONArray("stages");
+        ArrayList<Stage> stages = PlanStore.decode(
+                encodedStages == null ? null : encodedStages.toString());
+        if (stages.isEmpty()) throw new IllegalArgumentException("invalid_plan");
+        PlanStore.saveProfile(context, selected.optString("name", "训练计划"),
+                groupName(library, selected.optString("groupId")),
+                selected.optString("requirement", "按阶段顺序完成训练。"), stages);
     }
 
     static synchronized JSONObject applySyncOperations(Context context, JSONObject request)

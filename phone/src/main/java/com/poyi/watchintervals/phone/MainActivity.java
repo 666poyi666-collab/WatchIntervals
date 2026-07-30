@@ -48,6 +48,7 @@ public class MainActivity extends Activity {
     private View statusDot;
     private TextView setupChevron;
     private LinearLayout setupPanel;
+    private ScrollView setupScroll;
     private ScrollView planScroll, controlScroll, historyScroll, sleepScroll;
     private PhoneTabView[] navItems;
     private int currentSection;
@@ -122,7 +123,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
         connection=text("尚未连接",14,false,Palette.TEXT_DIM);statusRow.addView(connection,new LinearLayout.LayoutParams(0,-2,1));
         setupChevron=text("设置",13,true,Palette.TEXT_DIM);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
-        statusRow.setOnClickListener(v->toggleSetup(setupPanel.getVisibility()!=View.VISIBLE));
+        statusRow.setOnClickListener(v->toggleSetup(setupScroll==null||setupScroll.getVisibility()!=View.VISIBLE));
         header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(48)));
 
         setupPanel=compactCard();
@@ -144,8 +145,6 @@ public class MainActivity extends Activity {
         Button saveCloud=button(PhoneCloudSetupSpec.SAVE_ACTION,Palette.CARD_HIGH,Palette.TEXT);
         setupPanel.addView(saveCloud);
         setupPanel.addView(text(PhoneCloudSetupSpec.SECURITY_NOTE,12,false,Palette.TEXT_DIM));
-        LinearLayout.LayoutParams setupParams=new LinearLayout.LayoutParams(-1,-2);setupParams.topMargin=dp(6);
-        header.addView(setupPanel,setupParams);
         shell.addView(header);
 
         planCard = section();
@@ -203,9 +202,9 @@ public class MainActivity extends Activity {
         ringBox.addView(liveRing,new FrameLayout.LayoutParams(dp(176),dp(176),Gravity.CENTER));
         LinearLayout ringCenter=new LinearLayout(this);ringCenter.setOrientation(LinearLayout.VERTICAL);ringCenter.setGravity(Gravity.CENTER);
         liveTime=text("--:--",28,true,Palette.TEXT);liveTime.setFontFeatureSettings("tnum");liveTime.setGravity(Gravity.CENTER);
-        liveState=text("未在训练",13,true,Palette.TEXT_DIM);liveState.setGravity(Gravity.CENTER);
+        liveState=text("未在训练",13,true,Palette.TEXT_DIM);liveState.setGravity(Gravity.CENTER);liveState.setMaxLines(2);
         ringCenter.addView(liveTime);ringCenter.addView(liveState);
-        ringBox.addView(ringCenter,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
+        ringBox.addView(ringCenter,new FrameLayout.LayoutParams(dp(150),-2,Gravity.CENTER));
         ringBox.setBackground(rounded(Palette.CARD,24));
         LinearLayout.LayoutParams ringBoxParams=new LinearLayout.LayoutParams(-1,dp(220));ringBoxParams.topMargin=dp(16);
         controlCard.addView(ringBox,ringBoxParams);
@@ -224,6 +223,8 @@ public class MainActivity extends Activity {
         FrameLayout content=new FrameLayout(this);
         planScroll=wrapContent(planCard);controlScroll=wrapContent(controlCard);historyScroll=wrapContent(historyCard);sleepScroll=wrapContent(sleepCard);
         content.addView(planScroll);content.addView(controlScroll);content.addView(historyScroll);content.addView(sleepScroll);
+        setupScroll=new ScrollView(this);setupScroll.setVerticalScrollBarEnabled(false);setupScroll.setFillViewport(true);setupScroll.setBackgroundColor(Palette.BG);setupScroll.setVisibility(View.GONE);
+        LinearLayout setupBody=section();setupBody.setPadding(dp(20),dp(8),dp(20),navigationHeight+dp(38)+bottomSystemInset);setupBody.addView(setupPanel,new LinearLayout.LayoutParams(-1,-2));setupScroll.addView(setupBody,new FrameLayout.LayoutParams(-1,-2));content.addView(setupScroll);
         shell.addView(content,new LinearLayout.LayoutParams(-1,0,1));
 
         // Real bottom navigation: destinations stay put while content scrolls beneath them. The
@@ -234,7 +235,7 @@ public class MainActivity extends Activity {
         for(int i=0;i<navItems.length;i++){
             final int destination=i;
             navItems[i]=new PhoneTabView(this,PhoneNavigationSpec.ITEMS[i]);
-            navItems[i].setOnClickListener(v->{showSection(destination);if(destination==3)loadSleep();});
+            navItems[i].setOnClickListener(v->{toggleSetup(false);showSection(destination);if(destination==3)loadSleep();});
             nav.addView(navItems[i],new LinearLayout.LayoutParams(0,-1,1));
         }
         FrameLayout.LayoutParams navParams=new FrameLayout.LayoutParams(-1,navigationHeight,Gravity.BOTTOM);
@@ -282,7 +283,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateContentInsets(){
-        ScrollView[] pages={planScroll,controlScroll,historyScroll,sleepScroll};
+        ScrollView[] pages={planScroll,controlScroll,historyScroll,sleepScroll,setupScroll};
         for(ScrollView page:pages)if(page!=null&&page.getChildCount()>0){
             View body=page.getChildAt(0);
             body.setPadding(dp(20),dp(8),dp(20),navigationHeight+dp(38)+bottomSystemInset);
@@ -315,8 +316,8 @@ public class MainActivity extends Activity {
     }
 
     private void toggleSetup(boolean show){
-        if(setupPanel==null)return;
-        setupPanel.setVisibility(show?View.VISIBLE:View.GONE);
+        if(setupScroll==null)return;
+        setupScroll.setVisibility(show?View.VISIBLE:View.GONE);
         if(setupChevron!=null)setupChevron.setText(show?"收起":"设置");
     }
 

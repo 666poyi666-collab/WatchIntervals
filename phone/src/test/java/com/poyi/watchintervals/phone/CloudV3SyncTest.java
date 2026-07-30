@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
+import java.lang.reflect.Modifier;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -35,6 +36,26 @@ public class CloudV3SyncTest {
         assertFalse(CloudV3Sync.validRevisionDomain("device-one"));
     }
 
+    @Test public void missingDomainOnlyFallsBackBeforeAuthorityBinding() throws Exception {
+        CloudSyncCredentials.Config config = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange",
+                "dw1.device-one.abcdefghijklmnopqrstuvwxyz123456");
+        JSONObject legacyResponse = new JSONObject();
+
+        assertEquals(CloudV3Sync.legacyCloudSourceId(config),
+                CloudV3Sync.revisionDomainId(legacyResponse, config, ""));
+        assertEquals(CloudV3Sync.legacyCloudSourceId(config),
+                CloudV3Sync.revisionDomainId(legacyResponse, config,
+                        CloudV3Sync.legacyCloudSourceId(config)));
+        try {
+            CloudV3Sync.revisionDomainId(
+                    legacyResponse, config, "v3d.production-owner");
+            fail("authority-bound Phone must reject a response without revisionDomainId");
+        } catch (IllegalArgumentException expected) {
+            assertEquals("missing_revision_domain", expected.getMessage());
+        }
+    }
+
     @Test public void activeRequestIsBoundToTheExactCredentialGeneration() throws Exception {
         CloudSyncCredentials.Config first = new CloudSyncCredentials.Config(
                 "https://one.example/sync/v3/exchange", "dw1.device-one.abcdefghijklmnopqrstuvwxyz123456");
@@ -47,6 +68,40 @@ public class CloudV3SyncTest {
         assertFalse(CloudV3Sync.sameCredential(first, rotated));
         assertEquals(CloudV3Sync.configBindingId(first),
                 CloudV3Sync.configBindingId(rotated));
+    }
+
+    @Test public void finalCredentialGateSuppressesStaleResponseSideEffects() throws Exception {
+        CloudSyncCredentials.Config first = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange",
+                "dw1.device-one.abcdefghijklmnopqrstuvwxyz123456");
+        CloudSyncCredentials.Config rotated = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange",
+                "dw1.device-one.abcdefghijklmnopqrstuvwxyz654321");
+        AtomicInteger sideEffects = new AtomicInteger();
+
+        assertFalse(CloudSyncCredentials.runIfCurrent(
+                first, rotated, sideEffects::incrementAndGet));
+        assertEquals(0, sideEffects.get());
+        assertTrue(CloudSyncCredentials.runIfCurrent(
+                first, first, sideEffects::incrementAndGet));
+        assertEquals(1, sideEffects.get());
+        assertTrue(Modifier.isSynchronized(CloudSyncCredentials.class.getDeclaredMethod(
+                "runIfCurrent", CloudSyncCredentials.Config.class,
+                CloudSyncCredentials.Config.class,
+                CloudSyncCredentials.CurrentCredentialAction.class).getModifiers()));
+        assertTrue(Modifier.isSynchronized(CloudSyncCredentials.class.getDeclaredMethod(
+                "save", android.content.Context.class, String.class, String.class).getModifiers()));
+    }
+
+    @Test public void startControlBodyCarriesTheRequestedPlanId() throws Exception {
+        JSONObject start = new JSONObject().put("commandId", "command-start")
+                .put("type", "start").put("expiresAt", Instant.now().plusSeconds(30).toString())
+                .put("controlRevision", 7).put("expectedState", "STOPPED")
+                .put("arguments", new JSONObject().put("planId", "plan-b"));
+        JSONObject pause = new JSONObject(start.toString()).put("type", "pause");
+
+        assertEquals("plan-b", CloudV3Sync.controlBody(start).getString("planId"));
+        assertFalse(CloudV3Sync.controlBody(pause).has("planId"));
     }
 
     @Test public void rejectsRouteCoordinatesAndHeartSamplesAtAnyDepth() throws Exception {

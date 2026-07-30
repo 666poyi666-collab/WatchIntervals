@@ -27,6 +27,11 @@ import javax.crypto.spec.GCMParameterSpec;
 final class CloudSyncCredentials {
     enum RevokedTokenResult { CLEARED, TOKEN_CHANGED, STORE_FAILED }
 
+    @FunctionalInterface
+    interface CurrentCredentialAction {
+        void run() throws Exception;
+    }
+
     static final class Config {
         final String endpoint;
         final String deviceToken;
@@ -71,6 +76,25 @@ final class CloudSyncCredentials {
         String token = decrypt(values.getString(TOKEN_CIPHERTEXT, ""),
                 values.getString(TOKEN_NONCE, ""), tokenAad(endpoint));
         return new Config(endpoint == null ? "" : endpoint, token == null ? "" : token);
+    }
+
+    /** Runs response side effects under the same class monitor used by save/load. */
+    static synchronized boolean runIfCurrent(Context context, Config expected,
+                                             CurrentCredentialAction action) throws Exception {
+        return runIfCurrent(expected, load(context), action);
+    }
+
+    static synchronized boolean runIfCurrent(Config expected, Config current,
+                                             CurrentCredentialAction action) throws Exception {
+        if (!sameCredential(expected, current)) return false;
+        action.run();
+        return true;
+    }
+
+    static boolean sameCredential(Config first, Config second) {
+        return first != null && second != null
+                && first.endpoint.equals(second.endpoint)
+                && first.deviceToken.equals(second.deviceToken);
     }
 
     static synchronized boolean save(Context context, String endpoint, String deviceToken) {

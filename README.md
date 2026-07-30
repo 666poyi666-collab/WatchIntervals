@@ -32,7 +32,7 @@
 - Android 13+ 会在首次训练前请求通知权限，确保前台训练通知可见
 - 最多 200 条独立训练历史目录；摘要索引与完整轨迹/心率样本分离，支持详情、分页和删除
 - 独立 `phone` 伴侣 App：安全 BLE 为控制主链路、已验证 LAN 为批量加速；云端计划库为主版本，手机保留离线缓存并同步手表
-- 手机伴侣使用 `/sync/v3/exchange` 和仅发送 `sync_needed` 的 WebSocket 通道，持久保存 Cloud state；Phone→Watch 计划另用可重建 journal 与无网 Projection Worker，支持 ACK-loss、换表/重配、空库和 15 分钟周期恢复；device token 由 Android Keystore 包装
+- 手机伴侣使用 `/sync/v3/exchange` 和仅发送 `sync_needed` 的 WebSocket 通道，持久保存 Cloud state；Phone→Watch 计划另用可重建 journal 与无网 Projection Worker，支持 ACK-loss、A→B→A、换表/重配、空库和 15 分钟周期恢复；Cloud 响应应用与 token generation 由同一凭据锁保护，device token 由 Android Keystore 包装
 - Cloud MCP 通过 `watch:read`、`watch:write`、`watch:control` OAuth scope 读取计划、训练摘要、睡眠和状态，并创建计划修改或短期训练控制命令
 - 原始轨迹、坐标和逐点心率固定只保存在设备侧；云端不保存设备私钥、配对码、OAuth/device token 或诊断正文
 - 手表首页按页面方向进入训练历史和训练计划；训练数据为第一页，实时轨迹固定在其右侧页，并支持双向跟手返回
@@ -42,7 +42,7 @@
 
 目标生产链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`。手表训练状态仍只由 `WorkoutService` 持有；手机通过安全 BLE 或已验证 LAN 读取设备事实，再使用专用 device token 与 V3 authority 同步。Cloud MCP 使用独立 OAuth token，不能调用 device exchange；设备 token 也不能访问 MCP。
 
-Phone 0.23.0 不启用 V2、不双写，也不会在 V3 失败时自动退回。前一候选已覆盖安装并连接正式 Cloud V3；正式 ChatGPT OAuth connector 已精确回读 1.2 km、2 个分段，并通过正式删除命令让手表列表与 MCP 列表消失、D1 写入 tombstone。本批进一步加入服务端 owner `revisionDomainId`、authority fence、可重建投影 journal 与显式空库语义；需完成正式 Worker 重新部署和新 APK 覆盖安装后，才可把旧真机证据归于新实现。PC 不属于运行链路；剩余风险是户外 GNSS/心率真实性和手机 Doze/重启恢复。完整状态见 [`CLOUD-SYNC.md`](CLOUD-SYNC.md) 和 [`docs/testing.md`](docs/testing.md)。
+Phone 0.23.0 不启用 V2、不双写，也不会在 V3 失败时自动退回。前一候选已覆盖安装并连接正式 Cloud V3；正式 ChatGPT OAuth connector 已精确回读 1.2 km、2 个分段，并通过正式删除命令让手表列表与 MCP 列表消失、D1 写入 tombstone。本批进一步加入服务端 owner `revisionDomainId`、绑定后缺字段 fail closed、最终凭据锁、可重建投影 journal、跨 preferences 空库收敛，以及按 planId 启动和副作用前命令日志；正式 Worker 已部署，但仍需新 APK 覆盖安装后才能把新 source/ACK-loss/空库/命令证据归于本实现。PC 不属于运行链路；剩余风险是户外 GNSS/心率真实性和手机 Doze/重启恢复。完整状态见 [`CLOUD-SYNC.md`](CLOUD-SYNC.md) 和 [`docs/testing.md`](docs/testing.md)。
 
 ```powershell
 .\gradlew.bat :app:assembleDebug :phone:assembleDebug

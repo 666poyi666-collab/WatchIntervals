@@ -27,7 +27,7 @@
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.23.0`（19） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | 前一 Watch `0.21.1` / Phone `0.23.0` 候选已连接正式 Cloud V3，并通过 ChatGPT 三 scope、1.2 km/2 分段回读和产品删除 tombstone。当前工作树新增 server revision domain、可重建 projection journal、pairing-scoped receipt 与显式空库语义，尚需正式 Worker 重部署和新 APK 覆盖安装；PC 不在运行链路，外部风险仍含户外 GNSS/心率与 Phone Doze/重启恢复 |
+| 发布状态 | 前一 Watch `0.21.1` / Phone `0.23.0` 候选已连接正式 Cloud V3，并通过 ChatGPT 三 scope、1.2 km/2 分段回读和产品删除 tombstone。正式 Worker 已部署 server revision domain；当前工作树继续补齐绑定后缺 domain fail closed、最终凭据锁、A→B→A/legacy-delete journal、跨 preferences 空库、指定 planId 与副作用前命令幂等，尚需新 APK 覆盖安装；PC 不在运行链路，外部风险仍含户外 GNSS/心率与 Phone Doze/重启恢复 |
 
 ## 事实来源
 

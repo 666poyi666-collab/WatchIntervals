@@ -170,6 +170,13 @@ final class PhonePlanLibrary {
                 .put("explicit", preferences.contains(PROJECTION_OPERATION));
     }
 
+    static synchronized String appliedCloudRevisionDomain(Context context) {
+        SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        String applied = preferences.getString(CLOUD_DOMAIN, "");
+        return applied == null || applied.isEmpty()
+                ? preferences.getString(PROJECTION_SOURCE, "") : applied;
+    }
+
     static synchronized void restoreProjectionMetadata(Context context, String operation,
                                                        String cloudSourceId) {
         String normalizedOperation = "cloud_replace".equals(operation)

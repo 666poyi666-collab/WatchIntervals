@@ -51,7 +51,7 @@ public class HistoryDetailActivity extends Activity {
         JSONArray route=record.optJSONArray("route"); ArrayList<GeoPoint> points=points(route);
         if(points.isEmpty()){
             map.setVisibility(android.view.View.GONE);
-            LinearLayout empty=new LinearLayout(this);empty.setOrientation(LinearLayout.VERTICAL);empty.setGravity(Gravity.CENTER);empty.setContentDescription("本次训练未记录定位轨迹");
+            LinearLayout empty=new LinearLayout(this);empty.setOrientation(LinearLayout.VERTICAL);empty.setGravity(Gravity.CENTER);
             PhoneSymbolView location=new PhoneSymbolView(this,PhoneSymbol.LOCATION);location.setTint(Palette.TEXT_DIM);empty.addView(location,new LinearLayout.LayoutParams(dp(30),dp(30)));
             TextView emptyLabel=text("本次训练未记录定位轨迹",15,true,Palette.TEXT_DIM);emptyLabel.setGravity(Gravity.CENTER);LinearLayout.LayoutParams emptyLabelParams=new LinearLayout.LayoutParams(-2,-2);emptyLabelParams.topMargin=dp(8);empty.addView(emptyLabel,emptyLabelParams);
             mapShell.addView(empty,new FrameLayout.LayoutParams(-1,-1));
