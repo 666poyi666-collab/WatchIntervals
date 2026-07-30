@@ -40,7 +40,7 @@
 
 ### Verification
 
-- 前一正式 ChatGPT 候选已回读合成记录 `1200 m`、`2` 个分段（1000 m/300 s、200 m/60 s），随后通过产品命令删除并写 D1 tombstone；临时计划完成 Cloud→Phone→Watch 创建和反向删除，Phone/Watch revision 均为 4 且两类 outbox 为 0。本批新增合同的最终 JVM/lint/debug/release、Worker 部署、APK 哈希与新真机 source 证据记录在本批项目日志和发布结果；旧验收不冒充新 `revisionDomainId`/空库/ACK-loss 证据。
+- 前一正式 ChatGPT 候选已回读合成记录 `1200 m`、`2` 个分段（1000 m/300 s、200 m/60 s），随后通过产品命令删除并写 D1 tombstone；临时计划完成 Cloud→Phone→Watch 创建和反向删除，Phone/Watch revision 均为 4 且两类 outbox 为 0。本批 Watch/Phone JVM 44/87 项、双模块 lint/debug/release、Worker 10/5/8/39 项、Markdown 链接和 diff 门禁全绿，四个 APK 哈希记录在项目日志；目标 Watch 不在线，旧验收不冒充新 `revisionDomainId`/空库/ACK-loss/指定 planId/命令 journal 证据。
 
 ## [Watch 0.21.1 / Phone 0.22.1] - 未发布
 

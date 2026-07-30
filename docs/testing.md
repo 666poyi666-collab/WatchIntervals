@@ -188,7 +188,7 @@ git diff --check
 - `PhonePlanLibrarySyncFormatTest` 覆盖同步 compare-and-apply、null selection/group；`PlanLibraryStoreTest`/`PlanStoreTest` 覆盖单向 authority fence、从新 library 先 materialize profile、跨 preferences 失败不 ACK、空选择与显式 empty marker不复活默认计划；`WatchCommandRouterTest` 覆盖 start(planId)、toggle 固化和副作用前提交失败。
 - `CloudV3Sync.sync()` 在进程内串行；WebSocket 使用轻量 command exchange，live status 与 full history/sleep 采集分离；命令成功后同次调用立即二次 exchange。
 - Watch `/v1/control/delete_workout` 使用 commandId/expiresAt/controlRevision/workoutId 和持久 request signature cache；删除已不存在记录仍返回幂等成功，不同正文复用 ID 返回 409。
-- `:app:testDebugUnitTest :phone:testDebugUnitTest`、双模块 debug assemble 已通过；Lint/release 在本批次最终门禁记录。这里只证明本地构建与状态机合同，不替代真机传感器或手机后台恢复证据。
+- 最终本地门禁：Watch JVM 44/44、Phone JVM 87/87（均 `--rerun-tasks`）；双模块 `lintDebug`、debug/release assemble 成功；Worker typecheck 与 static/schema/D1/黑盒 10/5/8/39 项通过；Markdown 本地链接 33/33、两仓 `git diff --check` 通过。这里只证明本地构建与状态机合同，不替代真机传感器、命令崩溃点或手机后台恢复证据。
 
 ### Cloud V3 staging 远端合同（2026-07-30）
 

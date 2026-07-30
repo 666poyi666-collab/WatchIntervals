@@ -601,7 +601,8 @@
 - 影响代码：`CloudSyncCredentials`、`CloudV3Sync`、`PhonePlanLibrary`、`PhoneSyncOutbox`、`PhonePlanProjectionSync/Worker`、`PhonePlanBridgeService`、Watch `PlanLibraryStore`/`PlanStore`/`WatchCommandRouter`/`WatchBridgeService`；Worker `cloud-v3.ts`/`index.ts`/配置/合同测试；同步更新 requirements、architecture、testing、bugs、CLOUD-SYNC、README 与 CHANGELOG。
 - 防复发：新增/增强 `PhoneSyncOutboxTest`、`PhonePlanProjectionSyncTest`、`CloudV3SyncTest`、`PhonePlanLibrarySyncFormatTest`、`PlanLibraryStoreTest`、`PlanStoreTest` 与 `WatchCommandRouterTest`，并把 Worker 黑盒扩为精确 domain、replay/conflict 及缺失/空/短值/非法字符/超长配置矩阵。
 - Worker 证据：实现提交 `396f57915d308d61f0106cdb93b9375c01f6da84` 已部署为 production Version `9d965771-e7cf-4716-819f-c8a771044b4d`；fresh/cache-buster `buildCommit` 匹配，storage/OAuth/authority observation/revision domain 全部 ready。typecheck、static 10/10、schema 5/5、D1 8/8、Worker 黑盒 39/39 全绿。
-- 当前 Android 自动化证据：双模块 JVM `--rerun-tasks` 已通过；完整 lint/debug/release、Markdown 链接、最终 APK 哈希与新 APK 覆盖安装证据以本节后续最终结果为准。旧 revision 4 真机往返不冒充新 `v3d.*`/ACK-loss/空库/命令 journal 证据。
+- 最终 Android 门禁：`:app:testDebugUnitTest --rerun-tasks` 44/44、`:phone:testDebugUnitTest --rerun-tasks` 87/87；双模块 `lintDebug`、debug/release assemble 合并门禁成功（177 actionable tasks，0 失败）。Android 项目文档 33 个本地链接、Android/Worker 两仓 `git diff --check` 均通过。Worker 复跑 typecheck 及 static/schema/D1/黑盒 10/5/8/39 项，全绿。
+- 最终 APK SHA-256：Watch debug `3B15B4932C00956CD8CA2F2A71F23F2977143396F33592FAC509E85670D6084F`、Watch release unsigned `1A44948D78A7C0AF287984AB654352D7E455FBF2863CA426A4756A2295890DF8`、Phone debug `37DBB0EDB42F26374759227AC0DC8EA1C51102184AB72A7842EDA8DC356A1064`、Phone release unsigned `090256898A6C0F5C40FC3F5F85338B84B7F354CF536FB8BFB33F0AF11F4CCF53`。当前 ADB 仅见平板、Xiaomi xaga 与模拟器，目标 OWW221 不在线；未向未知物理设备安装。新 `v3d.*` source、ACK-loss、空库、指定 planId、命令 journal 崩溃点及 Phone Doze/重启仍是设备恢复后的唯一外部门禁，旧 revision 4 往返不冒充这些证据。
 
 ## 2026-07-30：手机 iOS/macOS 启发式功能层与原创图标闭环（REQ-UI-006/011/012、BUG-047、PT-026/027）
 
