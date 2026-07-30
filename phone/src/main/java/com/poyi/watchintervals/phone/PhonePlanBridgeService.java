@@ -232,7 +232,9 @@ public class PhonePlanBridgeService extends Service {
             return mutationResult(guardedMutation(request, () -> {
                 String id = tail(path);
                 JSONObject library = PhonePlanLibrary.deletePlan(this, id);
-                PhoneSyncOutbox.enqueueLibrary(this, library, "delete", id);
+                // Projection is desired-state replication: deleting one plan sends the new
+                // complete library, not an entity-level delete operation.
+                PhoneSyncOutbox.enqueueLibrary(this, library, "upsert", "library");
                 return new JSONObject().put("library", library).put("sync", syncToWatch());
             }));
         }

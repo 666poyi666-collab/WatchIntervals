@@ -122,6 +122,65 @@ public class PhoneSyncOutboxTest {
         assertNotEquals(first, PhoneSyncOutbox.receiptKeyForTarget("watch-1", "secret-b"));
     }
 
+    @Test public void aNewPairingAlwaysBuildsANewDesiredProjection() throws Exception {
+        JSONObject library = library(4, "Current");
+        JSONObject first = PhoneSyncOutbox.buildLibraryOperation(library, "cloud_replace",
+                "library", "v3d.production-owner", "target-a");
+        JSONObject second = PhoneSyncOutbox.buildLibraryOperation(library, "cloud_replace",
+                "library", "v3d.production-owner", "target-b");
+
+        assertNotEquals(first.getString("projectionFingerprint"),
+                second.getString("projectionFingerprint"));
+    }
+
+    @Test public void acknowledgedAStillRequeuesFreshAWhenBMayHaveReachedWatch() throws Exception {
+        JSONObject libraryA = library(4, "A");
+        JSONObject libraryB = library(5, "B");
+        JSONObject firstA = PhoneSyncOutbox.buildLibraryOperation(
+                libraryA, "cloud_replace", "library", "v3d.production-owner", "watch-pair");
+        String acknowledgedAFingerprint = firstA.getString("projectionFingerprint");
+
+        JSONArray pendingB = PhoneSyncOutbox.reconcileOperations(new JSONArray(),
+                PhoneSyncOutbox.buildLibraryOperation(libraryB, "cloud_replace", "library",
+                        "v3d.production-owner", "watch-pair"), acknowledgedAFingerprint);
+        assertEquals(1, pendingB.length());
+        String bOperationId = pendingB.getJSONObject(0).getString("operationId");
+
+        JSONObject secondADesired = PhoneSyncOutbox.buildLibraryOperation(
+                libraryA, "cloud_replace", "library", "v3d.production-owner", "watch-pair");
+        JSONArray reconciled = PhoneSyncOutbox.reconcileOperations(
+                pendingB, secondADesired, acknowledgedAFingerprint);
+
+        assertEquals(1, reconciled.length());
+        assertEquals(secondADesired.getString("operationId"),
+                reconciled.getJSONObject(0).getString("operationId"));
+        assertNotEquals(firstA.getString("operationId"),
+                reconciled.getJSONObject(0).getString("operationId"));
+        assertNotEquals(bOperationId, reconciled.getJSONObject(0).getString("operationId"));
+        assertEquals(acknowledgedAFingerprint,
+                reconciled.getJSONObject(0).getString("projectionFingerprint"));
+    }
+
+    @Test public void legacyDeleteJournalParsesAndMigratesToLibraryUpsert() throws Exception {
+        JSONObject library = library(6, "After delete");
+        JSONObject legacyDelete = PhoneSyncOutbox.buildLibraryOperation(
+                library, "delete", "removed-plan", "", "watch-pair");
+
+        JSONArray parsed = PhoneSyncOutbox.parseOperations(
+                new JSONArray().put(legacyDelete).toString());
+        JSONObject metadata = PhoneSyncOutbox.recoverProjectionMetadata(parsed, library);
+        JSONObject desired = PhoneSyncOutbox.buildLibraryOperation(library,
+                metadata.getString("operation"), "library",
+                metadata.optString("cloudSourceId"), "watch-pair");
+        JSONArray migrated = PhoneSyncOutbox.reconcileOperations(parsed, desired, "");
+
+        assertEquals("upsert", metadata.getString("operation"));
+        assertEquals(1, migrated.length());
+        assertEquals("upsert", migrated.getJSONObject(0).getString("operation"));
+        assertNotEquals(legacyDelete.getString("operationId"),
+                migrated.getJSONObject(0).getString("operationId"));
+    }
+
     @Test public void legacyPendingCloudProjectionRestoresItsSourceMetadata() throws Exception {
         JSONObject library = library(4, "Cloud");
         JSONObject legacy = PhoneSyncOutbox.buildLibraryOperation(

@@ -49,7 +49,8 @@
 | 传感器桥 | `SystemExerciseBridge`、`SystemSleepBridge`、`SystemGpsBridge` | 厂商 HealthKit 动态能力、系统睡眠只读转换与系统 GPS 控制 |
 | 手表连接 | `WatchCommandRouter`、`WatchLinkService`、`WatchCloudBridgeEvent`、`WatchBridgeService` | BLE/LAN 共享业务路由、GATT Peripheral、LAN 加速与 mDNS；训练历史成功落盘后发送无业务数据的安全同步提示 |
 | 手机伴侣 | `WatchConnectionManager`、`WatchCloudBridgeEvent`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继；严格解析手表同步提示并交给唯一后台任务 |
-| 手机云同步 | `CloudV3Sync`、`CloudV3Channel`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials` | server-readable V3 exchange、持久 outbox/active request/cursor/receipt/conflict、Keystore device token、轻量命令拉取和后台恢复；V2 源码/state 仅作迁移回退且不双写 |
+| 手机云同步 | `CloudV3Sync`、`CloudV3Channel`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials` | server-readable V3 exchange、持久 outbox/active request/cursor/receipt/conflict、Keystore device token、轻量命令拉取和有网络约束的后台恢复；V2 源码/state 仅作迁移回退且不双写 |
+| Phone→Watch 计划投影 | `PhoneSyncOutbox`、`PhonePlanProjectionSync`、`PhonePlanProjectionWorker` | 可重建 desired-state journal；无互联网/Cloud credential 依赖的一次性任务与 15 分钟周期补偿，经安全 BLE/LAN ACK |
 | Cloud MCP | `watch-cloud-mcp` | 从 D1 V3 表读取计划、训练摘要、睡眠、状态和新鲜度；按 read/write/control scope 执行 OCC 写入和短期设备命令 |
 | 本地 MCP | `mcp/`、手机 8766、Windows 服务 | Deprecated；仅作迁移回滚资产，不进入生产能力判断，不得继续扩展，待独立清理批次卸载 |
 
@@ -68,6 +69,14 @@
 `WatchPagerLayout` 是主页和训练的唯一横向分页容器。它使用系统 paging touch slop、quintic ease-out 和按剩余距离计算的约 210–267 ms 吸附；固定页码由容器根据连续 `scrollX` 绘制，拖动时主动点同步位移并拉伸，不再由每页维护一组静态圆点。吸附过程中再次按下会接管仍有明显余量的运动，接近终点则先完成吸附，任何路径都必须回到整页。主页三张低频静态页可在空闲阶段预热当前页及相邻页的硬件层；训练五页包含每秒数据，禁止整页缓存，防止纹理持续失效反而增加合成成本。
 
 训练刷新以分页运动为背压边界：拖动和吸附期间不取新快照、不写 TextView，`OnPageSettledListener` 停稳后补一帧；平时只更新当前可见页。`WorkoutService.snapshot(false)` 在轨迹页隐藏时不构造两组坐标数组，服务仍是所有训练状态和原始轨迹的唯一所有者。`WorkoutRouteView` 只有在轨迹页停稳且可见时才按需创建/恢复 Baidu `MapView`，离页立即暂停；同一 `Polyline`、起终点 `Marker` 和位图跨刷新复用，前缀不变时只转换新增坐标，镜头最多每 5 秒直接重算一次且不播放动画。历史详情先渲染指标，延迟 500 ms 激活地图，避免首屏与地图初始化争用主线程。
+
+### 2.2 手机视觉层
+
+手机继续使用 Java 动态 View，不引入另一套 UI 框架。`Palette` 提供内容层、功能浮层和原创训练强调色；`MainActivity` 保持计划/训练/历史/睡眠四个顶级目的地，滚动内容与底部浮动导航分层。底栏和连接设置使用半透明深色渐变、细描边与同心圆角，内容卡保持实色，避免把 Liquid Glass 启发式效果扩散成卡片墙。系统栏采用深色 edge-to-edge，`WindowInsets` 是顶部、底栏和滚动尾部安全区的运行时事实，不再只依赖固定系统资源高度。
+
+`PhoneNavigationSpec` 固定目的地顺序、短标签和可访问名称；`PhoneTabView` 提供至少 48dp 触控区、选中状态与胶囊反馈；`PhoneSymbolView` 在 24×24 视口绘制项目原创的计划、训练、历史、睡眠、返回与定位图形，不依赖 OEM 字体中的 Unicode 图标。启动器使用原创“间歇路线”自适应矢量，并提供 Android 13 monochrome 层。具体来源、许可边界与资源清单见 [phone-ui-design.md](phone-ui-design.md)；Apple UI Kit、SF 字体、SF Symbols 与 Activity Rings 路径均不进入 APK 或仓库。
+
+Phone 0.23.0 的活动设置页只展示 Cloud V3 `/sync/v3/exchange` 与 Keystore device token。V2 root/recovery/approval 源码与旧 state 按迁移要求保留，但不再挂接 UI、调用或生成新 root；视觉文案不得把 V3 描述为应用层加密同步。
 
 ## 3. 核心状态和不变量
 
@@ -90,13 +99,20 @@
 13. 手表的 `history_changed` 仅是已认证 BLE 上的版本化提示，不携带训练、位置、健康、设备身份或凭据；真实数据必须由手机重新读取 authenticated Watch API 后进入 canonical sync。
 14. 云端只允许完整计划库、训练摘要/分段/聚合心率与睡眠明细；route、latitude、longitude、coordinates 和 `heartRateSamples` 在 Phone 请求前及 Worker exact-field 校验中双重拒绝。
 15. WebSocket 不承载业务正文；`sync_needed` 只触发轻量 exchange。手表不可达时 Phone 不写失败 ACK，命令保持 pending 并在 30 秒过期后永不执行。
+16. 每个成功 V3 exchange 必须携带 owner/library 级 `revisionDomainId`；domain、revision、fingerprint 和 Watch projection metadata 同步持久化。Watch 只允许 legacy source 单向升级到 `v3d.*`，绑定后拒绝其他 authority、legacy 或无 source 回退。
+17. Phone→Watch journal 保存完整当前快照；同一 pending 重试保留 operationId，但 A→B→A 的新一轮 A 必须使用新 ID。receipt 和 projection fingerprint 绑定 Watch device + pairing generation；journal 损坏先备份，再从 Phone 权威库重建。
+18. Watch 仅在计划库、selected profile、operation/source/revision 水位和去重记录全部同步提交成功后 ACK；Phone 在同次提交中写 ACK receipt 并删除 pending，提交失败不得报告 synced。网络 I/O 不持有 journal 锁，旧 ACK 不能删除并发新快照。
+19. `plans=[]` 或 `selectedPlanId=null` 是合法主库状态；Phone/Watch 均保存空选择，Watch 设置显式 empty marker、清理旧 profile 并拒绝新训练启动，不能回退到首次安装默认计划。
+20. Cloud active request 绑定精确 endpoint + device token generation；endpoint/device authority 改变时，旧 cursor/outbox/active request 先备份并整体换域，不得把旧响应标成新凭据来源。
 
 ## 4. 数据和存储
 
 | 数据 | 位置 | 当前 schema/上限 | 说明 |
 | --- | --- | --- | --- |
 | 当前计划 | SharedPreferences `plans` | 阶段 JSON 数组 | 含名称、分组、要求 |
-| 多计划库 | D1 V3 + SharedPreferences `plan_library_v2` | 云端 revision + 本地 schema 3 | 云端为主库；手机为离线缓存并通过安全 BLE outbox 投影到手表 |
+| 多计划库 | D1 V3 + Phone SharedPreferences `plan_library_v2` + Watch `plan_library_v2` | 云端 revision；Phone schema 3；Watch schema 2 | 云端为主库；Phone 同步保存 authority domain/revision/fingerprint 和 projection operation/source；Watch 允许空库与空选择 |
+| Phone→Watch projection journal | Phone SharedPreferences `sync_outbox` | 完整 `plan_library` desired snapshot | `operations`、按 Watch+pairing generation 分域的 last ACK fingerprint、损坏备份；同一 pending 保留 ID，新业务事件使用新 ID |
+| Watch projection receipt | Watch SharedPreferences `processed_operations` | 最近 500 个 operationId + cloud source/revision | `cloud_plan_source`/`cloud_plan_revision` authority fence；关键写全部同步提交后才 ACK |
 | 活动会话 | `files/active_workouts/<id>/` | checkpoint v1 + NDJSON | 标量检查点原子替换；轨迹/心率追加写入；恢复时按已确认 offset 截断尾部 |
 | 训练历史 | `files/workouts/<id>/` + `workout_index.json` | `WorkoutRecord` schema 3，200 条 | 摘要索引与每条记录样本文件分离；旧单文件自动迁移 |
 | BLE 身份 | SharedPreferences `watch_identity` / `bridge` | 稳定设备 ID + 过渡六位码 | 当前仅为 debug 认证；正式密钥与挑战响应关联 `BUG-015` |
@@ -163,11 +179,11 @@ Watch 与 Phone manifest 均设置 `allowBackup=false`；Phone 的 Auto Backup /
 
 ### 手机 Cloud V3 同步
 
-Phone 0.23.0 的 canonical 路由为 Device Bearer Token 认证的 `POST /sync/v3/exchange`。请求严格包含 protocolVersion、requestId、deviceId、cursor、最多 25 项 planChanges/workoutFacts/sleepRecords、可选 liveStatus 和 commandResults；未知字段、路线、坐标、逐点心率和凭据字段在 Phone 组包与 Worker 入口两侧都 fail closed。业务正文不再做应用层 E2EE，HTTPS、Keystore token 包装、安全 BLE 与 OAuth 边界继续保留。
+Phone 0.23.0 的 canonical 路由为 Device Bearer Token 认证的 `POST /sync/v3/exchange`。请求严格包含 protocolVersion、requestId、deviceId、cursor、最多 25 项 planChanges/workoutFacts/sleepRecords、可选 liveStatus 和 commandResults；成功响应必须携带匹配 `^v3d\.[A-Za-z0-9_-]{8,64}$` 的 owner/library `revisionDomainId`。Worker 缺失或非法 domain 时 `/readyz` 与 exchange 均 fail closed。未知字段、路线、坐标、逐点心率和凭据字段在 Phone 组包与 Worker 入口两侧都 fail closed。业务正文不再做应用层 E2EE，HTTPS、Keystore token 包装、安全 BLE 与 OAuth 边界继续保留。
 
-`watch_cloud_v3` state 保存 outbox、active request、cursor、workout/sleep receipt、冲突双方、已执行命令和待回传结果。exchange 在进程内统一串行；相同 active request 原样重试，HTTP 409 `cursor_ahead` 只按响应 `resetCursor` 清 active request并重建，不能丢 outbox。ACK 才写 receipt；普通 conflict 从 outbox 移入持久 conflict store，并附带本地 candidate 和服务器计划库，不能冒充成功。HTTP 往返期间本地计划 revision/fingerprint 变化时，响应不得覆盖新编辑；若同时存在远端 revision 冲突，则阻止该本地 revision 自动重传，直到用户再次编辑或显式解决。
+`watch_cloud_v3` state 保存 outbox、active request、cursor、workout/sleep receipt、冲突双方、已执行命令和待回传结果。exchange 在进程内统一串行；active request 固化 endpoint + token credential fingerprint，endpoint/device authority 重绑时旧 state 先备份后重建；相同 active request 原样重试，HTTP 409 `cursor_ahead` 只按响应 `resetCursor` 清 active request并重建。ACK 才写 receipt；普通 conflict 从 outbox 移入持久 conflict store，并附带本地 candidate 和服务器计划库。HTTP 往返期间本地计划 revision/fingerprint 变化时，响应不得覆盖新编辑；Cloud library 通过 `PhonePlanLibrary` 单锁 compare-and-apply，原始 cloud 与 Phone projection 共用 null selection/group、显式 sortOrder 的 canonical fingerprint。
 
-首次成功 V3 同步时，手机以现有计划库引导空云端；此后云端为主版本。云端 plan group/library 使用 revision OCC，workout 是 create-once fact，sleep 按 source revision 增量覆盖。Phone 从 `/v1/history` 只复制允许的 summary、splits、stage results、聚合心率和 data source summary；睡眠首次读 31 天，读取失败不生成删除。云端计划变化落入 `PhonePlanLibrary` 后，以 `cloud_replace` 操作进入 `PhoneSyncOutbox` 并经安全 BLE/LAN 路由同步手表；一次下发失败后由连接状态 observer、10/60 秒前台心跳和 WorkManager 持久重试继续排空，不依赖用户点击“立即同步”。手表为 Cloud V3 单独持久化最后 cloud revision 和不含凭据的 cloud source 指纹：同一 source 严格拒绝 revision 回退，切换正式数据源时只重置该 source 的云端水位，不能把旧 staging、正式云和迁移前本地时间戳混在同一数值域。
+首次成功 V3 同步时，手机以现有计划库引导空云端；此后云端为主版本。云端 plan group/library 使用 revision OCC，workout 是 create-once fact，sleep 按 source revision 增量覆盖。Phone 从 `/v1/history` 只复制允许的 summary、splits、stage results、聚合心率和 data source summary；睡眠首次读 31 天，读取失败不生成删除。云端计划先与 Phone snapshot/projection metadata 同次提交，再由独立 `PhonePlanProjectionWorker` 重建或排空 journal；Cloud 响应不再同步等待最长 20 秒的 Watch 下发，`select_plan` 只做 5 秒直接选择，完整库在后台投影。一次下发失败由 boot/watchdog、连接 observer、10/60 秒前台心跳、一次性任务和唯一 `watch-plan-projection-periodic` 15 分钟任务补偿，均不依赖互联网或 Cloud token。`cloud_replace.cloudSourceId` 承载服务端 `revisionDomainId`；旧 Worker 在途响应才使用 `legacy.*` fallback，Watch 一旦绑定 `v3d.*` 就禁止跨 authority 回退。
 
 `CloudV3Channel` 由前台 `PhoneCompanionService` 使用 OkHttp 4.12.0 维持 `/sync/v3/channel`。通道只接收 exact `{type:"sync_needed"}`，收到后直接发起不读取历史/睡眠的轻量 exchange，并以 WorkManager 兜底。凭据尚未配置也持续指数补连，单实例只允许一个 reconnect timer。训练中 live status 每 10 秒、空闲每 60 秒上传；两者不重复扫描历史。命令执行成功后同一 `sync()` 立即进行第二次 exchange 回传 ACK；手表不可达时不提前上报 failed，云端维持 pending/delivered 并在 30 秒后过期，Phone 每次执行前再次检查过期时间。
 

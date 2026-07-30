@@ -9,6 +9,7 @@
 | [maintenance-workflow.md](maintenance-workflow.md) | 每次开工、当次闭环、Bug 防复发、完成与例外规则 | 每次开工必读；工作流变化时更新 |
 | [product-requirements.md](product-requirements.md) | 用户、场景、需求编号、验收标准、范围 | 新增或改变产品行为时 |
 | [architecture-and-development.md](architecture-and-development.md) | 模块、状态、数据、接口、构建和代码规范 | 改架构、协议、存储或工具链时 |
+| [phone-ui-design.md](phone-ui-design.md) | 手机视觉层级、官方参考、原创图标与许可边界 | 修改手机 UI、导航、设计令牌或图标时 |
 | [testing.md](testing.md) | 自动化策略、手表/手机/MCP 回归矩阵、发布门禁 | 修 Bug、新增功能或发现新风险时 |
 | [bugs.md](bugs.md) | 开放缺陷、技术债、历史修复和验证证据 | 发现、修复、复现或关闭问题时 |
 | [project-log.md](project-log.md) | 决策背景、Vibe Coding 迭代轨迹、工作日志 | 每个有意义的开发批次结束时 |
@@ -26,7 +27,7 @@
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.23.0`（19） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | Watch `0.21.1` / Phone `0.23.0` 已安装并连接正式 Cloud V3；正式 Worker/D1/OAuth、Phone 上行、ChatGPT 三 scope connector、1.2 km/2 分段合成全链路回读和产品删除 tombstone 已通过。PC 不在运行链路；剩余真机风险是户外 GNSS/心率与手机 Doze/重启恢复 |
+| 发布状态 | 前一 Watch `0.21.1` / Phone `0.23.0` 候选已连接正式 Cloud V3，并通过 ChatGPT 三 scope、1.2 km/2 分段回读和产品删除 tombstone。当前工作树新增 server revision domain、可重建 projection journal、pairing-scoped receipt 与显式空库语义，尚需正式 Worker 重部署和新 APK 覆盖安装；PC 不在运行链路，外部风险仍含户外 GNSS/心率与 Phone Doze/重启恢复 |
 
 ## 事实来源
 

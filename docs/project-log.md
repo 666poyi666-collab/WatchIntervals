@@ -588,3 +588,24 @@
 - 本批次证明手表→手机→正式云端→ChatGPT MCP 的分段上行、反向训练删除和计划往返完整。它不证明 GNSS 距离、户外配速、佩戴心率精度或 Phone Doze/重启恢复；这些继续由对应真机用例覆盖。
 - 最终门禁 `:app:testDebugUnitTest :phone:testDebugUnitTest :app:lintDebug :phone:lintDebug :app:assembleDebug :phone:assembleDebug :app:assembleRelease :phone:assembleRelease` 成功（185 tasks）；Watch Worker static/schema/D1/Worker 分别 10/5/8/38 项、OAuth Worker/script 分别 34/6 项、两个 TypeScript typecheck、三仓 `git diff --check` 均通过。Android 仓库 Markdown 本地链接复核通过。
 - 最终 APK SHA-256：Watch debug `83684139A063F9915ABBD59238F317DE0263648397A7646BF6DAA092C12E9CA9`、Watch release unsigned `2001D6EE590E3BF9BB6A9107CC38F5B4E5C21EDCE6214E2E8D385AE4D6718834`、Phone debug `77D7A67DCC4C48AF97BAFE1032BFEAAFFC316CEA87D260ED53FA4A4E92242003`、Phone release unsigned `874F19D734279C0A2BE18263CDDA0EC9765589E954C0E360E5321A79E688A9EA`。OWW221 与 Xiaomi xaga 已安装的 `base.apk` 哈希分别与两个 debug 产物完全一致，应用进程均在运行。
+
+## 2026-07-30：计划 authority domain 与可恢复投影 journal 复审闭环（REQ-PLAN-006、REQ-SYNC-006/014/018，BUG-042/044/045/046，API-014/020/029/030）
+
+- 目标：继续核对正式 Cloud/MCP 同步方案，复审上一候选在多设备 authority、ACK-loss、进程/重启恢复、空库和凭据切换边界是否真正满足需求。保留上一批正式 revision 4 真机往返作为历史证据，但不把它冒充本批新合同的验证。
+- `BUG-042` 根因扩大为“device identity 不是 owner/library revision domain”。Worker 成功 V3 响应新增配置化 `revisionDomainId`；production/staging 使用不同 `v3d.*`，缺失或非法时 readiness/exchange fail closed。Phone 把 active request 固化到精确 credential generation，endpoint/device authority 重绑先备份并重建 state；Cloud library 的 domain/revision/fingerprint/projection metadata 在单锁内 compare-and-apply。Watch 只允许 legacy→`v3d.*` 单向升级并 fence 其他来源。
+- `BUG-044` 修复从“多一次重试”扩为可恢复 desired-state journal：同一 pending 保留 operationId，新业务事件含 A→B→A 使用新 UUID；projection fingerprint/receipt 绑定 Watch device + pairing generation；旧 pending 恢复 `cloud_replace/source` metadata；损坏 journal 备份后从 Phone 完整库重建。ACK receipt 与 pending 删除同提交，网络 I/O 移出锁，旧/非请求 ACK 不能删除并发新快照。独立 `PhonePlanProjectionWorker` 不要求互联网或 Cloud token，由 boot/watchdog/连接/前台心跳/15 分钟周期触发。
+- `BUG-045`：空 library/null selection 使用 Watch `PlanStore.explicit_empty`，清旧 profile、主页禁用开始，Warmup/WorkoutService 与 LAN/BLE start 均拒绝 `plan_unavailable`；新选择写入时原子清 marker，活动中的 `WorkoutService` 仍独立持有当前训练。
+- `BUG-046`：Cloud/Phone fingerprint 共用 exact projection，保留 null selection/group 与显式 sortOrder，关闭相同云响应周期性重写和语义漂移。
+- 影响代码：`CloudV3Sync`、`PhonePlanLibrary`、`PhoneSyncOutbox`、`PhonePlanProjectionSync/Worker`、`PhoneCompanionService`、boot/watchdog/connection 调度、Watch `PlanLibraryStore`/`PlanStore`/主页/准备/训练/控制入口；Worker `cloud-v3.ts`/`index.ts`/配置/合同测试；同步更新 requirements、architecture、testing、bugs、CLOUD-SYNC、README 与 CHANGELOG。
+- 防复发：新增/增强 `PhoneSyncOutboxTest`、`PhonePlanProjectionSyncTest`、`CloudV3SyncTest`、`PhonePlanLibrarySyncFormatTest`、`PlanLibraryStoreTest`、`PlanStoreTest`，并把 Worker 黑盒扩为精确 domain、replay/conflict 及缺失/空/短值/非法字符/超长配置矩阵。
+- 当前自动化证据：双模块 JVM `--rerun-tasks` 已通过；Worker typecheck、static 10/10、schema 5/5、D1 8/8 已通过。完整 lint/debug/release、Worker 黑盒、Markdown 链接、最终 APK 哈希与正式部署/覆盖安装证据以本节后续最终结果为准。
+
+## 2026-07-30：手机 iOS/macOS 启发式功能层与原创图标闭环（REQ-UI-006/011/012、BUG-047、PT-026/027）
+
+- 目标：在保留计划/训练/历史/睡眠四目的地和现有业务行为的前提下，把 Phone 原型式底栏、浅色系统主题和字体图标重构为高对比、可访问、平台中立的 Apple 最新设计原则启发式界面；同步审计网络设计资源与许可，禁止把 Apple UI Kit、SF 字体、SF Symbols 或 Activity Rings 图形带入 Android 包。
+- 设计研究：核对 Apple iOS/iPadOS/macOS 27 官方 Figma/Sketch 资源公告、HIG Materials/Tab bars/Typography/Accessibility、Apple Design Resources License，以及 Android edge-to-edge/adaptive icon 官方规范。结论是只借鉴内容层/功能层、同心圆角、浮动导航、排版和可访问性原则；Apple 设计文件许可不覆盖非 Apple OS mock-up，因此仓库只记录链接并使用原创几何。细节沉淀到 `docs/phone-ui-design.md`。
+- UI 实现：`MainActivity` 改为黑色 edge-to-edge 画布，实时 `WindowInsets` 驱动顶部、浮动底栏和滚动尾部安全区；仅底栏与连接设置使用半透明渐变、细描边和 elevation，内容数据卡继续实色。产品名收敛为 18sp 眉题，当前页使用 34sp 大标题；核心输入和按钮改用最小高度以降低字体放大裁切风险。`HistoryDetailActivity` 统一深色系统栏、原创返回/定位图标和地图圆角裁切。
+- 图标实现：新增 `PhoneSymbol`、`PhoneSymbolView`、`PhoneNavigationSpec`、`PhoneTabView`，在 24×24 视口代码绘制计划/训练/历史/睡眠/返回/定位，替换 `▦/▶/◷/☾/⌖` 字体图标；四目的地提供中文 content description、明确选中状态和至少 48dp 触控区。Phone 启动器从三段活动环改为原创“间歇路线→前进箭头”，同步彩色 adaptive foreground、legacy vector 和 Android 13 monochrome 层；Watch 图标未修改。
+- `BUG-047`：项目分析发现 Phone 0.23.0 活动设置仍显示“加密云同步”、`/sync/v2/exchange`、恢复包和设备批准入口，与已启用的 Cloud V3 事实冲突。根因是迁移期 V2 控件未从 `MainActivity` 解绑；修复为只展示 V3 endpoint、Keystore device token 和测试动作，并删除活动 Activity 中的旧对话框入口，V2 源码/state 继续只作迁移保留。新增 `PhoneCloudSetupSpecTest` 防复发。
+- 自动化：新增 `PhoneNavigationSpecTest` 固定四目的地顺序、唯一图形和可访问名称；`:phone:testDebugUnitTest :phone:assembleDebug --rerun-tasks` 成功。API 35、1080×2400 模拟器覆盖安装后，计划页与断连训练页截图显示浮动底栏没有字体替代符，UI hierarchy 确认四个目的地的中文可访问名称和选中状态；最终 V3 设置层级在重建后再次复核。
+- 影响文件：Phone `MainActivity`、`HistoryDetailActivity`、`Palette`、新增 symbol/navigation/cloud setup contract、主题与五个 launcher 资源及两项单元测试；文档更新 requirements、architecture、testing、bugs、README 索引、CHANGELOG 和本日志。未安装或操作连接中的真实手机/手表，模拟器截图留在忽略的 `phone/build/reports/ui`，不进入 Git。

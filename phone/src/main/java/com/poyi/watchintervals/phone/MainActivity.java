@@ -49,8 +49,10 @@ public class MainActivity extends Activity {
     private TextView setupChevron;
     private LinearLayout setupPanel;
     private ScrollView planScroll, controlScroll, historyScroll, sleepScroll;
-    private TextView[] navItems;
+    private PhoneTabView[] navItems;
     private int currentSection;
+    private int bottomSystemInset;
+    private int navigationHeight;
     private TextView liveState, liveTime, liveMeta;
     private ActivityRing liveRing;
     private LinearLayout liveActions;
@@ -91,45 +93,57 @@ public class MainActivity extends Activity {
     @Override protected void onPause() { foreground = false; liveHandler.removeCallbacks(livePoller); super.onPause(); }
 
     private void buildUi() {
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Palette.BG);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+        if(android.os.Build.VERSION.SDK_INT>=29)getWindow().setNavigationBarDividerColor(Palette.BG);
         int statusBarResource=getResources().getIdentifier("status_bar_height","dimen","android");
         int topInset=(statusBarResource>0?getResources().getDimensionPixelSize(statusBarResource):0)+dp(10);
         int navBarResource=getResources().getIdentifier("navigation_bar_height","dimen","android");
         int bottomInset=navBarResource>0?getResources().getDimensionPixelSize(navBarResource):0;
+        bottomSystemInset=bottomInset;
+        float fontScale=getResources().getConfiguration().fontScale;
+        navigationHeight=dp(Math.round(66f+Math.max(0f,fontScale-1f)*20f));
+        FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Palette.BG);
         LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Palette.BG);
+        root.addView(shell,new FrameLayout.LayoutParams(-1,-1));
 
         // Fixed header: product title plus a one-line connection status. The old full-height
         // "连接手表" card topped every tab forever; for a paired phone, connection is status, not
         // a task, so setup collapses behind a tap on the status row.
         LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.VERTICAL);header.setPadding(dp(20),topInset,dp(20),dp(4));
-        TextView productTitle=text("步序",32,true,Palette.TEXT);
-        productTitle.setLetterSpacing(.04f);
+        TextView productTitle=text("步序",18,true,Palette.TEXT);
+        productTitle.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
+        productTitle.setLetterSpacing(.08f);
         header.addView(productTitle);
         LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);statusRow.setClickable(true);statusRow.setFocusable(true);
         statusDot=new View(this);statusDot.setBackground(rounded(Color.GRAY,10));
         LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
         connection=text("尚未连接",14,false,Palette.TEXT_DIM);statusRow.addView(connection,new LinearLayout.LayoutParams(0,-2,1));
-        setupChevron=text("连接设置 ▾",13,false,Palette.TEXT_DIM);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
+        setupChevron=text("设置",13,true,Palette.TEXT_DIM);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
         statusRow.setOnClickListener(v->toggleSetup(setupPanel.getVisibility()!=View.VISIBLE));
-        header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(38)));
+        header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(48)));
 
         setupPanel=compactCard();
+        setupPanel.setBackground(glassSurface(24));
+        setupPanel.setElevation(dp(8));
         host=input("LAN 诊断地址");host.setVisibility(View.GONE);
         code=input("手表上的 6 位配对码");code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         setupPanel.addView(host);setupPanel.addView(code);
         LinearLayout connectActions=new LinearLayout(this);
         Button discover=button("连接手表",Palette.CARD_HIGH,Palette.TEXT);
-        Button connect=button("立即同步",Palette.EXERCISE,Palette.TEXT);
+        Button connect=button("立即同步",Palette.EXERCISE,Palette.INK);
         connectActions.addView(discover,weight());connectActions.addView(connect,weight());setupPanel.addView(connectActions);
-        setupPanel.addView(text("加密云同步",14,true,Palette.TEXT));
-        cloudEndpoint=input("https://…/sync/v2/exchange");
+        setupPanel.addView(text(PhoneCloudSetupSpec.TITLE,14,true,Palette.TEXT));
+        cloudEndpoint=input(PhoneCloudSetupSpec.ENDPOINT_HINT);
         cloudEndpoint.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        cloudKey=input("设备 token（安全存储，不会写入 APK）");
+        cloudKey=input(PhoneCloudSetupSpec.TOKEN_HINT);
         cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         setupPanel.addView(cloudEndpoint);setupPanel.addView(cloudKey);
-        Button saveCloud=button("保存并测试加密同步",Palette.CARD_HIGH,Palette.TEXT);
+        Button saveCloud=button(PhoneCloudSetupSpec.SAVE_ACTION,Palette.CARD_HIGH,Palette.TEXT);
         setupPanel.addView(saveCloud);
-        Button manageCloudKeys=button("恢复与设备批准",Palette.CARD_HIGH,Palette.TEXT);
-        setupPanel.addView(manageCloudKeys);
+        setupPanel.addView(text(PhoneCloudSetupSpec.SECURITY_NOTE,12,false,Palette.TEXT_DIM));
         LinearLayout.LayoutParams setupParams=new LinearLayout.LayoutParams(-1,-2);setupParams.topMargin=dp(6);
         header.addView(setupPanel,setupParams);
         shell.addView(header);
@@ -143,7 +157,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams currentPlanParams=new LinearLayout.LayoutParams(-1,dp(42));currentPlanParams.topMargin=dp(14);planLibraryPanel.addView(currentWatchPlan,currentPlanParams);
         LinearLayout libraryHeader = new LinearLayout(this); libraryHeader.setGravity(Gravity.CENTER_VERTICAL);
         libraryHeader.addView(text("我的计划",20,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(64),1));
-        Button createGroup=button("＋",Palette.MOVE,Color.WHITE); createGroup.setTextSize(25); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        Button createGroup=button("＋",Palette.MOVE,Palette.INK); createGroup.setTextSize(25); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(48),dp(48)));
         planLibraryPanel.addView(libraryHeader);
         savedPlanList=new LinearLayout(this); savedPlanList.setOrientation(LinearLayout.VERTICAL); planLibraryPanel.addView(savedPlanList);
         planCard.addView(planLibraryPanel);
@@ -173,7 +187,7 @@ public class MainActivity extends Activity {
         additions.addView(addRun, weight()); additions.addView(addWalk, weight()); additions.addView(addRest, weight()); planEditorPanel.addView(additions);
         LinearLayout planActions=new LinearLayout(this);
         Button saveLocal=button("保存安排",Palette.CARD_HIGH,Palette.TEXT);
-        Button save=button("保存并同步",Palette.EXERCISE,Palette.TEXT);
+        Button save=button("保存并同步",Palette.EXERCISE,Palette.INK);
         planActions.addView(saveLocal,weight()); planActions.addView(save,weight()); planEditorPanel.addView(planActions);
         planCard.addView(planEditorPanel);
 
@@ -214,16 +228,37 @@ public class MainActivity extends Activity {
 
         // Real bottom navigation: destinations stay put while content scrolls beneath them. The
         // old tab chips lived inside the scroll and drifted away with the content.
-        LinearLayout nav=new LinearLayout(this);nav.setBackground(roundedStroke(Palette.NAV,0,Palette.CARD_HIGH,1));
-        nav.setPadding(dp(8),dp(4),dp(8),dp(4)+bottomInset);
-        navItems=new TextView[]{navItem("▦","计划"),navItem("▶","训练"),navItem("◷","历史"),navItem("☾","睡眠")};
-        for(int i=0;i<navItems.length;i++){final int destination=i;navItems[i].setOnClickListener(v->{showSection(destination);if(destination==3)loadSleep();});nav.addView(navItems[i],new LinearLayout.LayoutParams(0,dp(62),1));}
-        shell.addView(nav);
-        setContentView(shell);
+        LinearLayout nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER);nav.setPadding(dp(5),dp(5),dp(5),dp(5));
+        nav.setBackground(glassSurface(28));nav.setElevation(dp(18));nav.setClipToOutline(true);
+        navItems=new PhoneTabView[PhoneNavigationSpec.ITEMS.length];
+        for(int i=0;i<navItems.length;i++){
+            final int destination=i;
+            navItems[i]=new PhoneTabView(this,PhoneNavigationSpec.ITEMS[i]);
+            navItems[i].setOnClickListener(v->{showSection(destination);if(destination==3)loadSleep();});
+            nav.addView(navItems[i],new LinearLayout.LayoutParams(0,-1,1));
+        }
+        FrameLayout.LayoutParams navParams=new FrameLayout.LayoutParams(-1,navigationHeight,Gravity.BOTTOM);
+        navParams.setMargins(dp(14),0,dp(14),dp(8)+bottomInset);root.addView(nav,navParams);
+        setContentView(root);
+        root.setOnApplyWindowInsetsListener((view,insets)->{
+            int top,bottom;
+            if(android.os.Build.VERSION.SDK_INT>=30){
+                android.graphics.Insets system=insets.getInsets(android.view.WindowInsets.Type.systemBars());
+                top=system.top;bottom=system.bottom;
+            }else{
+                top=insets.getSystemWindowInsetTop();bottom=insets.getSystemWindowInsetBottom();
+            }
+            header.setPadding(dp(20),top+dp(10),dp(20),dp(4));
+            bottomSystemInset=bottom;
+            FrameLayout.LayoutParams applied=(FrameLayout.LayoutParams)nav.getLayoutParams();
+            applied.bottomMargin=dp(8)+bottom;nav.setLayoutParams(applied);
+            updateContentInsets();
+            return insets;
+        });
+        root.requestApplyInsets();
 
         connect.setOnClickListener(v -> syncAll());
         saveCloud.setOnClickListener(v -> saveCloudConfig());
-        manageCloudKeys.setOnClickListener(v -> showCloudKeyMenu());
         discover.setOnClickListener(v -> discoverWatch());
         addRun.setOnClickListener(v -> addStage("RUN", "DISTANCE", 1000));
         addWalk.setOnClickListener(v -> addStage("WALK", "DISTANCE", 200));
@@ -240,10 +275,18 @@ public class MainActivity extends Activity {
 
     private ScrollView wrapContent(LinearLayout cardBody){
         ScrollView scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);
-        LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(20),dp(8),dp(20),dp(16));
+        LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(20),dp(8),dp(20),navigationHeight+dp(38)+bottomSystemInset);
         body.addView(cardBody,new LinearLayout.LayoutParams(-1,-2));
         scroll.addView(body,new FrameLayout.LayoutParams(-1,-2));
         return scroll;
+    }
+
+    private void updateContentInsets(){
+        ScrollView[] pages={planScroll,controlScroll,historyScroll,sleepScroll};
+        for(ScrollView page:pages)if(page!=null&&page.getChildCount()>0){
+            View body=page.getChildAt(0);
+            body.setPadding(dp(20),dp(8),dp(20),navigationHeight+dp(38)+bottomSystemInset);
+        }
     }
 
     private void showSection(int section){
@@ -253,10 +296,7 @@ public class MainActivity extends Activity {
         historyScroll.setVisibility(section==2?View.VISIBLE:View.GONE);
         sleepScroll.setVisibility(section==3?View.VISIBLE:View.GONE);
         if(section==0)showPlanLibrary();
-        for(int i=0;i<navItems.length;i++){boolean selected=i==section;
-            navItems[i].setBackground(rounded(Color.TRANSPARENT,16));
-            navItems[i].setTextColor(selected?Palette.MOVE:Palette.TEXT_DIM);
-            navItems[i].setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);}
+        for(int i=0;i<navItems.length;i++)navItems[i].setActive(i==section);
         liveHandler.removeCallbacks(livePoller);
         if(section==1)liveHandler.post(livePoller);
     }
@@ -277,7 +317,7 @@ public class MainActivity extends Activity {
     private void toggleSetup(boolean show){
         if(setupPanel==null)return;
         setupPanel.setVisibility(show?View.VISIBLE:View.GONE);
-        if(setupChevron!=null)setupChevron.setText(show?"收起 ▴":"连接设置 ▾");
+        if(setupChevron!=null)setupChevron.setText(show?"收起":"设置");
     }
 
     private void rebuildLiveActions(String state){
@@ -285,14 +325,14 @@ public class MainActivity extends Activity {
         liveActionsState=state;
         liveActions.removeAllViews();
         if("RUNNING".equals(state)){addLiveAction("暂停","pause",Palette.CARD_HIGH,Palette.TEXT);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
-        else if("PAUSED".equals(state)){addLiveAction("继续","resume",Palette.EXERCISE,Palette.TEXT);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
+        else if("PAUSED".equals(state)){addLiveAction("继续","resume",Palette.EXERCISE,Palette.INK);addLiveAction("结束","stop",Palette.FILL_DANGER,Palette.RED);}
         else if("PREPARING".equals(state)){addLiveAction("结束准备","stop",Palette.CARD_HIGH,Palette.TEXT);}
         else if("unavailable".equals(state)){
             Button connect=button("打开连接设置",Palette.CARD_HIGH,Palette.TEXT);
             connect.setOnClickListener(v->toggleSetup(true));
             liveActions.addView(connect,weight());
         }
-        else {addLiveAction("开始训练","start",Palette.EXERCISE,Palette.TEXT);}
+        else {addLiveAction("开始训练","start",Palette.EXERCISE,Palette.INK);}
     }
 
     private void addLiveAction(String label,String action,int bg,int fg){
@@ -464,141 +504,6 @@ public class MainActivity extends Activity {
             intent.removeExtra("poyi_cloud_endpoint"); intent.removeExtra("poyi_cloud_key");
             if (CloudSyncCredentials.readyForCloudV3(this)) CloudSnapshotSync.syncAsync(this);
         }
-    }
-
-    private void showCloudKeyMenu() {
-        String[] actions = new String[] {"初始化新加密空间", "导出离线恢复包", "导入离线恢复包",
-                "生成新设备批准请求", "批准新设备", "导入设备批准包"};
-        new android.app.AlertDialog.Builder(this).setTitle("加密同步密钥")
-                .setItems(actions, (dialog, which) -> {
-                    if (which == 0) confirmInitializeCloudRoot();
-                    else if (which == 1) showRecoveryExportDialog();
-                    else if (which == 2) showRecoveryImportDialog();
-                    else if (which == 3) createApprovalRequest();
-                    else if (which == 4) showPackageDialog("批准新设备", "粘贴新设备批准请求",
-                            "生成批准包", value -> shareKeyPackage("步序设备批准包",
-                                    CloudSyncCredentials.approveDeviceRequest(this, value)));
-                    else showPackageDialog("导入设备批准包", "粘贴已授权设备生成的批准包",
-                            "导入", value -> {
-                                CloudSyncCredentials.importDeviceApproval(this, value);
-                                CloudSnapshotSync.syncAsync(this);
-                                Toast.makeText(this, "设备已获得同步密钥，正在拉取远端变更",
-                                        Toast.LENGTH_LONG).show();
-                            });
-                }).show();
-    }
-
-    private void confirmInitializeCloudRoot() {
-        new android.app.AlertDialog.Builder(this).setTitle("初始化新加密空间？")
-                .setMessage("仅用于首台设备或确认远端为空的场景。已有数据应导入恢复包或设备批准包。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("确认初始化", (dialog, which) -> {
-                    try {
-                        boolean created = CloudSyncCredentials.initializeNewRoot(this);
-                        CloudSnapshotSync.syncAsync(this);
-                        Toast.makeText(this, created ? "新同步密钥已创建，请立即导出离线恢复包"
-                                : "同步密钥已存在，未做覆盖", Toast.LENGTH_LONG).show();
-                    } catch (Exception error) {
-                        Toast.makeText(this, "初始化失败：" + safeCloudError(error), Toast.LENGTH_LONG).show();
-                    }
-                }).show();
-    }
-
-    private void showRecoveryExportDialog() {
-        LinearLayout panel = dialogPanel();
-        EditText first = secretInput("设置至少 16 位离线恢复密钥");
-        EditText second = secretInput("再次输入离线恢复密钥");
-        panel.addView(first); panel.addView(second);
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle("导出离线恢复包").setView(panel).setNegativeButton("取消", null)
-                .setPositiveButton("生成", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(v -> {
-                    String recoveryKey = first.getText().toString();
-                    if (!recoveryKey.equals(second.getText().toString())) {
-                        second.setError("两次输入不一致"); return;
-                    }
-                    try {
-                        String value = CloudSyncCredentials.createRecoveryPackage(this, recoveryKey);
-                        first.setText(""); second.setText(""); dialog.dismiss();
-                        shareKeyPackage("步序离线恢复包", value);
-                    } catch (Exception error) { first.setError(safeCloudError(error)); }
-                }));
-        dialog.show();
-    }
-
-    private void showRecoveryImportDialog() {
-        LinearLayout panel = dialogPanel();
-        EditText encoded = packageInput("粘贴离线恢复包");
-        EditText recoveryKey = secretInput("输入离线恢复密钥");
-        panel.addView(encoded); panel.addView(recoveryKey);
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle("导入离线恢复包").setView(panel).setNegativeButton("取消", null)
-                .setPositiveButton("导入", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(v -> {
-                    try {
-                        CloudSyncCredentials.restoreRecoveryPackage(this,
-                                encoded.getText().toString(), recoveryKey.getText().toString());
-                        encoded.setText(""); recoveryKey.setText(""); dialog.dismiss();
-                        CloudSnapshotSync.syncAsync(this);
-                        Toast.makeText(this, "恢复完成，正在先拉取远端变更", Toast.LENGTH_LONG).show();
-                    } catch (Exception error) { recoveryKey.setError(safeCloudError(error)); }
-                }));
-        dialog.show();
-    }
-
-    private void createApprovalRequest() {
-        try {
-            shareKeyPackage("步序新设备批准请求",
-                    CloudSyncCredentials.createDeviceApprovalRequest(this));
-        } catch (Exception error) {
-            Toast.makeText(this, "生成失败：" + safeCloudError(error), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private interface CloudPackageAction { void run(String value) throws Exception; }
-
-    private void showPackageDialog(String title, String hint, String positive,
-                                   CloudPackageAction action) {
-        EditText input = packageInput(hint);
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle(title).setView(input).setNegativeButton("取消", null)
-                .setPositiveButton(positive, null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(v -> {
-                    try { action.run(input.getText().toString()); input.setText(""); dialog.dismiss(); }
-                    catch (Exception error) { input.setError(safeCloudError(error)); }
-                }));
-        dialog.show();
-    }
-
-    private LinearLayout dialogPanel() {
-        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(20), dp(8), dp(20), 0); return panel;
-    }
-
-    private EditText packageInput(String hint) {
-        EditText value = input(hint); value.setSingleLine(false); value.setMinLines(4);
-        value.setMaxLines(8); value.setGravity(Gravity.TOP); return value;
-    }
-
-    private EditText secretInput(String hint) {
-        EditText value = input(hint);
-        value.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); return value;
-    }
-
-    private void shareKeyPackage(String title, String value) {
-        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                .putExtra(Intent.EXTRA_SUBJECT, title).putExtra(Intent.EXTRA_TEXT, value);
-        startActivity(Intent.createChooser(send, title));
-    }
-
-    private String safeCloudError(Exception error) {
-        String value = error.getMessage();
-        if (value == null || value.isEmpty()) value = error.getClass().getSimpleName();
-        return value.length() > 80 ? value.substring(0, 80) : value;
     }
 
     private void ensureBluetoothConnection(){
@@ -783,9 +688,9 @@ public class MainActivity extends Activity {
             TextView count=text(arrangementCount+" 个安排",12,false,Palette.TEXT_DIM);count.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);titleRow.addView(count,new LinearLayout.LayoutParams(dp(82),dp(38)));
             planBlock.addView(titleRow);
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);
-            Button addDay=button("＋ 添加安排",Palette.FILL_RUN,Palette.EXERCISE);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(44),1));
-            Button rename=button("编辑",Palette.CARD_HIGH,Palette.TEXT_DIM);actions.addView(rename,new LinearLayout.LayoutParams(dp(68),dp(44)));
-            Button delete=button("删除",Color.TRANSPARENT,Palette.RED);actions.addView(delete,new LinearLayout.LayoutParams(dp(62),dp(44)));
+            Button addDay=button("＋ 添加安排",Palette.FILL_RUN,Palette.EXERCISE);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(48),1));
+            Button rename=button("编辑",Palette.CARD_HIGH,Palette.TEXT_DIM);actions.addView(rename,new LinearLayout.LayoutParams(dp(68),dp(48)));
+            Button delete=button("删除",Color.TRANSPARENT,Palette.RED);actions.addView(delete,new LinearLayout.LayoutParams(dp(62),dp(48)));
             planBlock.addView(actions,new LinearLayout.LayoutParams(-1,dp(54)));
             addDay.setOnClickListener(v->newPlanInGroup(group));rename.setOnClickListener(v->showGroupNameDialog(group,group.optString("name")));delete.setOnClickListener(v->confirmDeleteGroup(group));
             if(arrangementCount==0){TextView empty=text("暂无安排 · 点击上方按钮添加第1天",13,false,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setBackground(rounded(Palette.CARD_HIGH,14));planBlock.addView(empty,new LinearLayout.LayoutParams(-1,dp(48)));}
@@ -897,14 +802,14 @@ public class MainActivity extends Activity {
     private LinearLayout compactCard(){LinearLayout v=section();v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD,20));return v;}
     private LinearLayout cardHigh(){LinearLayout v=card();v.setBackground(rounded(Palette.CARD_HIGH,18));return v;}
     private LinearLayout.LayoutParams margin(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(16);return p;}
-    private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(52),1);p.setMargins(dp(3),dp(6),dp(3),dp(6));return p;}
+    private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1);p.setMargins(dp(3),dp(6),dp(3),dp(6));return p;}
     private TextView text(String s,int sp,boolean bold,int color){TextView v=new TextView(this);v.setText(s);v.setTextSize(sp);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);v.setTypeface(null,bold?Typeface.BOLD:Typeface.NORMAL);v.setPadding(0,dp(5),0,dp(5));return v;}
-    private LinearLayout pageTitle(String title,String subtitle){LinearLayout box=section();TextView heading=text(title,28,true,Palette.TEXT);heading.setLetterSpacing(.015f);box.addView(heading,new LinearLayout.LayoutParams(-1,dp(44)));box.addView(text(subtitle,14,false,Palette.TEXT_DIM),new LinearLayout.LayoutParams(-1,dp(30)));return box;}
-    private TextView navItem(String symbol,String label){TextView v=text(symbol+"\n"+label,12,false,Palette.TEXT_DIM);v.setGravity(Gravity.CENTER);v.setLineSpacing(dp(1),1f);v.setClickable(true);v.setFocusable(true);v.setPadding(0,dp(4),0,dp(3));return v;}
-    private EditText input(String hint){EditText v=new EditText(this);v.setHint(hint);v.setTextSize(16);v.setSingleLine(true);v.setTextColor(Palette.TEXT);v.setHintTextColor(Palette.HINT);v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD_HIGH,14));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(54));p.topMargin=dp(7);v.setLayoutParams(p);return v;}
-    private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setBackground(rounded(bg,16));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
+    private LinearLayout pageTitle(String title,String subtitle){LinearLayout box=section();TextView heading=text(title,34,true,Palette.TEXT);heading.setMinHeight(dp(46));heading.setLetterSpacing(.01f);box.addView(heading,new LinearLayout.LayoutParams(-1,-2));TextView detail=text(subtitle,14,false,Palette.TEXT_DIM);detail.setMinHeight(dp(28));box.addView(detail,new LinearLayout.LayoutParams(-1,-2));return box;}
+    private EditText input(String hint){EditText v=new EditText(this);v.setHint(hint);v.setTextSize(16);v.setSingleLine(true);v.setTextColor(Palette.TEXT);v.setHintTextColor(Palette.HINT);v.setMinHeight(dp(54));v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD_HIGH,14));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(7);v.setLayoutParams(p);return v;}
+    private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setMinHeight(dp(48));v.setBackground(rounded(bg,16));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
     private GradientDrawable rounded(int color,int radius){GradientDrawable shape=new GradientDrawable();shape.setColor(color);shape.setCornerRadius(dp(radius));return shape;}
     private GradientDrawable roundedStroke(int color,int radius,int strokeColor,int strokeWidth){GradientDrawable shape=rounded(color,radius);shape.setStroke(dp(strokeWidth),strokeColor);return shape;}
+    private GradientDrawable glassSurface(int radius){GradientDrawable shape=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{Palette.GLASS_TOP,Palette.GLASS_BOTTOM});shape.setCornerRadius(dp(radius));shape.setStroke(dp(1),Palette.GLASS_BORDER);return shape;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     @Override protected void onDestroy(){stopDiscovery();if(watchConnection!=null)watchConnection.removeObserver(connectionObserver);io.shutdownNow();super.onDestroy();}
 }

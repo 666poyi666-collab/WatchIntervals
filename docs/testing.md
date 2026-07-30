@@ -21,9 +21,9 @@ git diff --check
 - 修改训练引擎：验证开始、暂停、继续、停止、自动阶段推进、完成只保存一次。
 - 修改传感器：验证 GPS、步数、心率各自单独可用和切换恢复。
 - 修改 API/MCP：验证 401、错误 JSON、超时、手机不在线、手表不在线和正常路径。
-- 修改手机云同步：验证 V3 exact fields、25 项上限、active request/outbox/cursor、cursor reset、冲突候选保留、计划 revision/fingerprint 并发护栏、workout tombstone、命令即时二次 exchange、离线过期、WebSocket 重连、备份排除和隐私字段扫描；V2 只作为迁移历史测试。
+- 修改手机云同步：验证 V3 exact fields、25 项上限、active credential/config binding、outbox/cursor reset、冲突候选保留、owner `revisionDomainId`、计划 canonical fingerprint/并发护栏、workout tombstone、命令即时二次 exchange、离线过期、WebSocket 重连、备份排除和隐私字段扫描；Phone→Watch projection 另测 pending ID、pairing target、ACK-loss、journal 重建、空库和无网 Worker；V2 只作为迁移历史测试。
 - 修改 Tunnel：执行 `powershell -File mcp/tests/test_persistent_tunnel.ps1`，再执行 API-011 真机/重启验证。
-- 修改 UI：至少检查 378×496 截图和点击区域。
+- 修改手表 UI：至少检查 378×496 截图、底部安全区与点击区域；修改手机 UI：执行 PT-026/027，检查系统栏、WindowInsets、浮动底栏遮挡、48dp 触控区、可访问名称与启动器蒙版。
 
 ## 3. 手表真机回归
 
@@ -126,22 +126,24 @@ git diff --check
 | PT-007 | 重启恢复 | 手机重启后计划桥服务恢复，计划库不丢失 |
 | PT-008 | 睡眠页 | 授权后显示时长、评分、血氧、深睡、REM 和阶段数量；未授权时有明确提示 |
 | PT-009 | 手机服务发现 | 手机 IP 改变后 Watch MCP 通过 `_watchintervals-phone._tcp.` 找到相同 phoneDeviceId |
-| PT-010 | 计划 outbox | 手表离线时由手机或 Cloud MCP 修改计划，恢复 BLE/LAN 后无需手动同步即自动 ACK | 操作不丢失、不重复，连接恢复/前台心跳/WorkManager 均可重试，pending 归零 |
+| PT-010 | 计划 projection journal | 手表离线、无互联网/无 Cloud credential、B 已作用但 ACK 丢失时执行 A→B→A、旧 `delete` journal、journal 损坏、force-stop、boot 和 15 分钟周期各执行一次；恢复 BLE/LAN 后无需手动同步，最新完整库不被历史 receipt 抑制，旧删除升级为 `upsert`，Phone/Watch 回读一致且 pending 归零 |
 | PT-011 | BLE 首次连接 | 手机授权附近设备后自动扫描、连接、发现服务、协商 MTU、订阅并认证 |
 | PT-012 | BLE 计划同步 | 无 LAN 时计划 outbox 经 BLE ACK，手表 profile 回读一致 |
 | PT-013 | BLE 定位中继 | 训练中每 2–5 秒发送带 sequence/TTL 的手机定位，断联不补发旧点 |
-| PT-014 | BLE 控制 | start/pause/resume/stop 经 BLE；重复 commandId 返回首次结果且不反转状态 |
+| PT-014 | BLE 控制 | 当前选择 A 时经 BLE 请求 start(B)，再重放 start/pause/resume/toggle/stop；副作用前/结果提交后各模拟一次进程边界 | 实际启动 B；同 commandId 返回首次结果且不重复作用，不同正文复用 ID 拒绝；toggle 重放保持首次解析出的显式 pause/resume，不反转状态 |
 | PT-015 | 手机直连 V3 云端 | 关闭全部 Windows MCP/Tunnel/watchdog 服务后由手机上行；Cloud MCP 可读非空计划、训练、睡眠和同步新鲜度 |
 | PT-016 | V2 root 迁移保留 | 覆盖安装 0.23.0 后旧 V2 state 在首次 V3 成功前仍存在，但新版不调用 V2、不双写、不生成新 root |
 | PT-017 | V3 计划 bootstrap/OCC | 空云端首次接受手机计划库；bootstrap 后旧 expected revision 返回 conflict，candidate 与服务器库均可恢复且不自动覆盖 |
-| PT-018 | V3 手机后台恢复 | 手机前台、后台 Doze、手机重启三种状态分别验证计划、训练、睡眠、控制、断网补传、exactly-once、tombstone、cursor 和 stale 状态；PC 不属于运行链路 |
+| PT-018 | V3 手机后台恢复 | 手机前台、后台 Doze、手机重启三种状态分别验证计划、训练、睡眠、控制、断网补传、exactly-once、tombstone、cursor 和 stale 状态；另在 HTTP 响应到达、应用副作用前切换 endpoint/token，确认旧响应不写入新 authority；PC 不属于运行链路 |
 | PT-019 | 凭据迁移与备份边界 | 从 0.21.1 覆盖安装后 pairing/LAN/Gateway token 自动迁到 Keystore 密文且连接不中断；备份/设备迁移不含受保护 prefs；第三方显式/隐式 watchdog 广播不能拉起服务，系统开机和 app-private alarm 仍可恢复 |
 | PT-020 | 训练完成自动上云 | 电脑保持关机；蜂窝/Wi-Fi、前台/后台/Doze 中接收 `history_changed`，网络恢复后 V3 出现同一摘要/分段/聚合心率且无坐标、轨迹或逐点心率 |
 | PT-021 | Keystore provider IV | 覆盖安装和进程重启后 V3 device token 与 BLE/LAN/pairing secret 仍可用且 SharedPreferences 无 plaintext；旧 root 仅作迁移保留 |
 | PT-022 | 睡眠 31 天回填 | 首次同步真实 31 天 record/session/stage；断连、暂时权限失败不产生删除，恢复后增量更新且 Cloud MCP 一致回读 |
-| PT-023 | 在线控制时延 | WebSocket 在线时 start/pause/resume/stop 各执行 3 次；从 Cloud MCP 创建到手表 ACK 均小于 10 秒且同 commandId 不重复执行 |
+| PT-023 | 在线控制时延 | WebSocket 在线时以非当前 `planId` 调用 start，再执行 pause/resume/stop 各 3 次；从 Cloud MCP 创建到手表 ACK 均小于 10 秒，启动 profile 与请求目标一致，同 commandId 不重复执行 |
 | PT-024 | 离线命令过期 | 手机或手表离线创建命令；云端显示 pending/delivered 后 30 秒过期，恢复连接后旧命令不执行，迟到结果被拒绝 |
 | PT-025 | V3 state 恢复 | 在 active request、命令成功未回传、plan conflict 和 cursor ahead 各边界终止 Phone 进程；重启后 outbox/candidate/result 不丢且不会重复作用 |
+| PT-026 | 手机视觉与安全区 | API 35 模拟器及真实手机遍历四目的地、连接设置、计划编辑、训练断连/运行/暂停、历史有/无轨迹、睡眠有/无数据；再以长中文和系统大字体复核 | 内容卡与功能浮层层级稳定；系统栏、键盘、底部导航不遮挡内容；最后一项可滚出；标题/按钮不裁切；所有交互目标至少 48dp且状态不只靠颜色 |
+| PT-027 | 原创图标与启动器蒙版 | 检查普通/圆形/方圆/水滴启动器蒙版、Android 13 themed icon、深浅壁纸及底栏四种选中态 | “间歇路线”标志在安全区完整且单色层可辨；底栏不出现 OEM 字体替代符，四目的地有短标签、中文可访问名称和明确选中态 |
 
 ## 5. MCP/API 回归
 
@@ -152,7 +154,7 @@ git diff --check
 | API-003 | 计划 profile 往返后名称、分组、要求、阶段不变 |
 | API-004 | 创建/更新/删除/选择计划后手机与手表一致 |
 | API-005 | 历史列表、详情、汇总对同一记录计算一致 |
-| API-006 | start/pause/resume/stop 对目标状态幂等，修复 `BUG-002` 后启用 |
+| API-006 | start 携带 planId 并只启动该计划；pause/resume/toggle/stop 在副作用前持久化 signature + resolved explicit action，首次 journal commit 失败不执行，结果 commit 失败后重试仍幂等；同 ID 不同正文返回 409 |
 | API-007 | 超限/损坏 JSON 返回明确 4xx，不导致服务退出 |
 | API-008 | 手机或手表离线时 MCP 返回可诊断错误且不改本地数据 |
 | API-009 | `list_sleep_records` 保留系统来源、全部 session 和 stage 原始类型/时间线 |
@@ -160,27 +162,30 @@ git diff --check
 | API-011 | 长效 Tunnel 首次绑定后在线；结束 tunnel-client、重新登录和重启电脑后均自动恢复，ChatGPT 连接配置不变 |
 | API-012 | 历史列表不含完整样本；详情返回预览；route/heart 游标可无重无漏读完整数据 |
 | API-013 | `PoyiWatchMcp` 与 `PoyiWatchTunnel` 分别终止后自动恢复；设备离线时 MCP 仍 ready 并返回分层错误；不影响其他项目服务 |
-| API-014 | 重复 operationId 返回 already_applied；旧 revision 返回 conflict；ACK 丢失重试不重复应用 |
+| API-014 | 同一 pending desired snapshot 重试复用 operationId；即使 `lastAck=A` 且 pending B，desired A 也必须生成第二个 A 的新 ID；完整库删除发送 `upsert`，legacy `delete` 可读并升级；receipt 按 Watch+pairing generation 分域；ACK/删除同提交，失败不得报 synced；损坏 journal 从 Phone snapshot 重建 |
 | API-015 | 手机 API v2 相同 requestId 返回首次结果；不同正文复用 ID 和旧 revision 返回 409；在计划库提交后终止进程，重试只恢复结果而不重复修改 |
 | API-016 | Watch MCP 的 24 个工具均以 `watch_` 命名；轨迹、心率和完整睡眠只通过 Resource 分页返回 |
 | API-017 | `/healthz`、`/readyz`、`/metrics` 与 `/mcp` 仅监听 `127.0.0.1:8768`；手机离线只使业务调用降级 |
 | API-018 | 手机 API Bearer Token 错误返回 401；mDNS 发现身份不匹配时拒绝固定新端点；日志不包含令牌、IP 或正文 |
 | API-019 | Cloud MCP 工具按 `watch:read`、`watch:write`、`watch:control` 精确隔离；缺任一 scope 只能拒绝对应工具，`offline_access` 不授予业务权限 |
-| API-020 | `/sync/v3/exchange` 只接受 protocol 3、Device Bearer Token、token 自带 deviceId、严格 cursor 和 exact fields；未知字段、错误身份、超限项全部拒绝 |
+| API-020 | `/sync/v3/exchange` 只接受 protocol 3、Device Bearer Token、token 自带 deviceId、严格 cursor 和 exact fields；每个成功响应精确返回配置的 owner/library `revisionDomainId`，缺失/空/短值/非法字符/超长配置使 `/readyz` 与 exchange 为 503；Phone 仅在尚未绑定 authority 时兼容旧在途无字段响应，一旦保存 `v3d.*` 后缺字段必须拒绝且不写本地状态 |
 | API-021 | request/operation 重放返回首次结果；ID 改正文复用拒绝；plan revision conflict 保留 candidate；workout 同 ID 同内容幂等、不同内容 immutable conflict |
 | API-022 | route/latitude/longitude/coordinates/heartRateSamples、凭据和 token 在 Phone 请求、Worker、D1、MCP、日志和 APK 扫描均不存在；允许的睡眠明细和聚合心率正常存在 |
 | API-023 | `/sync/v3/channel` 只接受 Device Bearer Token，只发送 exact `sync_needed`；断线重连直接 exchange，重复 close/failure 不创建多个 timer |
 | API-024 | authority observation 仅经命名 service binding 读取；revision/freshness 只来自 V3 checkpoint/device/cursor，同 revision 稳定；旧 `supportsPcOff` 只作兼容字段，不得替代 Phone Doze/重启恢复证据 |
 | API-025 | 正式 OAuth connector 完成 metadata、ready、MCP initialize、tools/list、状态、非空计划、训练/分段/心率、睡眠和 sync overview；合成记录必须从真实手表经 Phone V3 上行并显式标记、验后用产品删除链路清理，不得手工写 D1 |
 | API-026 | delete workout 命令相同 ID/正文返回首次结果，不同正文复用 ID 拒绝；只有手表 ACK 后 D1 写 tombstone，重复上传不得复活 |
-| API-027 | start/pause/resume/stop 成功结果在同一次 Phone sync 的第二次 exchange 被确认；离线不写失败 ACK，过期和迟到结果按合同拒绝 |
+| API-027 | start 把 Cloud `arguments.planId` 原样贯穿 Phone→Watch 并启动目标 profile；start/pause/resume/toggle/stop 使用副作用前两阶段 command journal，重放只执行固化的显式幂等 action；成功结果在同一次 Phone sync 的第二次 exchange 被确认，离线/过期/迟到按合同拒绝 |
 | API-028 | `/v1/history` summary 保留已派生 splits/最佳配速/心率范围，同时不返回 route/coordinates/逐点心率；正式 ChatGPT 回读分段后删除测试记录，手表/MCP/D1 tombstone 三处一致 |
-| API-029 | 正式 MCP 创建计划后，云端库先落 Phone 和持久 plan outbox；瞬时下发失败自动重试到 Watch。同一 cloud source 严格防 revision 回退，source 切换建立独立水位；删除后 Cloud/Phone/Watch 均无目标计划且 outbox 为 0 |
+| API-029 | 正式 MCP 创建计划后，云端库与 server owner/library `revisionDomainId` 先原子落 Phone，再由独立无网 Projection Worker 投影 Watch；同 authority 多设备共享水位，已绑定 Phone/Watch 均拒绝缺 domain/legacy/cross-authority 回退；瞬时失败/ACK-loss 自动收敛，删除后 Cloud/Phone/Watch 均无目标且两类 outbox 为 0 |
+| API-030 | 云端 `plans=[]`、`selectedPlanId=null` 往返时 Watch 先按收到的 library 清理 profile，再提交 library/source/revision/receipt；任一步失败不 ACK，重试收敛。成功后 Phone/Watch 均为空、主页禁用开始、8765/BLE start 返回 `plan_unavailable`；新增并选择计划后恢复 |
+| API-031 | exchange 响应的最终 credential 复核与 `applyResponse()` 全部本地副作用在 `CloudSyncCredentials` 同一 class monitor 内执行；在边界把 A 换成 B 时，A 响应不得修改 plan library、cursor、receipt、conflict、command result 或 projection metadata |
 
 ### Phone 0.23.0 / Cloud V3 本地门禁（2026-07-30）
 
-- `CloudV3SyncTest` 覆盖隐私字段递归拒绝、plan conflict 双候选持久化、workout immutable/tombstone 分流、HTTP 往返并发编辑护栏、cursor ahead reset、命令结果即时 follow-up、重启去重、离线 pending 和过期不执行。
-- `PhonePlanProjectionSyncTest` 覆盖可用 BLE/LAN 状态、并发排空门禁，以及云 exchange 已成功但 Watch projection 未清空时 Worker 必须重试；`PlanLibraryStoreTest`/`CloudV3SyncTest` 覆盖 cloud source revision 域和稳定非秘密指纹。
+- `CloudV3SyncTest` 覆盖隐私字段递归拒绝、未绑定 legacy 兼容/绑定后缺 domain 拒绝、credential generation 最终锁、endpoint/device state reset、plan conflict 双候选、canonical null/group/sortOrder fingerprint、HTTP 往返并发编辑护栏、cursor ahead、start planId、命令 follow-up、离线过期和 tombstone。
+- `PhoneSyncOutboxTest` 覆盖同一 pending 保留 ID、`lastAck=A + pending B + desired A` 新 ID、pairing target、ACK-loss、新快照不被旧/非请求 ACK 删除、legacy `delete` 升级、旧 metadata 迁移和损坏结构 fail closed；`PhonePlanProjectionSyncTest` 覆盖可用 transport 与无 Cloud credential/互联网时独立 Worker retry。
+- `PhonePlanLibrarySyncFormatTest` 覆盖同步 compare-and-apply、null selection/group；`PlanLibraryStoreTest`/`PlanStoreTest` 覆盖单向 authority fence、从新 library 先 materialize profile、跨 preferences 失败不 ACK、空选择与显式 empty marker不复活默认计划；Watch command journal 回归覆盖 start(planId)、toggle 固化和两阶段提交失败。
 - `CloudV3Sync.sync()` 在进程内串行；WebSocket 使用轻量 command exchange，live status 与 full history/sleep 采集分离；命令成功后同次调用立即二次 exchange。
 - Watch `/v1/control/delete_workout` 使用 commandId/expiresAt/controlRevision/workoutId 和持久 request signature cache；删除已不存在记录仍返回幂等成功，不同正文复用 ID 返回 409。
 - `:app:testDebugUnitTest :phone:testDebugUnitTest`、双模块 debug assemble 已通过；Lint/release 在本批次最终门禁记录。这里只证明本地构建与状态机合同，不替代真机传感器或手机后台恢复证据。

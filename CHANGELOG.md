@@ -18,6 +18,8 @@
 - 业务数据不再做应用层 E2EE；HTTPS、安全 BLE、OAuth 和 Android Keystore device-token 包装继续保留。V2 源码/state 暂留迁移回退，但 0.23.0 不启用、不双写。
 - 训练中每 10 秒、空闲每 60 秒上传实时状态；live/command exchange 不再重复扫描完整历史和 31 天睡眠。
 - 原始轨迹、坐标和逐点心率固定为 local-only；云端允许完整计划、训练摘要/分段/聚合心率与睡眠 record/session/stage。
+- 手机端重构为平台中立的 iOS/macOS 启发式功能层：内容仍使用实色数据卡，连接设置与四目的地底栏改为半透明浮层、同心圆角和实时 WindowInsets；系统栏统一深色，页面标题与大字体安全区同步收敛（`REQ-UI-011`）。
+- 手机底栏与历史详情不再使用 OEM 字体中的 Unicode 图标；新增原创 24×24 矢量 symbol 系统和中文可访问名称。Phone 启动器改为原创“间歇路线”自适应标志，并新增 Android 13 monochrome 主题图标层（`REQ-UI-012`）。
 
 ### Fixed
 
@@ -26,12 +28,15 @@
 - 修复命令成功后仅等待下一次 WorkManager 才回传 ACK 的延迟；现在同一次同步立即二次 exchange。手表离线不提前上报失败，30 秒过期后不再执行旧命令。
 - 修复 WebSocket 未配置凭据时永不补连和 close/failure 重复安排 reconnect；`watch_cloud_v3.xml` 现同时排除 Auto Backup 与设备迁移。
 - 修复厂商睡眠 OSA 负数哨兵被 V3 schema 拒绝，以及已成功上传睡眠仍长期保留旧 `local_schema_invalid` 大对象的问题。
-- 修复 Cloud V3 小整数计划 revision 被手表迁移前时间戳或另一云源的旧水位误判为旧数据；`cloud_replace` 现在携带非秘密 source 指纹，同一 source 保持单调回退保护，切换数据源时建立独立水位（`BUG-042`）。
-- 修复云端计划已落手机后，首次 BLE/LAN 下发失败只能等用户手动同步的问题；连接恢复、前台心跳和 WorkManager 现在会持续排空持久 plan outbox（`BUG-044`）。
+- 修复计划 revision 把 device identity 误作 authority 的问题；成功 V3 响应现在携带服务端 owner/library `revisionDomainId`，Phone 原子保存 domain/revision/fingerprint，Watch 只允许 legacy→`v3d.*` 单向升级并拒绝跨 authority 回退，Worker 缺失/非法 domain 时 fail closed（`BUG-042`）。
+- 修复 Phone→Watch 投影在首次失败、ACK-loss、journal 损坏、A→B→A、换表/重配或无互联网时不能可靠收敛的问题；同一 pending 保留 ID、新事件使用新 UUID，receipt 按 pairing generation 分域，journal 可重建，ACK 与删除同提交，独立无网 Worker 由 boot/连接/心跳/15 分钟周期补偿，网络 I/O 不再阻塞云命令（`BUG-044`）。
+- 修复空云计划库在 Watch 被当成“缺少配置”而复活内置 1 km + 200 m 的问题；显式 empty marker 现在清除旧 profile、禁用主页开始并让远程 start 返回 `plan_unavailable`，选择新计划后可恢复（`BUG-045`）。
+- 统一 Cloud 与 Phone 的计划 canonical fingerprint，保留 null selection/group 与非连续 sortOrder，避免相同云快照被周期性重复应用或在 Watch 改变语义（`BUG-046`）。
+- 修复 Phone 0.23.0 设置仍展示 V2“加密云同步”、`/sync/v2/exchange`、恢复包和设备批准入口的问题；活动 UI 现在只配置 Cloud V3 与 Keystore device token，V2 源码/state 仅留迁移且不再提供调用入口（`BUG-047`）。
 
 ### Verification
 
-- Watch/Phone JVM 单测、双模块 `lintDebug`、debug/release APK 构建全部通过；正式 Worker、D1 migration、10 个 authority trigger 与 OAuth 三 scope 均 ready。正式 ChatGPT connector 回读合成记录 `1200 m`、`2` 个分段（1000 m/300 s、200 m/60 s），随后通过产品命令删除并写 D1 tombstone；正式 MCP 临时计划也完成 Cloud→Phone→Watch 创建和反向删除，Phone/Watch revision 均为 4 且两类 outbox 为 0。合成记录仅验证序列化/同步，不替代户外 GNSS/心率测试。
+- 前一正式 ChatGPT 候选已回读合成记录 `1200 m`、`2` 个分段（1000 m/300 s、200 m/60 s），随后通过产品命令删除并写 D1 tombstone；临时计划完成 Cloud→Phone→Watch 创建和反向删除，Phone/Watch revision 均为 4 且两类 outbox 为 0。本批新增合同的最终 JVM/lint/debug/release、Worker 部署、APK 哈希与新真机 source 证据记录在本批项目日志和发布结果；旧验收不冒充新 `revisionDomainId`/空库/ACK-loss 证据。
 
 ## [Watch 0.21.1 / Phone 0.22.1] - 未发布
 

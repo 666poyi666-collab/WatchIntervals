@@ -15,7 +15,7 @@
   -> ChatGPT
 ```
 
-手机保存离线计划缓存、V3 outbox/cursor/receipt/conflict 和 Keystore 包装的 device token。云端是计划主版本；手表 `WorkoutService` 仍是活动训练状态唯一权威。V2 源码/state 暂时保留用于迁移回退，但 Phone 0.23.0 不启用、不双写，也不会在 V3 失败时自动退回。
+手机分别保存 Cloud V3 outbox/cursor/receipt/conflict 与 Phone→Watch 可重建 projection journal，并用 Android Keystore 包装 device token。云端是计划主版本；手表 `WorkoutService` 仍是活动训练状态唯一权威。V2 源码/state 暂时保留用于迁移回退，但 Phone 0.23.0 不启用、不双写，也不会在 V3 失败时自动退回。
 
 ## 云端保存范围
 
@@ -37,9 +37,12 @@ Phone 只从手表 `/v1/history` 读取 summary；任何 V3 请求出现 `route`
 ## Exchange 可靠性
 
 - `POST /sync/v3/exchange` 使用 requestId/deviceId/cursor，plan/workout/sleep 各最多 25 项；重复 ID 同正文返回首次结果，不同正文复用 ID 拒绝。
-- 所有进程内 exchange 串行。active request 在网络前 `commit()`，失败后原样重试；`cursor_ahead` 只按服务器 `resetCursor` 清 active request 并重建，不丢 outbox。
+- 所有进程内 exchange 串行。active request 在网络前 `commit()`并绑定精确 endpoint + device token generation；凭据或 endpoint/device authority 变化时旧 state 先备份再整体换域。失败请求原样重试；`cursor_ahead` 只按服务器 `resetCursor` 清 active request 并重建。
 - plan 使用 expected revision OCC。普通 conflict 从 outbox 移入持久 conflict store，保留本地 candidate、ACK 和服务器计划库；HTTP 往返期间本地 revision/fingerprint 变化时，旧响应不得覆盖新编辑。
-- 云端计划先落 Phone 缓存和持久 plan outbox，再投影到 Watch；瞬时 BLE/LAN 失败由连接恢复、前台心跳和 WorkManager 自动重试。同一 cloud source 使用独立单调 revision 水位，切换数据源不会继承旧 source 的水位。
+- 每个成功 exchange 返回服务端 owner/library `revisionDomainId`；缺失或非法配置使 Worker readiness/exchange fail closed。production 与 staging domain 不同，同一 authority 的所有设备共享同一 domain。Phone 原子保存 domain/revision/fingerprint；Watch 只允许 legacy→`v3d.*` 单向升级，绑定后拒绝其他 authority、legacy 或无 source 回退。
+- 云端计划先原子落 Phone 缓存，再由无互联网/Cloud credential 依赖的独立 Projection Worker 投影 Watch。journal 保存完整 desired snapshot：同一 pending 重试保留 operationId，A→B→A 使用新 ID；projection/receipt 绑定 Watch+pairing generation，损坏 journal 备份后从 Phone 库重建。旧 ACK 只删除实际发送的 ID，receipt 与 pending 删除同次提交。
+- boot/watchdog、BLE/LAN 连接恢复、10/60 秒前台心跳、一次性 WorkManager 和 15 分钟周期任务共同补偿。Cloud 响应不等待 Watch 的 20 秒 I/O，`select_plan` 只做 5 秒直接选择；两类 Worker 和两类 outbox 相互独立。
+- 空 library/null selection 是合法云状态；Phone/Watch 均保留空选择，Watch 用 explicit empty marker 清除旧 profile、禁用主页开始并让 start API 返回 `plan_unavailable`，不能复活首次安装默认计划。
 - workout 是 create-once fact；同 ID 同内容幂等，不同内容冲突。训练删除只在手表 command ACK 后由云端写独立 tombstone，后续上传不能复活。
 - 睡眠首次回填最近 31 天，此后增量更新；暂时读不到不推断删除。
 - `watch_cloud_v3.xml` 被 Auto Backup 和 device transfer 排除。
@@ -70,12 +73,13 @@ Phone 只从手表 `/v1/history` 读取 summary；任何 V3 请求出现 `route`
 2. 正式 Worker、D1 migration、10 个 authority trigger 和 OAuth `watch:read/watch:write/watch:control` 均 ready；正式 ChatGPT connector 已完成 owner consent。
 3. 显式标记的 1.2 km 合成记录从真实手表索引经 Phone 上传正式 D1，ChatGPT 精确回读 1000 m + 200 m 两个分段和 `cloud_authoritative/fresh` 状态。
 4. ChatGPT 通过正式 `watch_delete_workout` 清理该记录；手表索引和 MCP 列表均无该 ID，D1 按设计保留 immutable fact 并写 tombstone。
-5. ChatGPT 在正式环境创建临时计划，Phone 首次投影失败后由持久重试自动到达 Watch；修复跨 source revision 冲突后两端一致。正式删除返回 ACK，Cloud 列表无目标，Phone/Watch revision 均为 4，目标计划和两类 outbox 均为 0。
+5. ChatGPT 在正式环境创建临时计划，Phone 首次投影失败后由前一候选的持久重试自动到达 Watch；修复当时的 device-derived source 冲突后两端一致。正式删除返回 ACK，Cloud 列表无目标，Phone/Watch revision 均为 4，目标计划和两类 outbox 均为 0。该历史证据不证明本批新增的 server `revisionDomainId`、pairing-scoped receipt、空库 marker 或独立无网 Worker。
 
 尚未完成：
 
 1. 开阔户外 GNSS、真实佩戴心率和传感器切换精度；合成分段不能替代这些测试。
 2. Phone 在后台 Doze 和手机重启后的自动补传/WebSocket 恢复。
-3. V2、手机 8766、本地 MCP/Tunnel 与 Windows 服务的迁移清理；它们不在生产链路，也不再作为云端验收前置。
+3. 正式 Worker 部署本批 revision-domain 合同并显示 `revisionDomain=ready`；新 Phone/Watch 覆盖安装后确认 Watch source 为 production `v3d.*`，再做 ACK-loss/空库真机故障注入。
+4. V2、手机 8766、本地 MCP/Tunnel 与 Windows 服务的迁移清理；它们不在生产链路，也不再作为云端验收前置。
 
 后续 Cloud 集成测试直接在正式环境进行。历史 staging 数据只作为过去的契约/故障证据，不再新增 staging 验收。用于正式环境的合成数据必须显式标注、走完整产品链路，并在验收后通过产品删除命令清理。

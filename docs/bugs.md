@@ -1,9 +1,9 @@
 # 缺陷与技术债台账
 
 状态：维护中  
-基线：2026-07-29
+基线：2026-07-30
 
-严重度：P0 数据损坏/训练核心不可用；P1 核心行为错误或高风险；P2 有降级路径；P3 体验或维护问题。状态使用 `Open`、`In Progress`、`Fixed`、`Verified`、`Won't Fix`。
+严重度：P0 数据损坏/训练核心不可用；P1 核心行为错误或高风险；P2 有降级路径；P3 体验或维护问题。状态使用 `Open`、`In Progress`、`Fixed`、`Verified`、`Blocked`、`Won't Fix`。
 
 ## 1. 编号缺陷台账
 
@@ -19,15 +19,16 @@
 - 处理：继续按 `testing.md` 第 6 节补齐纯 Java、Robolectric/仪器和 API 契约测试。
 - 关闭条件：核心状态机、编解码和协议在 CI 中自动执行。
 
-### BUG-002：pause/resume API 实际采用 toggle，调用不幂等
+### BUG-002：pause/resume/toggle 命令缺少副作用前持久幂等边界
 
 - 状态：Fixed，待真机验证
 - 严重度：P1
 - 影响：手表 0.16.0
 - 复现：连续调用两次 `/v1/control/pause`；第二次会继续训练。对已暂停训练调用 `resume` 之外的重复请求也可能反转状态。
-- 根因：`WatchBridgeService.control()` 将 `pause`、`resume`、`toggle` 全部映射到 `ACTION_TOGGLE`。
-- 处理：增加显式 `ACTION_PAUSE` / `ACTION_RESUME`，服务按当前状态幂等处理；错误 action 返回 422。
-- 验证：启用 API-006，并覆盖重复、乱序和网络重试。
+- 根因：早期 `WatchBridgeService.control()` 将 `pause`、`resume`、`toggle` 全部映射到 `ACTION_TOGGLE`。2026-07-30 复审又发现两个仍可达入口都在启动副作用之后才缓存结果，且忽略 `SharedPreferences.commit()` 失败；首次 `toggle` 没有固化当时解析出的 pause/resume，因此响应丢失或进程终止后的重放仍可能反转状态。
+- 处理：保留显式 `ACTION_PAUSE` / `ACTION_RESUME`；两个入口共用两阶段 command journal。副作用前同步提交 commandId、请求 signature、解析后的显式 action 和 pending 状态，提交失败不执行；`toggle` 只在首次按当前状态解析一次。副作用后再提交最终 result，若最终提交失败，重试只执行已固化的显式幂等 action并收敛结果。
+- 防复发测试：API-006/API-027 覆盖 pause/resume/toggle 重放、不同正文复用 ID、journal 首次/最终 commit 失败与进程边界；重复 toggle 不得改变首次解析目标。
+- 验证：JVM 回归通过；仍按原状态等待 OWW221 对新 command journal 的 BLE/LAN 重放抽检。
 
 ### BUG-003：局域网 API 使用明文 HTTP 和长期六位配对码
 
@@ -141,7 +142,7 @@
 - 严重度：P2
 - 影响：手机 0.11.0-debug 至 Phone 0.23.0 早期候选
 - 根因：早期协议只有随机 operationId、完整库快照和 ACK 清理，没有独立后台调度、ACK-loss 重放身份、损坏 journal 恢复或空库语义。
-- 关闭实现：当前计划投影以完整 Phone 权威快照合并乱序变化，相同内容生成稳定 operationId，ACK receipt 与 pending 删除同次提交；journal 可从 `PhonePlanLibrary` 重建，独立 Worker/连接恢复/前台心跳补偿，Watch 支持空库并持久去重。详细根因、防复发和真机证据统一维护在 BUG-044。
+- 关闭实现：当前计划投影以完整 Phone 权威快照合并乱序变化，同一 pending 重试保留 operationId、新业务事件生成新 ID，ACK receipt 与 pending 删除同次提交；journal 可从 `PhonePlanLibrary` 重建，独立 Worker/连接恢复/前台心跳补偿，Watch 支持空库并持久去重。详细根因、防复发和真机证据统一维护在 BUG-044。
 - 验证：API-029 正式计划创建/删除往返已确认 Phone/Watch 最终一致且 pending 为 0；ACK-loss、旧 ACK 与并发新快照、损坏编码和空库由 JVM 回归覆盖。
 
 ### BUG-015：BLE 认证尚未达到正式安全配对要求
@@ -415,9 +416,10 @@
 - 严重度：P1
 - 影响：Watch 0.21.1 / Phone 0.23.0 Cloud V3 staging 与正式候选
 - 根因：Cloud V3 使用从 1 开始的单调 revision，迁移前 Phone/Watch 使用时间戳；第一轮按 device identity 派生 source 又把设备身份误当成计划 revision authority。同一 owner 的多台 Phone 会错误切域，不同 authority 也缺少服务端稳定边界；Watch 还允许已绑定正式源后回退到 staging/legacy。
-- 修复：Worker 对每个成功 V3 exchange 返回 owner/library 级稳定 `revisionDomainId`；production/staging 分别配置不同 `v3d.*` 值，缺失或非法时 `/readyz` 与 exchange fail closed。Phone 把该 domain 与库 revision/fingerprint、投影元数据原子保存；旧无字段响应仅走一次 legacy device fallback。Watch 允许 legacy→`v3d.*` 单向升级，同一 domain 严格防回退，一旦绑定 authority domain 就拒绝其他 `v3d.*`、legacy 或无 source 覆盖。
-- 防复发测试：Worker 黑盒覆盖精确 domain、replay、计划 conflict，以及缺失/空/短值/非法字符/超长配置 fail closed；`CloudV3SyncTest` 覆盖多设备共享服务端 domain、credential generation 与 endpoint authority 重绑；`PlanLibraryStoreTest` 覆盖 legacy 升级、同源回退和退休来源 fence。
-- 验证：上一轮 legacy source 已完成正式计划 revision 3→4 真机往返；新 owner-domain 实现已通过 Worker/Android 自动化，尚需部署正式 Worker 并确认 Watch 保存的 source 为 production `v3d.*` 后恢复 `Verified`。
+- 扩大复现：Phone 已应用并持久化 `v3d.*` domain 后收到缺少 `revisionDomainId` 的响应，旧实现仍无条件生成 `legacy.*` fallback；这会让已绑定 authority 的安装接受降级响应，绕过服务端 fail-closed 合同。
+- 修复：Worker 对每个成功 V3 exchange 返回 owner/library 级稳定 `revisionDomainId`；production/staging 分别配置不同 `v3d.*` 值，缺失或非法时 `/readyz` 与 exchange fail closed。Phone 把该 domain 与库 revision/fingerprint、投影元数据原子保存；只有本地尚未绑定 cloud authority 的旧在途响应允许一次 legacy device fallback，已绑定 `v3d.*` 后缺字段立即拒绝且不产生任何本地副作用。Watch 允许 legacy→`v3d.*` 单向升级，同一 domain 严格防回退，一旦绑定 authority domain 就拒绝其他 `v3d.*`、legacy 或无 source 覆盖。
+- 防复发测试：Worker 黑盒覆盖精确 domain、replay、计划 conflict，以及缺失/空/短值/非法字符/超长配置 fail closed；`CloudV3SyncTest` 覆盖未绑定 legacy 兼容、已绑定 `v3d.*` 后缺字段拒绝、多设备共享服务端 domain、credential generation 与 endpoint authority 重绑；`PlanLibraryStoreTest` 覆盖 legacy 升级、同源回退和退休来源 fence。
+- 验证：上一轮 legacy source 已完成正式计划 revision 3→4 真机往返，不能证明本修复。新 owner-domain Worker 已部署且远端合同通过；仍需新 Phone/Watch 覆盖安装并确认 Watch source 为 production `v3d.*` 后恢复 `Verified`。
 
 ### BUG-043：手表历史摘要 API 丢失已派生公里分段
 
@@ -433,14 +435,75 @@
 
 ### BUG-044：Phone→Watch 计划投影缺少可恢复 journal 与独立后台语义
 
+- 二次复审：已有 `lastAck=A`，journal 中仍有未确认 B，当前 desired 又回到 A 时，旧 reconcile 会仅因历史 receipt 与 desired 相同而把队列清空；这是 B 已到表但 ACK 丢失时的真实 A→B→A 数据丢失窗口。另一路径 `PhonePlanBridgeService` 删除计划仍把完整 desired library 标成 parser 不接受的 `delete`，导致产品删除不能进入投影。
+- 二次修复：只要存在不同 pending，历史 receipt 不得抑制当前 desired，A→B→A 必须生成新的 A ID。完整库的创建、编辑、选择和删除统一发送 desired-state `upsert`；parser 兼容读取旧 `delete` 并在 reconcile 时升级为新 `upsert`。
+- 二次防复发：`PhoneSyncOutboxTest` 增加 `lastAck=A + pending B + desired A` 必须生成新 A，以及旧 `delete` pending 升级且不丢完整库的回归。
 - 状态：Fixed，待 Doze/重启与 ACK-loss 真机故障注入
 - 严重度：P1
 - 影响：Phone 0.23.0 正式 Cloud V3 候选
 - 复现：正式 ChatGPT 创建临时计划后，Cloud 与 Phone revision 3 已可回读，但 45 秒内 Watch 无该计划；只有用户在 Phone 手动触发“立即同步”时，持久 plan outbox 才会再次尝试。
-- 扩大根因：初版修复仍把投影重试绑在需要互联网/Cloud credential 的 Worker；相同快照会生成新 operationId，ACK 丢失后无法命中 `already_applied`；损坏 outbox 被当作空队列；持久写忽略 `commit()` 失败；空计划库在 Watch 被拒绝；Cloud 响应、Phone 本地编辑和 Watch ACK 之间仍有覆盖/崩溃窗口。排空方法还在类锁内执行最长 20 秒网络 I/O，可阻塞 10 秒命令确认。
-- 修复：新增无网络约束、无 Cloud credential 依赖的 `PhonePlanProjectionWorker`，一次性任务与 15 分钟周期任务由 boot/watchdog/连接恢复/前台心跳共同调度。`PhoneSyncOutbox` 以 snapshot fingerprint 生成稳定 operationId，ACK receipt 与 pending 删除同次 `commit()`；journal 损坏先备份，再从 Phone 完整计划库重建。网络 I/O 移出锁，旧 ACK 只合并其实际发送的 operationId，不能删除并发入队的新快照。Cloud 计划在同一 Phone 锁内 compare-and-apply，并把 projection operation/source/revision/fingerprint 同次提交；Watch 所有关键写检查 `commit()`，支持空库并清理选中 profile，ACK 只在库/profile/source/revision/去重记录全部落盘后返回。
-- 防复发测试：`PhoneSyncOutboxTest` 覆盖 ACK-loss 保留 ID、新快照压缩、损坏编码、网络期间新快照与非请求 ACK；`PhonePlanProjectionSyncTest` 覆盖无 Cloud credential/互联网时仍重试；`PhonePlanLibrarySyncFormatTest`/`CloudV3SyncTest` 覆盖原子云应用和 concurrent local edit；`PlanLibraryStoreTest` 覆盖空库与 authority fence。
+- 扩大根因：初版修复仍把投影重试绑在需要互联网/Cloud credential 的 Worker；每次重建 operationId 使 ACK-loss 无法命中 `already_applied`，但简单按内容确定 ID 又会让 A→B→A 的第二个 A被 Watch 误认成历史 A。ACK receipt 未绑定目标 Watch，换表/重新配对后可能跳过投影；旧安装没有 projection metadata 时会把离线 `cloud_replace` pending 降级为 `upsert`；损坏 outbox 被当作空队列，持久写忽略 `commit()`。排空方法还在类锁内执行最长 20 秒网络 I/O，可阻塞 10 秒命令确认。
+- 修复：新增无网络约束、无 Cloud credential 依赖的 `PhonePlanProjectionWorker`，一次性任务与 15 分钟周期任务由 boot/watchdog/连接恢复/前台心跳共同调度。同一 pending snapshot 在 reconcile 时保留 ID，新业务事件始终生成新 UUID；projection fingerprint 和 ACK receipt 绑定 Watch device + pairing generation。旧 pending 在升级时恢复 `operation/source` metadata；journal 损坏先备份，再从 Phone 完整计划库重建。ACK receipt 与 pending 删除同次 `commit()`；网络 I/O 移出锁，旧 ACK 只合并实际发送的 ID，不能删除并发新快照。Cloud 计划在 Phone 单锁内 compare-and-apply，Watch 仅在库/profile/source/revision/去重记录全部落盘后返回 ACK。
+- 防复发测试：`PhoneSyncOutboxTest` 覆盖 ACK-loss 保留 ID、A→B→A 新 ID、pairing target、新快照压缩、旧 pending metadata、损坏结构、网络期间新快照与非请求 ACK；`PhonePlanProjectionSyncTest` 覆盖无 Cloud credential/互联网时仍重试；`PhonePlanLibrarySyncFormatTest`/`CloudV3SyncTest` 覆盖原子云应用和 concurrent local edit。
 - 验证：上一候选无需手动同步即完成正式临时计划创建/删除，Phone/Watch revision 4 且两类 outbox 为 0；扩大修复已通过 JVM 自动化。真实 Phone Doze/重启、SharedPreferences 失败和 ACK-loss 断点仍按 PT-010/PT-018/PT-025 做故障注入，因此当前状态为 `Fixed` 而非 `Verified`。
+
+### BUG-045：空计划库会在 Watch 复活内置默认计划
+
+- 二次复审：Watch 跨两个 SharedPreferences 先提交新 library、再清理旧 selected profile；若两次提交之间崩溃，启动代码会读到空 library 与旧 profile，仍可能启动已删除计划。
+- 二次修复：`PlanLibraryStore` 先从本次收到的 library 直接 materialize/clear selected profile，再提交 library/source/revision/去重记录，禁止 `select()` 回读旧库。任一步失败都不 ACK，由相同 operationId 重试收敛。
+- 二次防复发：`PlanLibraryStoreTest` 覆盖从给定新库 materialize、profile/library 提交失败不 ACK 与重试收敛。
+- 状态：Fixed，待 API-030 真机往返
+- 严重度：P1
+- 影响：Watch 0.21.1 / Phone 0.23.0 Cloud V3 候选
+- 复现：Phone/Cloud 删除最后一个计划后，Watch 接受空 library 并清除 profile key；旧 `PlanStore.load()` 随即把“缺少 current”解释为首次安装，重新返回内置 1 km + 200 m，主页和 start API 仍可启动已删除计划。
+- 根因：首次安装默认回退与云端权威“显式为空”共用同一种缺 key 状态；测试只验证 `selectedPlanId=""`，没有验证实际 profile/UI/control。
+- 修复：`PlanStore` 增加持久 `explicit_empty` marker；空库或 null selection 清 profile 并置 marker，读取返回空而非默认。主页展示空状态并禁用开始，Warmup/WorkoutService 和 LAN/BLE start 入口拒绝 `plan_unavailable`；新计划被选择后 `saveProfile` 原子清除 marker。损坏库迁移也保留明确空状态，活动中的 `WorkoutService` 阶段不受计划库变化影响。
+- 防复发测试：`PlanStoreTest` 覆盖 empty marker 不复活默认；`PlanLibraryStoreTest` 覆盖空库及 nonempty+null selection 均保持空选择；API-030 覆盖真机 UI/profile/control 和新增计划恢复。
+
+### BUG-046：Cloud 与 Phone 计划 fingerprint 的 null/sortOrder 规范不一致
+
+- 状态：Fixed
+- 严重度：P1
+- 影响：Phone 0.23.0 Cloud V3 候选
+- 复现：云计划使用非连续 `sortOrder`、`groupId=null` 或 `selectedPlanId=null` 时，Cloud fingerprint 直接哈希原响应，Phone fingerprint 却把 sortOrder 改成数组下标、null group 放入默认组、null selection 自动选中首项；相同响应会被周期同步反复落盘且 Watch 语义漂移。
+- 根因：cloud response 与 Phone→Cloud projection 各自维护一套 canonicalization，Phone 本地 normalize 又把“无选择/无分组”当成损坏回退。
+- 修复：`cloudPlanFingerprint()` 与 `planFingerprint()` 统一经过 `cloudPlanLibrary()` exact projection；显式保留 group/plan sortOrder，把空 group 映射 JSON null、空 selection 映射 JSON null。Phone/Watch normalize 保留合法 null group/selection，只对非空但失效的 ID做回退。
+- 防复发测试：`CloudV3SyncTest.cloudAndPhoneFingerprintsShareNullAndSortOrderSemantics` 覆盖两端哈希相等及 sortOrder/null；`PhonePlanLibrarySyncFormatTest` 覆盖本地 normalized 语义。
+- 验证：双模块 JVM 全量 `--rerun-tasks` 通过；该合同为纯数据转换，无额外外部状态门禁。
+
+### BUG-047：Phone 0.23.0 设置页仍暴露已退役的 V2 加密流程
+
+- 状态：Verified
+- 严重度：P2
+- 影响：Phone 0.23.0 Cloud V3 候选
+- 复现：在未配置手机上展开连接设置；页面仍显示“加密云同步”、`/sync/v2/exchange`、离线恢复包与设备批准入口，而 `REQ-SYNC-012/013` 已规定 0.23.0 只启用 server-readable V3 且不生成新 E2EE root。
+- 根因：V3 客户端复用了 `CloudSyncCredentials` 的 Keystore token 存储，但 `MainActivity` 视觉重构时仍把 V2 root/recovery/approval 控件挂在活动设置面板；端点迁移兼容与当前用户配置文案没有分层。
+- 影响范围与同类入口排查：`CloudV3Sync.exchangeEndpoint()` 会把遗留 V2 地址规范化到 V3，因此没有发生 V2 双写；错误集中在活动 UI 与可点击的旧 root 管理入口。`CloudSyncCredentials`/`WatchSyncKeyPackages` 的旧源码和 state 继续只作迁移保留。
+- 修复：活动设置页统一为 Cloud V3 标题、`/sync/v3/exchange`、Keystore token 说明和“保存并测试云同步”；移除 V2 root/recovery/approval 的 UI 绑定与 `MainActivity` 私有对话框实现，不删除迁移数据。
+- 防复发测试：`PhoneCloudSetupSpecTest.activeSetupAdvertisesCloudV3InsteadOfRetiredEncryptionFlow` 固定 V3 地址和非 E2EE 文案；PT-026 的 API 35 UI hierarchy 检查活动页面不出现 V2/恢复包/批准入口。
+- 验证：`:phone:testDebugUnitTest :phone:assembleDebug --rerun-tasks` 通过；API 35 模拟器冷启动与 UI hierarchy 复核通过。该缺陷不依赖真机厂商渲染，可标记 Verified。
+
+### BUG-048：V3 响应应用与凭据切换之间存在 TOCTOU
+
+- 状态：Fixed，待手机进程/凭据切换真机故障注入
+- 严重度：P1
+- 影响：Phone 0.23.0 Cloud V3 候选
+- 复现：exchange 使用凭据 A 发出请求，第一次复核仍为 A；在进入 `applyResponse()` 前把 endpoint/device token 换成 B，旧响应仍会更新 Phone 计划库、cursor、receipt、conflict 或命令结果，随后被错误归属到 B。
+- 根因：`CloudSyncCredentials.load/save` 虽由 class monitor 串行，但最终 `sameCredential()` 检查与全部本地副作用不在同一临界区，检查后到写入前仍有换凭据窗口。
+- 修复：`CloudSyncCredentials.runIfCurrent(...)` 在同一 class monitor 内复核 endpoint + device token generation，并在持锁期间完成 `applyResponse()` 及相关持久副作用；不匹配时丢弃旧响应并按新配置重建/重试，不写任何业务 state。
+- 防复发测试：`CloudV3SyncTest` 在最终复核与应用边界切换凭据，断言旧响应不能改变计划库、cursor、receipt、conflict、executed command 或 projection metadata；匹配凭据路径仍一次提交成功。
+- 验证：JVM 回归通过；正式旧 revision 4 证据发生在本修复前，不能作为关闭证据。
+
+### BUG-049：`watch_start_workout(planId)` 在 Phone→Watch 控制体中丢失目标计划
+
+- 状态：Fixed，待正式 Cloud→Phone→Watch 真机抽检
+- 严重度：P1
+- 影响：Watch 0.21.1 / Phone 0.23.0 Cloud V3 候选
+- 复现：Cloud 命令 `type=start` 的 `arguments.planId=B` 已正确进入 Phone，但 `CloudV3Sync.controlBody()` 未复制 planId；Watch 两个控制入口都直接加载当前选择 A 并启动，MCP 返回 RUNNING 却执行了错误计划。
+- 根因：通用 control body 只包含 commandId/expiresAt/expectedState/controlRevision，且 Watch `WatchCommandRouter` 与旧 `WatchBridgeService` start 路径没有按请求 planId 选择并解析目标 profile。
+- 修复：Phone 对 start 精确携带 `arguments.planId`；Watch 两个仍可达入口在副作用前从当前 library 验证并选择该 planId，以解析出的 profile/stages 启动，缺失目标返回 `plan_unavailable`，不得回退当前选择。命令 signature 包含 planId，重放只能命中同一目标。
+- 防复发测试：API-006/API-027 覆盖当前选择 A、请求 B 最终启动 B；不存在/已删除 planId 拒绝；同 commandId+B 重放不重复启动，复用 commandId+A 返回 409；BLE router 与 LAN legacy service 使用同一合同。
+- 验证：JVM 回归通过；待正式命令携带两个不同计划的真机回读确认后转 `Verified`。
 
 ## 2. 早期历史项
 

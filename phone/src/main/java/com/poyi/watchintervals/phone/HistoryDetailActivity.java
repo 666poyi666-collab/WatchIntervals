@@ -29,6 +29,9 @@ public class HistoryDetailActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().setStatusBarColor(Palette.BG);
+        getWindow().setNavigationBarColor(Palette.BG);
+        if(android.os.Build.VERSION.SDK_INT>=29)getWindow().setNavigationBarDividerColor(Palette.BG);
         Configuration.getInstance().load(this,getSharedPreferences("osmdroid",MODE_PRIVATE));
         Configuration.getInstance().setUserAgentValue(getPackageName());
         JSONObject record;
@@ -36,16 +39,21 @@ public class HistoryDetailActivity extends Activity {
 
         ScrollView scroll=new ScrollView(this); scroll.setBackgroundColor(Palette.BG);
         LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(18),dp(18),dp(18),dp(28)); scroll.addView(root);
-        TextView back=text("‹  运动记录",26,true,Palette.TEXT); back.setOnClickListener(v->finish()); root.addView(back,new LinearLayout.LayoutParams(-1,dp(54)));
+        LinearLayout back=new LinearLayout(this);back.setGravity(Gravity.CENTER_VERTICAL);back.setClickable(true);back.setFocusable(true);back.setContentDescription("返回运动记录");
+        PhoneSymbolView backIcon=new PhoneSymbolView(this,PhoneSymbol.BACK);backIcon.setTint(Palette.MOVE);back.addView(backIcon,new LinearLayout.LayoutParams(dp(28),dp(28)));
+        TextView backLabel=text("运动记录",24,true,Palette.TEXT);LinearLayout.LayoutParams backLabelParams=new LinearLayout.LayoutParams(-2,-1);backLabelParams.leftMargin=dp(4);back.addView(backLabel,backLabelParams);
+        back.setOnClickListener(v->finish());root.addView(back,new LinearLayout.LayoutParams(-1,dp(54)));
         root.addView(text(new SimpleDateFormat("yyyy年MM月dd日  HH:mm",Locale.CHINA).format(new Date(record.optLong("startedAt"))),14,false,Palette.TEXT_DIM));
 
-        FrameLayout mapShell=new FrameLayout(this); mapShell.setBackground(round(Palette.CARD,18));
+        FrameLayout mapShell=new FrameLayout(this); mapShell.setBackground(round(Palette.CARD,18));mapShell.setClipToOutline(true);
         map=new MapView(this); map.setTileSource(new AmapTileSource()); map.setMinZoomLevel(4d); map.setMaxZoomLevel(18d); map.setMultiTouchControls(true); map.setTilesScaledToDpi(true); map.getZoomController().setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER);
         mapShell.addView(map,new FrameLayout.LayoutParams(-1,-1));
         JSONArray route=record.optJSONArray("route"); ArrayList<GeoPoint> points=points(route);
         if(points.isEmpty()){
             map.setVisibility(android.view.View.GONE);
-            TextView empty=text("⌖\n本次训练未记录定位轨迹",15,true,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setLineSpacing(dp(8),1f);
+            LinearLayout empty=new LinearLayout(this);empty.setOrientation(LinearLayout.VERTICAL);empty.setGravity(Gravity.CENTER);empty.setContentDescription("本次训练未记录定位轨迹");
+            PhoneSymbolView location=new PhoneSymbolView(this,PhoneSymbol.LOCATION);location.setTint(Palette.TEXT_DIM);empty.addView(location,new LinearLayout.LayoutParams(dp(30),dp(30)));
+            TextView emptyLabel=text("本次训练未记录定位轨迹",15,true,Palette.TEXT_DIM);emptyLabel.setGravity(Gravity.CENTER);LinearLayout.LayoutParams emptyLabelParams=new LinearLayout.LayoutParams(-2,-2);emptyLabelParams.topMargin=dp(8);empty.addView(emptyLabel,emptyLabelParams);
             mapShell.addView(empty,new FrameLayout.LayoutParams(-1,-1));
         }else{
             Polyline line=new Polyline();line.setPoints(points);line.getOutlinePaint().setColor(Color.rgb(139,221,48));line.getOutlinePaint().setStrokeWidth(dp(6));map.getOverlays().add(line);

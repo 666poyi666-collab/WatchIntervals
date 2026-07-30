@@ -31,7 +31,8 @@ final class PhoneSyncOutbox {
     static synchronized JSONObject enqueueLibrary(Context context, JSONObject library,
                                                    String operation, String entityId,
                                                    String cloudSourceId) throws Exception {
-        JSONObject desired = buildLibraryOperation(library, operation, entityId, cloudSourceId);
+        JSONObject desired = buildLibraryOperation(library, operation, entityId, cloudSourceId,
+                projectionTargetId(context));
         JSONArray old = load(context);
         String lastAck = lastAck(context);
         JSONArray reconciled = reconcileOperations(old, desired, lastAck);
@@ -54,7 +55,7 @@ final class PhoneSyncOutbox {
         }
         JSONObject desired = buildLibraryOperation(library,
                 metadata.optString("operation", "upsert"), "library",
-                metadata.optString("cloudSourceId"));
+                metadata.optString("cloudSourceId"), projectionTargetId(context));
         JSONArray reconciled = reconcileOperations(old, desired,
                 lastAck(context));
         if (!reconciled.toString().equals(old.toString())) save(context, reconciled, null);
@@ -140,9 +141,18 @@ final class PhoneSyncOutbox {
     static JSONObject buildLibraryOperation(JSONObject library, String operation,
                                             String entityId, String cloudSourceId)
             throws Exception {
+        return buildLibraryOperation(library, operation, entityId, cloudSourceId, "");
+    }
+
+    static JSONObject buildLibraryOperation(JSONObject library, String operation,
+                                            String entityId, String cloudSourceId,
+                                            String projectionTargetId)
+            throws Exception {
         String normalizedOperation = operation == null || operation.isEmpty() ? "upsert" : operation;
         String normalizedSource = cloudSourceId == null ? "" : cloudSourceId;
-        String fingerprint = projectionFingerprint(library, normalizedOperation, normalizedSource);
+        String normalizedTarget = projectionTargetId == null ? "" : projectionTargetId;
+        String fingerprint = projectionFingerprint(library, normalizedOperation, normalizedSource,
+                normalizedTarget);
         // A matching pending item keeps its ID in reconcileOperations(). A newly enqueued
         // A->B->A snapshot needs a fresh ID because the Watch remembers the first A forever.
         String operationId = UUID.randomUUID().toString();
@@ -155,6 +165,7 @@ final class PhoneSyncOutbox {
                 .put("projectionFingerprint", fingerprint)
                 .put("payload", new JSONObject(library.toString()));
         if (!normalizedSource.isEmpty()) item.put("cloudSourceId", normalizedSource);
+        if (!normalizedTarget.isEmpty()) item.put("projectionTargetId", normalizedTarget);
         return item;
     }
 
@@ -162,6 +173,7 @@ final class PhoneSyncOutbox {
             throws Exception {
         JSONArray values = new JSONArray();
         JSONObject matching = null;
+        boolean hasDifferentPendingSnapshot = false;
         String desiredFingerprint = desired.optString("projectionFingerprint");
         for (int index = 0; index < old.length(); index++) {
             JSONObject pending = old.optJSONObject(index);
@@ -173,9 +185,14 @@ final class PhoneSyncOutbox {
             if (desiredFingerprint.equals(operationFingerprint(pending))) {
                 matching = new JSONObject(pending.toString())
                         .put("projectionFingerprint", desiredFingerprint);
+            } else {
+                hasDifferentPendingSnapshot = true;
             }
         }
-        if (!desiredFingerprint.equals(lastAck)) {
+        // A historic receipt only proves that this snapshot was applied before the currently
+        // pending snapshot. If B may already have reached the Watch, A -> B -> A must enqueue a
+        // fresh A operation even when the last acknowledged fingerprint is the first A.
+        if (hasDifferentPendingSnapshot || !desiredFingerprint.equals(lastAck)) {
             values.put(matching == null ? new JSONObject(desired.toString()) : matching);
         }
         return values;
@@ -190,7 +207,8 @@ final class PhoneSyncOutbox {
                     || !"plan_library".equals(item.optString("entityType"))
                     || item.optString("entityId").isEmpty()
                     || !("upsert".equals(item.optString("operation"))
-                    || "cloud_replace".equals(item.optString("operation")))
+                    || "cloud_replace".equals(item.optString("operation"))
+                    || "delete".equals(item.optString("operation")))
                     || item.optJSONObject("payload") == null
                     || item.optJSONObject("payload").optJSONArray("groups") == null
                     || item.optJSONObject("payload").optJSONArray("plans") == null) {
@@ -208,9 +226,13 @@ final class PhoneSyncOutbox {
             JSONObject payload = item == null ? null : item.optJSONObject("payload");
             String operation = item == null ? "" : item.optString("operation");
             if (payload == null || !("upsert".equals(operation)
-                    || "cloud_replace".equals(operation))
+                    || "cloud_replace".equals(operation)
+                    || "delete".equals(operation))
                     || !currentFingerprint.equals(CloudV3Sync.planFingerprint(payload))) continue;
-            return new JSONObject().put("operation", operation)
+            // Older Phone builds wrote desired-state library deletions as an unsupported
+            // operation kind. Preserve the journal long enough to migrate it, then reconcile it
+            // to a normal complete-library upsert with a fresh operation id.
+            return new JSONObject().put("operation", "delete".equals(operation) ? "upsert" : operation)
                     .put("cloudSourceId", item.optString("cloudSourceId"));
         }
         return null;
@@ -222,8 +244,10 @@ final class PhoneSyncOutbox {
     }
 
     private static String projectionFingerprint(JSONObject library, String operation,
-                                                String cloudSourceId) throws Exception {
-        return operation + "|" + cloudSourceId + "|" + CloudV3Sync.planFingerprint(library);
+                                                String cloudSourceId,
+                                                String projectionTargetId) throws Exception {
+        return operation + "|" + cloudSourceId + "|" + projectionTargetId + "|"
+                + CloudV3Sync.planFingerprint(library);
     }
 
     private static String operationFingerprint(JSONObject operation) {
@@ -233,7 +257,8 @@ final class PhoneSyncOutbox {
         if (payload == null) return "";
         try {
             return projectionFingerprint(payload, operation.optString("operation", "upsert"),
-                    operation.optString("cloudSourceId"));
+                    operation.optString("cloudSourceId"),
+                    operation.optString("projectionTargetId"));
         } catch (Exception invalid) {
             return "";
         }
@@ -266,14 +291,22 @@ final class PhoneSyncOutbox {
     }
 
     private static String receiptKey(Context context) {
-        WatchIdentityStore identity = new WatchIdentityStore(context.getApplicationContext());
-        return receiptKeyForTarget(identity.watchDeviceId(), identity.pairingSecret());
+        return LAST_ACK_PREFIX + projectionTargetId(context);
     }
 
     static String receiptKeyForTarget(String watchDeviceId, String pairingSecret) {
+        return LAST_ACK_PREFIX + projectionTargetId(watchDeviceId, pairingSecret);
+    }
+
+    private static String projectionTargetId(Context context) {
+        WatchIdentityStore identity = new WatchIdentityStore(context.getApplicationContext());
+        return projectionTargetId(identity.watchDeviceId(), identity.pairingSecret());
+    }
+
+    static String projectionTargetId(String watchDeviceId, String pairingSecret) {
         String watch = watchDeviceId == null ? "" : watchDeviceId;
         String secret = pairingSecret == null ? "" : pairingSecret;
-        if (watch.isEmpty() || secret.isEmpty()) return LAST_ACK_PREFIX + "unpaired";
+        if (watch.isEmpty() || secret.isEmpty()) return "unpaired";
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(
                     (watch + "\0" + secret).getBytes(StandardCharsets.UTF_8));
@@ -281,7 +314,7 @@ final class PhoneSyncOutbox {
             for (int index = 0; index < 12; index++) {
                 value.append(String.format(java.util.Locale.ROOT, "%02x", digest[index] & 0xff));
             }
-            return LAST_ACK_PREFIX + value;
+            return value.toString();
         } catch (Exception unavailable) {
             throw new IllegalStateException("projection_target_fingerprint_failed", unavailable);
         }
