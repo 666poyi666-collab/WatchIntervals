@@ -107,7 +107,7 @@ final class CloudV3Sync {
                                                  boolean includeLiveStatus) {
         if (!CloudSyncCredentials.readyForCloudV3(context)) return SyncOutcome.PERMANENT_FAILURE;
         CloudSyncCredentials.Config config = CloudSyncCredentials.load(context);
-        JSONObject state = loadState(context, config.deviceId());
+        JSONObject state = loadState(context, config);
         try {
             boolean normalizedSleep = normalizePendingSleepOutbox(state);
             boolean prunedSleepConflicts = pruneResolvedLocalSleepConflicts(state);
@@ -122,16 +122,27 @@ final class CloudV3Sync {
             int cursorResets = 0;
             for (int round = 0; round < 2; round++) {
                 JSONObject active = state.optJSONObject("activeRequest");
+                if (active != null && !activeMatchesCredential(active, config)) {
+                    state.remove("activeRequest");
+                    saveState(context, state);
+                    active = null;
+                    collectBeforeBuild = collectDeviceData;
+                }
                 if (active == null) {
                     if (collectBeforeBuild) collectOutbox(context, state);
                     JSONObject request = buildRequest(context, config, state,
                             includeLiveStatus && round == 0);
-                    active = buildActiveRequest(context, state, request);
+                    active = buildActiveRequest(context, state, request, config);
                     state.put("activeRequest", active);
                     saveState(context, state);
                 }
                 JSONObject request = active.getJSONObject("body");
                 HttpResult result = exchange(config, request);
+                if (!sameCredential(config, CloudSyncCredentials.load(context))) {
+                    state.remove("activeRequest");
+                    saveState(context, state);
+                    return SyncOutcome.TRANSIENT_FAILURE;
+                }
                 recordDiagnostic(context, result.status, responseErrorCode(result.status, result.body));
                 if (applyCursorReset(state, result.status, result.body) && cursorResets++ == 0) {
                     saveState(context, state);
@@ -144,10 +155,12 @@ final class CloudV3Sync {
                 }
                 if (result.status < 200 || result.status >= 300) return SyncOutcome.TRANSIENT_FAILURE;
                 JSONObject response = new JSONObject(result.body);
-                if (containsForbidden(response) || response.optInt("protocolVersion") != 3) {
+                if (containsForbidden(response) || response.optInt("protocolVersion") != 3
+                        || (response.has("revisionDomainId")
+                        && !validRevisionDomain(response.optString("revisionDomainId")))) {
                     return SyncOutcome.PERMANENT_FAILURE;
                 }
-                applyResponse(context, state, active, response);
+                applyResponse(context, state, active, response, config);
                 state.remove("activeRequest");
                 state.put("firstSuccessfulExchangeAt",
                         state.optLong("firstSuccessfulExchangeAt", 0L) == 0L
@@ -206,7 +219,7 @@ final class CloudV3Sync {
                 .put("payload", payload));
     }
 
-    private static JSONObject cloudPlanLibrary(JSONObject local) throws Exception {
+    static JSONObject cloudPlanLibrary(JSONObject local) throws Exception {
         JSONArray groups = new JSONArray();
         JSONArray localGroups = local.optJSONArray("groups");
         if (localGroups != null) for (int i = 0; i < localGroups.length(); i++) {
@@ -226,7 +239,7 @@ final class CloudV3Sync {
                     .put("groupId", value.optString("groupId").isEmpty()
                             ? JSONObject.NULL : value.optString("groupId"))
                     .put("requirement", value.optString("requirement"))
-                    .put("sortOrder", i)
+                    .put("sortOrder", Math.max(0, value.optInt("sortOrder", i)))
                     .put("stages", new JSONArray(value.getJSONArray("stages").toString())));
         }
         String selected = local.optString("selectedPlanId");
@@ -402,9 +415,11 @@ final class CloudV3Sync {
     }
 
     private static JSONObject buildActiveRequest(Context context, JSONObject state,
-                                                 JSONObject request) throws Exception {
+                                                 JSONObject request,
+                                                 CloudSyncCredentials.Config config) throws Exception {
         JSONObject active = new JSONObject().put("body", request)
-                .put("cloudPlanRevisionAtBuild", state.optLong("cloudPlanRevision", 0L));
+                .put("cloudPlanRevisionAtBuild", state.optLong("cloudPlanRevision", 0L))
+                .put("credentialFingerprint", credentialFingerprint(config));
         JSONArray planChanges = request.getJSONArray("planChanges");
         if (planChanges.length() > 0) {
             String operationId = planChanges.getJSONObject(0).optString("operationId");
@@ -471,27 +486,33 @@ final class CloudV3Sync {
     }
 
     private static void applyResponse(Context context, JSONObject state, JSONObject active,
-                                       JSONObject response) throws Exception {
+                                      JSONObject response,
+                                      CloudSyncCredentials.Config config) throws Exception {
         applyAcknowledgements(state, response);
         state.put("cursor", response.opt("nextCursor"));
 
         JSONObject cloudLibrary = response.optJSONObject("planLibrary");
         if (cloudLibrary != null) {
             long revision = cloudLibrary.optLong("revision");
-            JSONObject current = PhonePlanLibrary.load(context);
+            String revisionDomain = revisionDomainId(response, config);
+            String cloudFingerprint = cloudPlanFingerprint(cloudLibrary);
             String planOutcome = planOutcome(active.getJSONObject("body"), response);
             long previousCloudRevision = active.optLong("cloudPlanRevisionAtBuild", -1L);
             state.put("cloudPlanRevision", revision);
-            if (shouldApplyCloudPlan(active, current)) {
-                JSONObject saved = PhonePlanLibrary.applyCloudV3(context, cloudLibrary);
+            PhonePlanLibrary.CloudApplyResult applied = PhonePlanLibrary.applyCloudV3IfUnchanged(
+                    context, cloudLibrary, revisionDomain, cloudFingerprint,
+                    active.optLong("planLocalRevision", Long.MIN_VALUE),
+                    active.optString("planLocalFingerprint"));
+            if (applied != null) {
+                JSONObject saved = applied.library;
                 state.put("lastPlanLocalRevision", saved.optLong("revision"))
                         .remove("planUploadBlockedRevision");
-                try {
-                    PhoneSyncOutbox.enqueueLibrary(context, saved, "cloud_replace", "library");
-                    PhoneSyncOutbox.drain(context, WatchConnectionManager.get(context));
-                } catch (Exception offline) { /* Existing secure BLE outbox remains pending. */ }
+                // Projection metadata is committed with the Phone snapshot. The independent
+                // worker rebuilds a missing journal and never blocks pending cloud commands.
+                PhonePlanProjectionWorker.schedule(context);
             } else if ("conflict".equals(planOutcome)
                     || (planOutcome.isEmpty() && previousCloudRevision != revision)) {
+                JSONObject current = PhonePlanLibrary.load(context);
                 state.put("planUploadBlockedRevision", current.optLong("revision"));
             }
         }
@@ -663,7 +684,9 @@ final class CloudV3Sync {
                 String planId = command.getJSONObject("arguments").optString("planId");
                 JSONObject selected = PhonePlanLibrary.selectFromCloud(context, planId);
                 PhoneSyncOutbox.enqueueLibrary(context, selected, "upsert", "library");
-                PhoneSyncOutbox.drain(context, watch);
+                PhonePlanProjectionWorker.schedule(context);
+                watch.requestBlocking("PUT", "/v1/plan-selection",
+                        new JSONObject().put("planId", planId).toString(), 5_000L);
                 return commandResult(id, "succeeded", "SELECTED",
                         command.optLong("controlRevision"), null);
             }
@@ -747,6 +770,63 @@ final class CloudV3Sync {
         return new URI(scheme, uri.getAuthority(), "/sync/v3/channel", null, null).toString();
     }
 
+    static String revisionDomainId(JSONObject response, CloudSyncCredentials.Config config)
+            throws Exception {
+        String advertised = response == null ? "" : response.optString("revisionDomainId");
+        if (!advertised.isEmpty()) {
+            if (!validRevisionDomain(advertised)) {
+                throw new IllegalArgumentException("invalid_revision_domain");
+            }
+            return advertised;
+        }
+        // Additive protocol compatibility for an in-flight response from a pre-domain Worker.
+        return legacyCloudSourceId(config);
+    }
+
+    static boolean validRevisionDomain(String value) {
+        return value != null && value.matches("^v3d\\.[A-Za-z0-9_-]{8,64}$");
+    }
+
+    /** Legacy per-device source used only while upgrading an older Worker response. */
+    static String legacyCloudSourceId(CloudSyncCredentials.Config config) throws Exception {
+        String deviceId = config == null ? "" : config.deviceId();
+        if (deviceId.isEmpty()) return "";
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+                ("watch-cloud-v3-source\0" + deviceId).getBytes(StandardCharsets.UTF_8));
+        StringBuilder value = new StringBuilder(16);
+        for (int index = 0; index < 8; index++) value.append(String.format(java.util.Locale.ROOT, "%02x", digest[index] & 0xff));
+        return "legacy." + value;
+    }
+
+    static String credentialFingerprint(CloudSyncCredentials.Config config) throws Exception {
+        if (config == null) return "";
+        return sha256(config.endpoint + "\0" + config.deviceToken);
+    }
+
+    static String configBindingId(CloudSyncCredentials.Config config) throws Exception {
+        if (config == null) return "";
+        return sha256(config.endpoint + "\0" + config.deviceId()).substring(0, 24);
+    }
+
+    static boolean sameCredential(CloudSyncCredentials.Config first,
+                                  CloudSyncCredentials.Config second) {
+        return first != null && second != null
+                && first.endpoint.equals(second.endpoint)
+                && first.deviceToken.equals(second.deviceToken);
+    }
+
+    static boolean activeMatchesCredential(JSONObject active,
+                                           CloudSyncCredentials.Config config) throws Exception {
+        return active != null && active.has("credentialFingerprint")
+                && credentialFingerprint(config).equals(
+                active.optString("credentialFingerprint"));
+    }
+
+    static String cloudPlanFingerprint(JSONObject cloudLibrary) throws Exception {
+        if (cloudLibrary == null) return "";
+        return sha256(canonical(cloudPlanLibrary(cloudLibrary)));
+    }
+
     private static String readBounded(InputStream input) throws Exception {
         if (input == null) return "";
         try (InputStream stream = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -791,15 +871,19 @@ final class CloudV3Sync {
                 .apply();
     }
 
-    private static JSONObject loadState(Context context, String deviceId) {
+    private static JSONObject loadState(Context context, CloudSyncCredentials.Config config) {
         SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String encoded = preferences.getString(STATE, "{}");
         try {
             JSONObject previous = new JSONObject(encoded);
-            JSONObject value = bindStateToDevice(previous, deviceId);
+            JSONObject value = bindStateToConfig(previous, config.deviceId(),
+                    configBindingId(config));
             if (value != previous && encoded != null && !"{}".equals(encoded)) {
-                preferences.edit().putString(STATE_BACKUP_PREFIX + System.currentTimeMillis(), encoded)
-                        .remove(STATE).commit();
+                if (!preferences.edit().putString(
+                        STATE_BACKUP_PREFIX + System.currentTimeMillis(), encoded)
+                        .remove(STATE).commit()) {
+                    throw new IllegalStateException("v3_state_rebind_backup_failed");
+                }
             }
             if (!value.has("cursor")) value.put("cursor", JSONObject.NULL);
             if (!(value.opt("outbox") instanceof JSONArray)) value.put("outbox", new JSONArray());
@@ -809,10 +893,23 @@ final class CloudV3Sync {
             if (!(value.opt("executedCommands") instanceof JSONObject)) value.put("executedCommands", new JSONObject());
             if (!(value.opt("conflicts") instanceof JSONArray)) value.put("conflicts", new JSONArray());
             return value;
+        } catch (IllegalStateException persistenceFailure) {
+            if ("v3_state_rebind_backup_failed".equals(persistenceFailure.getMessage())) {
+                throw persistenceFailure;
+            }
+            throw persistenceFailure;
         } catch (Exception corrupted) {
+            if (encoded != null && !encoded.isEmpty() && !"{}".equals(encoded)
+                    && !preferences.edit().putString(
+                    STATE_BACKUP_PREFIX + "corrupt_" + System.currentTimeMillis(), encoded)
+                    .remove(STATE).commit()) {
+                throw new IllegalStateException("v3_state_corrupt_backup_failed", corrupted);
+            }
             JSONObject value = new JSONObject();
             try {
-                value.put("deviceId", deviceId).put("cursor", JSONObject.NULL)
+                value.put("deviceId", config.deviceId())
+                        .put("configBindingId", configBindingId(config))
+                        .put("cursor", JSONObject.NULL)
                         .put("outbox", new JSONArray())
                         .put("commandResults", new JSONArray()).put("workoutReceipts", new JSONObject())
                         .put("sleepReceipts", new JSONObject()).put("executedCommands", new JSONObject())
@@ -834,6 +931,19 @@ final class CloudV3Sync {
         }
         state.put("deviceId", deviceId);
         return state;
+    }
+
+    static JSONObject bindStateToConfig(JSONObject state, String deviceId,
+                                        String configBindingId) throws Exception {
+        JSONObject bound = bindStateToDevice(state, deviceId);
+        if (bound != state) return bound.put("configBindingId", configBindingId);
+        String existing = bound.optString("configBindingId");
+        if (!existing.isEmpty() && !existing.equals(configBindingId)) {
+            return new JSONObject().put("deviceId", deviceId)
+                    .put("configBindingId", configBindingId);
+        }
+        bound.put("configBindingId", configBindingId);
+        return bound;
     }
 
     private static void saveState(Context context, JSONObject state) {

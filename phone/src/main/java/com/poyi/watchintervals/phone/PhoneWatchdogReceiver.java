@@ -11,5 +11,6 @@ public final class PhoneWatchdogReceiver extends BroadcastReceiver {
         PhoneBootReceiver.startServices(context);
         PhoneBootReceiver.schedule(context);
         EncryptedWatchSyncWorker.schedule(context.getApplicationContext());
+        PhonePlanProjectionWorker.schedule(context.getApplicationContext());
     }
 }

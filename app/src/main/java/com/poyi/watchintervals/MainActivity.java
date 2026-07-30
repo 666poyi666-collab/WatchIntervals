@@ -162,7 +162,16 @@ public class MainActivity extends Activity {
     }
 
     private void updatePlanPreview() {
-        if (planLine == null || stages == null || stages.isEmpty()) return;
+        if (planLine == null || stages == null) return;
+        if (stages.isEmpty()) {
+            planLine.setText("暂无训练计划");
+            planSummary.setText("0 项训练内容");
+            workout.setText(PlanStore.name(this));
+            activityTitle.setText("请先添加计划");
+            planDetails.setText(PlanStore.requirement(this));
+            ready.setText(PlanStore.group(this));
+            return;
+        }
         updateClock();
         Stage first = stages.get(0);
         String line = first.name() + " " + first.targetText();
@@ -189,12 +198,18 @@ public class MainActivity extends Activity {
 
     private void updateSessionCallToAction() {
         boolean recoverable = WorkoutService.hasRecoverableSession(this);
-        ready.setText(recoverable ? "上次训练可继续" : PlanStore.group(this) + " · 已就绪");
-        ready.setTextColor(recoverable ? Ui.YELLOW : Ui.LIME);
+        boolean hasPlan = stages != null && !stages.isEmpty();
+        ready.setText(recoverable ? "上次训练可继续"
+                : hasPlan ? PlanStore.group(this) + " · 已就绪" : PlanStore.group(this));
+        ready.setTextColor(recoverable ? Ui.YELLOW : hasPlan ? Ui.LIME : Ui.MUTED);
         workout.setText(recoverable ? "继续上次训练" : PlanStore.name(this));
-        activityTitle.setText(recoverable ? "间歇训练" : activityTitle(stages));
-        start.setText(recoverable ? "继续" : "开始");
-        start.setContentDescription(recoverable ? "继续上次训练" : "开始训练");
+        activityTitle.setText(recoverable ? "间歇训练"
+                : hasPlan ? activityTitle(stages) : "请先添加计划");
+        start.setText(recoverable ? "继续" : hasPlan ? "开始" : "不可用");
+        start.setContentDescription(recoverable ? "继续上次训练"
+                : hasPlan ? "开始训练" : "当前没有训练计划");
+        start.setEnabled(recoverable || hasPlan);
+        start.setAlpha(recoverable || hasPlan ? 1f : 0.45f);
     }
 
     private void updateSensorStatus() {
@@ -231,6 +246,11 @@ public class MainActivity extends Activity {
     }
 
     private void requestAndStart() {
+        if (!WorkoutService.hasRecoverableSession(this)
+                && (stages == null || stages.isEmpty())) {
+            Toast.makeText(this, "请先在手机或云端添加训练计划", Toast.LENGTH_LONG).show();
+            return;
+        }
         ArrayList<String> missing = new ArrayList<>();
         if (needsLocation() && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
         if (hasHeartSensor() && checkSelfPermission(Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.BODY_SENSORS);
@@ -286,6 +306,10 @@ public class MainActivity extends Activity {
             startForegroundService(new Intent(this, WorkoutService.class).setAction(WorkoutService.ACTION_START));
             startActivity(new Intent(this, TrainingActivity.class)
                     .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true));
+            return;
+        }
+        if (stages == null || stages.isEmpty()) {
+            Toast.makeText(this, "当前没有可开始的训练计划", Toast.LENGTH_LONG).show();
             return;
         }
         Intent intent = new Intent(this, WarmupActivity.class);

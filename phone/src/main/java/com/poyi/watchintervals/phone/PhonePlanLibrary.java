@@ -1,6 +1,7 @@
 package com.poyi.watchintervals.phone;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
@@ -12,7 +13,22 @@ import java.util.UUID;
 /** Canonical phone-side training plan library. */
 final class PhonePlanLibrary {
     private static final String PREF = "plan_library_v2", KEY = "snapshot";
+    private static final String PROJECTION_OPERATION = "watch_projection_operation";
+    private static final String PROJECTION_SOURCE = "watch_projection_source";
+    private static final String CLOUD_DOMAIN = "applied_cloud_revision_domain";
+    private static final String CLOUD_REVISION = "applied_cloud_revision";
+    private static final String CLOUD_FINGERPRINT = "applied_cloud_fingerprint";
     private static final int SCHEMA = 3;
+
+    static final class CloudApplyResult {
+        final JSONObject library;
+        final boolean changed;
+        CloudApplyResult(JSONObject library, boolean changed) {
+            this.library = library;
+            this.changed = changed;
+        }
+    }
+
     private PhonePlanLibrary() {}
 
     static synchronized JSONObject load(Context context) {
@@ -34,7 +50,9 @@ final class PhonePlanLibrary {
         try {
             JSONObject normalized = normalize(source);
             if (!context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, normalized.toString()).commit()) {
+                    .putString(KEY, normalized.toString())
+                    .putString(PROJECTION_OPERATION, "upsert")
+                    .remove(PROJECTION_SOURCE).commit()) {
                 throw new IllegalStateException("plan_library_commit_failed");
             }
             return normalized;
@@ -92,8 +110,80 @@ final class PhonePlanLibrary {
         JSONObject saved = save(context, library); CloudV3Sync.syncAsync(context); return saved;
     }
 
-    /** Applies the full cloud-authoritative V3 library without scheduling retired V2 sync. */
-    static synchronized JSONObject applyCloudV3(Context context, JSONObject cloud) throws Exception {
+    /**
+     * Atomically compares the local plan snapshot and applies a cloud-authoritative replacement.
+     * Returning {@code null} means a local edit won the HTTP race and must not be overwritten.
+     */
+    static synchronized CloudApplyResult applyCloudV3IfUnchanged(
+            Context context, JSONObject cloud, String revisionDomainId, String cloudFingerprint,
+            long expectedLocalRevision, String expectedLocalFingerprint) throws Exception {
+        JSONObject current = load(context);
+        String currentFingerprint = CloudV3Sync.planFingerprint(current);
+        if (current.optLong("revision", Long.MIN_VALUE) != expectedLocalRevision
+                || !currentFingerprint.equals(expectedLocalFingerprint)) return null;
+        SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        long revision = Math.max(1L, cloud.optLong("revision"));
+        boolean sameCloudSnapshot = cloudMetadataMatches(preferences.getString(CLOUD_DOMAIN, ""),
+                preferences.getLong(CLOUD_REVISION, -1L),
+                preferences.getString(CLOUD_FINGERPRINT, ""),
+                revisionDomainId, revision, cloudFingerprint, currentFingerprint);
+        boolean sameProjectionDomain = "cloud_replace".equals(
+                preferences.getString(PROJECTION_OPERATION, ""))
+                && revisionDomainId.equals(preferences.getString(PROJECTION_SOURCE, ""));
+        if (sameCloudSnapshot && sameProjectionDomain) {
+            return new CloudApplyResult(new JSONObject(current.toString()), false);
+        }
+        if (sameCloudSnapshot) {
+            if (!preferences.edit().putString(PROJECTION_OPERATION, "cloud_replace")
+                    .putString(PROJECTION_SOURCE, revisionDomainId).commit()) {
+                throw new IllegalStateException("cloud_projection_metadata_commit_failed");
+            }
+            return new CloudApplyResult(new JSONObject(current.toString()), true);
+        }
+        JSONObject local = cloudToLocal(cloud);
+        SharedPreferences.Editor editor = preferences.edit()
+                .putString(KEY, local.toString())
+                .putString(PROJECTION_OPERATION, "cloud_replace")
+                .putString(PROJECTION_SOURCE, revisionDomainId)
+                .putString(CLOUD_DOMAIN, revisionDomainId)
+                .putLong(CLOUD_REVISION, revision)
+                .putString(CLOUD_FINGERPRINT, cloudFingerprint);
+        if (!editor.commit()) throw new IllegalStateException("cloud_plan_commit_failed");
+        return new CloudApplyResult(local, true);
+    }
+
+    static boolean cloudMetadataMatches(String storedDomain, long storedRevision,
+                                        String storedFingerprint, String incomingDomain,
+                                        long incomingRevision, String incomingFingerprint,
+                                        String currentFingerprint) {
+        return incomingDomain != null && incomingDomain.equals(storedDomain)
+                && incomingRevision == storedRevision
+                && incomingFingerprint != null && incomingFingerprint.equals(storedFingerprint)
+                && incomingFingerprint.equals(currentFingerprint);
+    }
+
+    static synchronized JSONObject projectionMetadata(Context context) throws Exception {
+        SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        return new JSONObject()
+                .put("operation", preferences.getString(PROJECTION_OPERATION, "upsert"))
+                .put("cloudSourceId", preferences.getString(PROJECTION_SOURCE, ""))
+                .put("explicit", preferences.contains(PROJECTION_OPERATION));
+    }
+
+    static synchronized void restoreProjectionMetadata(Context context, String operation,
+                                                       String cloudSourceId) {
+        String normalizedOperation = "cloud_replace".equals(operation)
+                ? "cloud_replace" : "upsert";
+        String source = cloudSourceId == null ? "" : cloudSourceId;
+        SharedPreferences.Editor editor = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .edit().putString(PROJECTION_OPERATION, normalizedOperation);
+        if (source.isEmpty()) editor.remove(PROJECTION_SOURCE);
+        else editor.putString(PROJECTION_SOURCE, source);
+        if (!editor.commit()) throw new IllegalStateException(
+                "projection_metadata_migration_commit_failed");
+    }
+
+    private static JSONObject cloudToLocal(JSONObject cloud) throws Exception {
         JSONArray sourceGroups = cloud.optJSONArray("groups"), sourcePlans = cloud.optJSONArray("plans");
         if (sourceGroups == null || sourcePlans == null) throw new IllegalArgumentException("invalid_cloud_library");
         JSONArray groups = new JSONArray(sourceGroups.toString()), plans = new JSONArray();
@@ -110,7 +200,7 @@ final class PhonePlanLibrary {
                 .put("revision", Math.max(1, cloud.optLong("revision")))
                 .put("groups", groups).put("plans", plans).put("selectedPlanId", selected)
                 .put("deletedPlanIds", new JSONArray());
-        return save(context, local);
+        return normalize(local);
     }
 
     static synchronized JSONObject selectFromCloud(Context context, String id) throws Exception {
@@ -305,7 +395,10 @@ final class PhonePlanLibrary {
         if (sourcePlans != null) for (int i = 0; i < sourcePlans.length(); i++) {
             JSONObject plan = sourcePlans.optJSONObject(i); if (plan == null || plan.optString("name").trim().isEmpty()) continue;
             JSONArray stages = plan.optJSONArray("stages"); if (stages == null || stages.length() == 0) continue;
-            String groupId = plan.optString("groupId"); if (!groupIds.contains(groupId)) groupId = ensureGroup(groups, plan.optString("group", "我的计划"));
+            String groupId = plan.optString("groupId");
+            if (!groupId.isEmpty() && !groupIds.contains(groupId)) {
+                groupId = ensureGroup(groups, plan.optString("group", "我的计划"));
+            }
             String id = plan.optString("id");
             if (id.isEmpty()) id = UUID.randomUUID().toString();
             else if (EncryptedWatchSync.PLAN_LIBRARY_ENTITY_ID.equals(id)) {
@@ -316,7 +409,10 @@ final class PhonePlanLibrary {
             plans.put(normalizedPlan.put("id", id).put("groupId", groupId)
                     .put("updatedAt", plan.optLong("updatedAt", System.currentTimeMillis())).put("revision", Math.max(1, plan.optLong("revision", 1))));
         }
-        String selected = source.optString("selectedPlanId"); if (!planIds.contains(selected) && plans.length() > 0) selected = plans.getJSONObject(0).optString("id");
+        String selected = source.optString("selectedPlanId");
+        if (!selected.isEmpty() && !planIds.contains(selected) && plans.length() > 0) {
+            selected = plans.getJSONObject(0).optString("id");
+        }
         JSONArray deletedPlanIds = new JSONArray();
         JSONArray sourceDeletes = source.optJSONArray("deletedPlanIds");
         Set<String> seenDeletes = new HashSet<>();

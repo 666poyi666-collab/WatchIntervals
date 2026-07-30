@@ -30,7 +30,7 @@
 | REQ-PLAN-003 | 内置“1 千米跑 + 200 米快走”计划 | 首次启动或计划损坏时可加载该默认计划 | 已实现 |
 | REQ-PLAN-004 | 提供法特莱克模板 | 2 分钟跑/1 分钟走，共 6 组 | 已实现 |
 | REQ-PLAN-005 | 计划包含名称、分组、训练要求和阶段列表 | 手机计划库保存后可再次编辑并同步 | 已实现 |
-| REQ-PLAN-006 | 云端计划库是多计划管理的主版本，手机保留离线缓存 | 首次 V3 只在空云端接受手机 bootstrap；此后 MCP 和手机写入均使用云端 revision，云端变化经手机同步手表 | staging 单设备通过，待多设备验收 |
+| REQ-PLAN-006 | 云端计划库是多计划管理的主版本，手机保留离线缓存 | 首次 V3 只在空云端接受手机 bootstrap；此后 MCP 和手机写入均使用云端 revision，云端变化经手机同步手表 | 正式单设备创建、自动到表和删除往返通过，待多设备验收 |
 
 ### 3.2 训练执行
 
@@ -74,23 +74,23 @@
 | REQ-HISTORY-003 | 支持查看详情、轨迹和删除记录 | 删除后列表与 API 都不再返回该记录 | 已实现 |
 | REQ-SYNC-001 | 手机自动发现同网手表 | 通过 `_watchintervals._tcp.` mDNS 发现 8765 端口 | 已实现 |
 | REQ-SYNC-002 | 使用六位码配对本地 API | 未提供正确 `X-Pairing-Code` 时返回 401 | 已实现 |
-| REQ-SYNC-003 | Cloud MCP 支持计划、统计、历史、睡眠和训练控制 | OAuth scope 按 `watch:read`、`watch:write`、`watch:control` 隔离；工具读取 D1 V3 真实数据，不依赖本地 MCP | staging 真数据与控制通过，待 ChatGPT 用户重绑 |
-| REQ-SYNC-004 | ChatGPT 使用 Watch 云端长效 MCP 通道 | 生产链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`；电脑关闭不影响读写和控制 | 本地实现，`supportsPcOff=false`，待三轮 PC-off |
-| REQ-SYNC-005 | Windows 本地发现仅作为迁移期兼容能力 | 手机 mDNS/8766 与 Windows MCP/Tunnel 不进入 V3 生产链路；Cloud MCP 验收后删除 | Deprecated，尚未执行卸载 |
-| REQ-SYNC-006 | 计划修改支持可靠 LAN 队列 | 手机先写持久 outbox，手表按 operationId 去重并 ACK，失败操作保留重试 | 已实现基础链路 |
+| REQ-SYNC-003 | Cloud MCP 支持计划、统计、历史、睡眠和训练控制 | OAuth scope 按 `watch:read`、`watch:write`、`watch:control` 隔离；工具读取 D1 V3 真实数据，不依赖本地 MCP | 正式 OAuth connector 已完成三 scope 授权、真实非空回读和训练删除 |
+| REQ-SYNC-004 | ChatGPT 使用 Watch 云端长效 MCP 通道 | 生产链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`；电脑关闭不影响读写和控制 | 正式链路已验证；PC 不属于运行时，剩余手机 Doze/重启恢复风险 |
+| REQ-SYNC-005 | Windows 本地发现仅作为迁移期兼容能力 | 手机 mDNS/8766 与 Windows MCP/Tunnel 不进入 V3 生产链路；在独立迁移清理批次卸载 | Deprecated，尚未执行卸载 |
+| REQ-SYNC-006 | 计划修改支持可靠 BLE/LAN 队列 | 云端计划先原子落手机缓存和可重建 journal；相同快照保持 operationId，手表持久去重并在全部写入成功后 ACK；ACK-loss、损坏 journal、空库、连接恢复和无互联网场景均可自动收敛 | 正式 MCP 创建/删除计划已完成云端→手机→手表真机往返；扩大故障路径自动化通过，待 Doze/重启故障注入 |
 | REQ-SYNC-007 | MCP 计划写入支持 revision 与请求幂等 | 手机 8766 写计划/选择计划接受 `requestId`、`expectedRevision`；重复请求返回首次结果，复用 ID 或旧 revision 返回 409，崩溃恢复不重复执行 | 已实现，待真机故障注入 |
 | REQ-SYNC-008 | 手机与手表以 BLE 作为主控制链路 | 手机 Central/GATT Client 自动连接手表 Peripheral/GATT Server；状态、控制、计划小增量和定位不依赖共同 Wi-Fi | 基础链路已实现，待完整门禁 |
 | REQ-SYNC-009 | BLE 与 LAN 共享业务路由并自动选择传输 | 控制、计划和定位优先 BLE；历史/睡眠可使用已验证 LAN 加速；LAN 失败回退 BLE | 已实现基础选择与路由 |
 | REQ-SYNC-010 | 蓝牙配对和会话具备应用层安全 | 首次一次性验证码、公钥交换和长期密钥；重连挑战响应；消息认证加密和防重放 | 已实现并通过真机重放验证 |
 | REQ-SYNC-011 | 手机在不依赖电脑的情况下同步只读云端快照 | Phone 0.21.1 的 `/sync/push` 快照链路曾通过关机等价测试；迁移后旧路由必须返回 410，旧 `SYNC_KEY` 不得升级为双向设备凭据 | 历史已实现，现已废弃 |
 | REQ-SYNC-012 | V2 端到端加密同步只保留迁移回退 | 0.22.x `/sync/v2/exchange` 源码和旧 state 在首次 V3 成功前保留；Phone 0.23.0 只启用 V3，不双写、不自动回退 | Superseded by V3 |
-| REQ-SYNC-013 | V3 设备凭据继续由 Android Keystore 包装 | Device token 不以明文 SharedPreferences 保存；业务数据不再做应用层 E2EE，不再依赖同步 root | 本地实现，待覆盖安装真机确认 |
-| REQ-SYNC-014 | V3 云同步具备后台恢复且不误删数据 | 持久 outbox/active request/cursor/receipt/conflict 同步；WorkManager 覆盖断网、Doze 和重启；cursor ahead 可重建请求；冲突保留双方候选 | 本地实现，自动化通过，待真机故障注入 |
-| REQ-SYNC-015 | 训练完成后由手表主动触发手机上云 | `history_changed` 只提示变化；手机读取不含坐标和逐点心率的 `/v1/history` summary，经 `/sync/v3/exchange` 上传；重连和周期任务补偿 | 本地实现，待手机/手表真机与 PC-off 验收 |
-| REQ-SYNC-016 | 云端永久保存允许的数据并由 MCP 精确回读 | 云端保存完整计划库、训练摘要/分段/平均最低最高心率和睡眠 record/session/stage/评分/血氧/心率/呼吸；原始轨迹、坐标和逐点心率仅在手表/手机 | staging 非空回读通过，待真实公里分段 |
-| REQ-SYNC-017 | Watch 产品提供统一 V3 authority observation | observation 的 revision/freshness/device state 只来自 V3 checkpoint/device/cursor；`supportsPcOff` 在真实三轮验收前固定 false | Worker 合同通过，待中央 authority/Gateway staging 验收 |
-| REQ-SYNC-018 | 云端是计划主版本 | 首次 V3 由手机现有库引导空云端；随后所有写入带 expected revision，旧 revision 冲突保留本地 candidate 与服务器库且不得自动覆盖 | staging 单设备到表通过，待多设备真机验收 |
-| REQ-SYNC-019 | 云端命令 10 秒内确认且离线不迟到执行 | WebSocket 只发送 `sync_needed`；Phone 轻量 exchange 拉命令，手表 ACK 后同次调用立即二次 exchange；离线保持 pending，30 秒过期后永不执行 | staging 在线/离线真机通过，待 PC-off 三轮 |
+| REQ-SYNC-013 | V3 设备凭据继续由 Android Keystore 包装 | Device token 不以明文 SharedPreferences 保存；业务数据不再做应用层 E2EE，不再依赖同步 root | 已覆盖安装并在正式 Phone exchange 验证 |
+| REQ-SYNC-014 | V3 云同步具备后台恢复且不误删数据 | Cloud 与 Watch projection 使用独立 Worker；active request 绑定精确 credential generation，endpoint/device authority 变化重置旧 cursor/request；outbox/cursor/receipt/conflict 持久化，cursor ahead 可重建且冲突保留双方 | 本地实现，自动化通过，待真机 Doze/重启故障注入 |
+| REQ-SYNC-015 | 训练完成后由手表主动触发手机上云 | `history_changed` 只提示变化；手机读取不含坐标和逐点心率的 `/v1/history` summary，经 `/sync/v3/exchange` 上传；重连和周期任务补偿 | 正式手表→手机→云端合成分段上行通过；待 Doze/重启补偿回归 |
+| REQ-SYNC-016 | 云端永久保存允许的数据并由 MCP 精确回读 | 云端保存完整计划库、训练摘要/分段/平均最低最高心率和睡眠 record/session/stage/评分/血氧/心率/呼吸；原始轨迹、坐标和逐点心率仅在手表/手机 | 正式 ChatGPT 精确回读 1.2 km/2 分段并完成 tombstone 清理；户外实跑只用于传感器真实性 |
+| REQ-SYNC-017 | Watch 产品提供统一 V3 authority observation | observation 的 revision/freshness/device state 只来自 V3 checkpoint/device/cursor；旧 `supportsPcOff` 标志不再作为核心云链路门禁 | 正式 Worker 的 storage/OAuth/authority 均 ready，ChatGPT 回读 `cloud_authoritative/fresh` |
+| REQ-SYNC-018 | 云端是计划主版本 | 首次 V3 由手机现有库引导空云端；随后所有写入带 expected revision；服务端返回 owner/library 级 `revisionDomainId`，多设备共享同一域，不同 authority 不混水位，旧 revision 只产生可审计 conflict | 正式单设备计划库已到表；owner-domain 自动化通过，待正式部署及多设备真机验收 |
+| REQ-SYNC-019 | 云端命令 10 秒内确认且离线不迟到执行 | WebSocket 只发送 `sync_needed`；Phone 轻量 exchange 拉命令，手表 ACK 后同次调用立即二次 exchange；离线保持 pending，30 秒过期后永不执行 | 正式训练删除已 ACK 并写 tombstone；四类控制/离线过期已有历史真机证据，待正式抽检 |
 
 ### 3.5 手表交互和适配
 
@@ -129,7 +129,7 @@
 - 当前目标设备为 OWW221，不承诺其他 Wear OS/Android 手表的布局和厂商健康接口兼容性。
 - BLE 已接入计划 outbox、训练控制和手机定位中继；安全配对、防重放、无共同 Wi-Fi/无线 ADB、5 分钟息屏、10 次重连、100 次请求和 15 分钟连续运行已通过真机验证。双端重启、蓝牙开关恢复、分页续传及非充电状态功耗仍待验证。
 - 厂商 HealthKit 能力由运行时探测决定；当前实机固件能力映射为空时走 GPS/步数链路。
-- 当前 APK 是 staging 候选，不等同于正式生产发布；V3 Worker/OAuth/migration 已部署且远端空数据合同通过，但没有 Phone receipt、实际 MCP 非空回读、在线手表 ACK 或 PC-off 三轮证据，不能标记 `supportsPcOff=true`。
+- 当前安装的是连接正式 Cloud V3 的 debug 候选包，不等同于正式签名发布 APK。正式 Worker/OAuth/migration、Phone receipt、ChatGPT 非空 MCP 回读、合成公里分段和删除 ACK 已通过；户外 GNSS/心率与手机 Doze/重启仍需真机回归。PC 不属于生产运行时。
 - 云同步包含完整计划库、训练摘要/分段/心率统计和睡眠明细；原始轨迹、坐标、逐点心率、设备凭据和诊断日志保持 local-only。
 - 应用是训练记录工具，不提供医疗判断。
 - 睡眠数据从公开 Store API 读取并按原始 record/session/stage 增量上传云端；暂时读取失败不得推断删除，OSA/血氧等字段只保存系统原值。

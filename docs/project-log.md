@@ -198,11 +198,12 @@
 ```markdown
 ## YYYY-MM-DD：主题
 - 目标/关联：REQ-*、BUG-*
-- 改动：
+- 改动与影响文件：
 - 决策及原因：
+- Bug 闭环：发现、复现、根因、修复、防复发测试；无则写“未发现新 Bug”
 - 验证：命令、设备、用例、结果
 - 产物：提交、APK、SHA-256、截图索引
-- 遗留：新建或更新 BUG-*
+- 外部阻断：仅记录已举证且当前工作区无法解决的条件、影响和唯一关闭条件；无则写“无”
 ```
 
 ### 2026-07-26 12:32:53 +08:00 Watch MCP 写工具参数兼容
@@ -341,7 +342,7 @@
 
 ## 2026-07-26：小米真机验证与定位中继启动崩溃修复（BUG-028）
 
-- 设备恢复：OWW221 经 USB 重新武装网络 ADB（watch-link 脚本，192.168.1.44:5555）；伴侣端换用小米 22041216C（xaga、targetSDK 35 门禁更严），替代此前的华为平板。
+- 设备恢复：OWW221 经 USB 使用 `watch-link` 脚本重新武装网络 ADB；伴侣端换用小米 22041216C（xaga、targetSDK 35 门禁更严），替代此前的华为平板。精确局域网地址不进入长期文档。
 - 首装即抓到 P1：应用启动后前台被其他应用抢占，同步成功回调迟到触发 `ensureLocationRelay` → location 类型 FGS 后台启动被系统拒绝 → `PhoneLocationRelayService.onCreate` 的 `startForeground` 抛 SecurityException，进程 FATAL。华为平板此前未复现（权限已授予且回调到达时仍在前台）。
 - 修复：Activity `foreground` 标记门禁 + `startForegroundService` 兜底；服务侧 `startForeground` try/catch 后 `stopSelf()`。下次前台同步自动重试，不再带崩进程。
 - 小米真机核对（截图 verify-0200-phone-*.png，临时文件不入库）：启动稳定驻留前台、`AndroidRuntime:E` 清零；「已完成安全配对 · 蓝牙连接 · LAN 加速」；历史 13 条读回，列表行与详情「时间与速度」卡两列排版正确（标签左、加粗值右）；睡眠 8 条，人读时长「5小时15分/深睡 1小时8分/30分/24分」各形态正确（BUG-027 视觉确认）。
@@ -551,6 +552,39 @@
 - 真机在线控制 start/pause/resume/stop 分别为 6412/7394/7213/9199 ms。手机进程停止时 start 命令先 pending、30 秒后 expired；保留 expired 行再恢复 exchange，命令从未 delivered、无 result，Watch 保持 STOPPED，测试命令随后清理。
 - Cloud MCP 临时计划首次到 Phone 后，Watch 因迁移前时间戳 revision 大于 Cloud revision 6 而返回 conflict。新增 `cloud_replace` revision 域和 Watch 单独 cloud 水位，统一 BLE/LAN 同一应用函数；定向单测与真机迁移通过。第二轮 Cloud MCP 计划在 Phone/Watch 双端均命中，安全 outbox pending 归零，删除后两端及云端均精确回滚。
 - 24 条成功睡眠对应的旧 `local_schema_invalid` candidate 已按 receipt 清理为 0；真实 V3 state 不再长期保留重复大对象。完整 Android 双模块 unit/Lint/debug/release、Worker 59 项、OAuth 41 项、TypeScript typecheck 全绿。
-- 仍未完成真实公里分段、用户 ChatGPT connector 重绑、Doze/手机重启、三轮 PC-off、生产发布和本地服务卸载。BUG-041 保持 Open，`supportsPcOff=false`。
+- 当时仍未完成真实公里分段、用户 ChatGPT connector 重绑、Doze/手机重启、三轮 PC-off、生产发布和本地服务卸载。BUG-041 保持 Open，`supportsPcOff=false`；connector 缺口由后续同日验收关闭。
 - 本轮候选产物 SHA-256：Watch debug `2FF2D11E0E85EA835E611897B60162EC9063479D6D9E1C0A818476031F143EDB`、Watch release unsigned `41E1551C680AE4F24439DF05CF0C905196D5594369A0B5CE1598EE652847A757`、Phone debug `38B24D137889D541A14E595D88432C49CA8D6453A055F7970550CC52FA9E69B9`、Phone release unsigned `EF81628788976D74642CB92E5FC9A4AA68116A1D58426660795B4DE145C934E2`。
 - `watch-cloud-mcp` 将 OSA 负数哨兵合同、Custom Domain 配置和对应测试提交为 `74e90b6888eba55ec47cfdaa5f3706f4a7f6c758`，重新部署 staging Version `824ca395-5f63-4d73-9a61-aea29c1b04ee`。Custom Domain `/healthz` 精确命中该提交，`/readyz` 的 storage/OAuth/authority 全部 ready；部署后只读 OAuth/MCP 仍回读 5/3/24，D1 隐私关键词命中 0、临时计划和命令均为 0。
+
+## 2026-07-30：建立长期维护与当次闭环规范
+
+- 目标/关联：统一长期项目的开工、实现、Bug 防复发、文档同步和完成门禁；本批次只修改治理文档，不改变产品行为。
+- 改动与影响文件：新增 `docs/maintenance-workflow.md`；同步根 `README.md`、`AGENTS.md`、文档索引、编码规范、测试门禁、Bug 台账模板、项目日志模板和 CHANGELOG。
+- 决策及原因：不建立普通 TODO/待办池；当前任务范围内可解决的问题当次完成。Bug 台账只保存复现、根因、修复和验证事实，真实外部阻断必须写唯一关闭条件。
+- Bug 闭环：未发现新的产品 Bug；发现根 README 与 V3 长期事实存在漂移，纳入本批次文档一致性校正。
+- 验证：执行受版本控制 Markdown 本地链接检查和 `git diff --check`；结果见本批次最终报告。
+- 产物：纯文档改动，无 APK。
+- 外部阻断：无。
+
+## 2026-07-30：用户 ChatGPT OAuth 重绑与真实非空回读（REQ-SYNC-003、BUG-041、API-025）
+
+- 保留旧免授权 connector，不用刷新掩盖其 7 个历史只读工具；新建“步序运动（staging OAuth）”开发 connector，目标为标准 staging `/mcp`。ChatGPT 经 DCR 发现 OAuth 端点和 `watch:read`、`watch:write`、`watch:control` 三个默认 scope，使用项目受审计的一次性 owner code 完成 consent；验证码、授权码、Token、动态客户端和连接标识均未写入聊天、Git 或文档。
+- 连接管理页确认支持和使用的授权方式均为 OAuth，刷新后枚举 21 个 Cloud V3 工具；read/write/control 工具均广告各自精确 security scheme。本次验收仅给予当前会话只读调用权限，没有执行计划写入、删除或训练控制。
+- 真实 ChatGPT 依次成功调用 `watch_get_status`、`watch_list_plans`、`watch_list_workouts`、`watch_get_latest_sleep`、`watch_get_sync_overview`：回读 5 个计划、3 条训练、1 条最新睡眠，`authority=cloud_authoritative`、`freshness=fresh`、`activeDeviceCount=1`，无工具错误；其中状态为 `CONNECTED_BLE_LAN`、训练 `STOPPED`、计划 revision 9。
+- 本项只关闭“用户 ChatGPT connector 重绑/非空回读”缺口。真实公里分段、Doze、手机重启、三轮 PC-off 和 production 非空回读仍未完成，`BUG-041` 保持 Open，`supportsPcOff=false`，本地 MCP/Tunnel/8766 不退役。
+
+## 2026-07-30：正式 Cloud V3、合成公里分段与计划往返闭环（REQ-SYNC-003/004/006/014/015/016/018、BUG-042/043/044、API-025/026/028/029）
+
+- 用户明确停止把 staging 作为后续验收环境，并确认 PC 不属于产品运行链路。后续 Cloud 集成测试直接使用正式 Worker/D1/OAuth；历史 staging 章节仅保留证据。PC-off 三轮不再作为核心能力门禁，真正剩余的后台风险改为 Phone Doze/重启恢复。
+- 正式 Watch Worker、D1 migration、10 个 authority trigger 与 OAuth 三 scope 已部署并 ready。中国手机网络可达的既有 Custom Domain 已改绑正式 Worker；域名名称虽残留 `staging` 字样，staging 配置已移除该路由。ChatGPT 仍使用正式 canonical MCP audience，避免 OAuth resource 混用。
+- Watch 0.21.1（32）与 Phone 0.23.0（19）已覆盖安装并保留数据；Phone 正式 V3 exchange HTTP 200。正式 D1 在验收前含 1 个计划库、4 条 workout fact 与 24 条睡眠。
+- 发现 `BUG-043`：`HistoryStore.toJson()` 经 `load -> WorkoutRecord.fromJson -> toSummaryJson` 重建 summary 时丢失已派生 splits/最佳配速/心率范围，且 summary 路径没有路线可重算。修复为直接深拷贝 reconcile 后索引，并显式剔除 route、coordinates 与逐点心率；新增 `HistoryStoreSummaryTest`。
+- 为免要求用户户外跑一公里，使用 `tools/synthetic-split-acceptance.ps1` 在真实 OWW221 注入显式标记“合成公里验收（非真实训练）”的 1.2 km/2 分段摘要；不写真实或合成坐标。记录经 Watch `/v1/history`、Phone V3 和正式 D1 上行，不手工写云数据库。
+- 正式 ChatGPT connector 使用显式基础 scope `watch:read/watch:write/watch:control` 完成 DCR/owner consent。`watch_list_workouts` 回读 1000 m/300000 ms 与 200 m/60000 ms 两段，均为 300 s/km；`watch_get_sync_overview` 为 `cloud_authoritative/fresh`。
+- 清理由 ChatGPT 仅一次授权 `watch_delete_workout` 完成：手表结果 `DELETED`，MCP 复查目标 ID 不存在、剩余 3 条；ADB 只读检查 `workout_index.json` 为 absent；正式 D1 保留 immutable workout fact 并新增 1 条 tombstone，符合 API-026。一次性 owner code 临时文件已删除，未保存 token。
+- 正式 ChatGPT 又创建唯一临时计划：Cloud/Phone revision 3 已可回读，但首次安全 BLE/LAN 投影失败后 45 秒内 Watch 未出现，定位为 `BUG-044`。新增统一 projection drain、连接 observer、前台心跳和 WorkManager retry 后，持久 outbox 无需手动同步即排空。
+- 重试时进一步复现 `BUG-042`：Watch 保存的旧云源水位 9 与正式云 revision 3 仍发生跨 source 冲突。`cloud_replace` 现携带不含凭据的 device-identity source 指纹；Watch 同 source 防回退、source 变化独立起算。候选覆盖安装后临时计划自动到达 Phone/Watch，projection outbox 为 0。
+- ChatGPT 仅删除该临时计划并复查 ID/名称不存在，最终云端 revision 4；ADB 只读确认 Phone/Watch revision 均为 4、两端无目标计划、projection 与 Cloud V3 outbox 均为 0。该往返证明 ChatGPT→正式云→Phone→Watch 的计划下发和反向删除完整。
+- 本批次证明手表→手机→正式云端→ChatGPT MCP 的分段上行、反向训练删除和计划往返完整。它不证明 GNSS 距离、户外配速、佩戴心率精度或 Phone Doze/重启恢复；这些继续由对应真机用例覆盖。
+- 最终门禁 `:app:testDebugUnitTest :phone:testDebugUnitTest :app:lintDebug :phone:lintDebug :app:assembleDebug :phone:assembleDebug :app:assembleRelease :phone:assembleRelease` 成功（185 tasks）；Watch Worker static/schema/D1/Worker 分别 10/5/8/38 项、OAuth Worker/script 分别 34/6 项、两个 TypeScript typecheck、三仓 `git diff --check` 均通过。Android 仓库 Markdown 本地链接复核通过。
+- 最终 APK SHA-256：Watch debug `83684139A063F9915ABBD59238F317DE0263648397A7646BF6DAA092C12E9CA9`、Watch release unsigned `2001D6EE590E3BF9BB6A9107CC38F5B4E5C21EDCE6214E2E8D385AE4D6718834`、Phone debug `77D7A67DCC4C48AF97BAFE1032BFEAAFFC316CEA87D260ED53FA4A4E92242003`、Phone release unsigned `874F19D734279C0A2BE18263CDDA0EC9765589E954C0E360E5321A79E688A9EA`。OWW221 与 Xiaomi xaga 已安装的 `base.apk` 哈希分别与两个 debug 产物完全一致，应用进程均在运行。

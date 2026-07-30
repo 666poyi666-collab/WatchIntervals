@@ -192,7 +192,12 @@ public class WatchBridgeService extends Service {
         String actual = WorkoutService.persistedSessionState(this);
         if (!expected.isEmpty() && !expected.equals(actual)) return cacheCommand(commandId, new JSONObject().put("accepted",false).put("error","state_mismatch").put("actualState",actual).put("httpStatus",409));
         Intent intent = new Intent(this, WorkoutService.class);
-        if ("start".equals(action)) intent.setAction(WorkoutService.ACTION_START).putExtra("plan", PlanStore.encode(PlanStore.load(this)));
+        if ("start".equals(action)) {
+            java.util.ArrayList<Stage> stages = PlanStore.load(this);
+            if (stages.isEmpty()) return new JSONObject().put("accepted", false)
+                    .put("error", "plan_unavailable").put("httpStatus", 409);
+            intent.setAction(WorkoutService.ACTION_START).putExtra("plan", PlanStore.encode(stages));
+        }
         else if ("pause".equals(action)) intent.setAction(WorkoutService.ACTION_PAUSE);
         else if ("resume".equals(action)) intent.setAction(WorkoutService.ACTION_RESUME);
         else if ("toggle".equals(action)) intent.setAction(WorkoutService.ACTION_TOGGLE);

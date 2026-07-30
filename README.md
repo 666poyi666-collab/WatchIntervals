@@ -1,4 +1,4 @@
-# 间歇跑（OPPO Watch）
+# 步序（WatchIntervals）
 
 为 OPPO Watch 4 Pro 实机（系统型号 `OWW221`，378×496，Android 11）设计的独立训练应用。
 
@@ -11,7 +11,9 @@
 - [`testing.md`](docs/testing.md)：测试策略、真机回归清单和发布门禁
 - [`bugs.md`](docs/bugs.md)：已知问题、技术债与历史缺陷
 - [`project-log.md`](docs/project-log.md)：Vibe Coding 决策和开发日志
+- [`maintenance-workflow.md`](docs/maintenance-workflow.md)：每次开工、当次闭环、Bug 防复发和完成门禁
 - [`CHANGELOG.md`](CHANGELOG.md)：面向版本的变更记录
+- [`CLOUD-SYNC.md`](CLOUD-SYNC.md)：当前 Cloud V3 数据流、边界和验收状态
 
 功能、缺陷或架构发生变化时，代码提交必须同时更新对应文档；具体规则见文档索引。
 
@@ -29,16 +31,18 @@
 - 首页按 378×496 基准自动缩放，保留底部安全留白；异常权限或定位状态才显示告警，避免挤占训练主操作
 - Android 13+ 会在首次训练前请求通知权限，确保前台训练通知可见
 - 最多 200 条独立训练历史目录；摘要索引与完整轨迹/心率样本分离，支持详情、分页和删除
-- 独立 `phone` 伴侣 App：局域网 mDNS 自动发现、六位码配对；本地计划库支持新建、命名、分组、保存、再次编辑和同步，训练控制与历史分区显示
-- 手机伴侣已本地实现 `/sync/v2/exchange` 端到端加密双向同步：计划、计划库元数据和训练摘要使用 AES-256-GCM，凭据/root 由 Android Keystore 保护，支持离线恢复包、已授权设备批准、显式 tombstone、冲突保留和 WorkManager catch-up；训练成功落盘后，手表通过已认证 BLE 发送不含业务数据的 `history_changed` 提示，手机用唯一 WorkManager 任务上云，重连和 15 分钟周期负责漏事件兜底；staging 与真实 PC-off 仍待验收
+- 独立 `phone` 伴侣 App：安全 BLE 为控制主链路、已验证 LAN 为批量加速；云端计划库为主版本，手机保留离线缓存并同步手表
+- 手机伴侣使用 `/sync/v3/exchange` 和仅发送 `sync_needed` 的 WebSocket 通道，持久保存 outbox、active request、cursor、receipt、conflict 和命令结果；device token 由 Android Keystore 包装
+- Cloud MCP 通过 `watch:read`、`watch:write`、`watch:control` OAuth scope 读取计划、训练摘要、睡眠和状态，并创建计划修改或短期训练控制命令
+- 原始轨迹、坐标和逐点心率固定只保存在设备侧；云端不保存设备私钥、配对码、OAuth/device token 或诊断正文
 - 手表首页按页面方向进入训练历史和训练计划；训练数据为第一页，实时轨迹固定在其右侧页，并支持双向跟手返回
-- 手表 `8765`、手机 `8766` 协议 v2 API，以及复用同一工具核心的 stdio/Windows HTTP Gateway MCP
+- 手表 `8765` 与 BLE/LAN transport 继续用于手机读取设备事实和执行控制；手机 `8766`、本地 MCP 与 Tunnel 只保留迁移回滚能力，不属于生产链路
 
-## 手机伴侣与本地 MCP
+## 手机伴侣与 Cloud V3
 
-设备控制优先使用应用层加密 BLE，已验证 LAN 作为批量数据加速通道。手表广播 `_watchintervals._tcp.`，手机广播 `_watchintervals-phone._tcp.`；IP 只是运行时端点，设备身份由稳定 deviceId 校验。手机云同步仅接受 HTTPS `/sync/v2/exchange` 与专用 device token，MCP OAuth token 不能替代它；canonical 计划/训练正文只以密文存在，另有一个由设备认证、严格字段白名单约束的最小只读 projection，供 OAuth MCP 实际读取计划名、粗粒度训练和活动健康汇总。根密钥、原始轨迹、逐点心率、睡眠、凭据和诊断正文不会进入该 projection，也不会把离线设备伪装为可控制。旧 `/sync/push` 与 plaintext V1 是已退役迁移面。远程启动训练仍依赖在线设备和后台定位授权。
+目标生产链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`。手表训练状态仍只由 `WorkoutService` 持有；手机通过安全 BLE 或已验证 LAN 读取设备事实，再使用专用 device token 与 V3 authority 同步。Cloud MCP 使用独立 OAuth token，不能调用 device exchange；设备 token 也不能访问 MCP。
 
-首次建立空白同步空间必须在手机“恢复与设备批准”中显式初始化并立即导出离线恢复包；已有空间必须导入恢复包，或让已授权设备批准新设备。缺少 root 时客户端保持未就绪，绝不会静默生成另一把 key。当前实现只通过本地合同、JVM 和 debug 构建门禁；没有 staging deployment revision、Android Keystore 真机证据和三轮 PC-off 结果，因此发布清单保持 `supportsPcOff=false`。
+Phone 0.23.0 不启用 V2、不双写，也不会在 V3 失败时自动退回。Watch 0.21.1 与 Phone 0.23.0 已覆盖安装并连接正式 Cloud V3；正式 ChatGPT OAuth connector 已精确回读 1.2 km、2 个分段，并通过正式删除命令让手表列表与 MCP 列表消失、D1 写入 tombstone。PC 不属于运行链路；剩余风险是户外 GNSS/心率真实性和手机 Doze/重启恢复。完整状态见 [`CLOUD-SYNC.md`](CLOUD-SYNC.md) 和 [`docs/testing.md`](docs/testing.md)。
 
 ```powershell
 .\gradlew.bat :app:assembleDebug :phone:assembleDebug
@@ -46,13 +50,7 @@ adb -s WATCH install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s PHONE install -r phone/build/outputs/apk/debug/phone-debug.apk
 ```
 
-电脑创建 `%USERPROFILE%/.watchintervals.json`：
-
-```json
-{"watchDeviceId":"WATCH_DEVICE_ID","phoneDeviceId":"PHONE_DEVICE_ID","pairingCode":"六位配对码"}
-```
-
-MCP 启动命令与工具清单见 [`mcp/README.md`](mcp/README.md)。
+本地 MCP 启动命令与工具清单见 [`mcp/README.md`](mcp/README.md)；它只用于迁移验收和回滚，不得据此描述生产能力。
 
 ## 数据来源与真机条件
 

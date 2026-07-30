@@ -126,7 +126,7 @@ git diff --check
 | PT-007 | 重启恢复 | 手机重启后计划桥服务恢复，计划库不丢失 |
 | PT-008 | 睡眠页 | 授权后显示时长、评分、血氧、深睡、REM 和阶段数量；未授权时有明确提示 |
 | PT-009 | 手机服务发现 | 手机 IP 改变后 Watch MCP 通过 `_watchintervals-phone._tcp.` 找到相同 phoneDeviceId |
-| PT-010 | 计划 outbox | 手表离线修改计划，恢复 LAN 后自动 ACK | 操作不丢失、不重复，pending 归零 |
+| PT-010 | 计划 outbox | 手表离线时由手机或 Cloud MCP 修改计划，恢复 BLE/LAN 后无需手动同步即自动 ACK | 操作不丢失、不重复，连接恢复/前台心跳/WorkManager 均可重试，pending 归零 |
 | PT-011 | BLE 首次连接 | 手机授权附近设备后自动扫描、连接、发现服务、协商 MTU、订阅并认证 |
 | PT-012 | BLE 计划同步 | 无 LAN 时计划 outbox 经 BLE ACK，手表 profile 回读一致 |
 | PT-013 | BLE 定位中继 | 训练中每 2–5 秒发送带 sequence/TTL 的手机定位，断联不补发旧点 |
@@ -134,7 +134,7 @@ git diff --check
 | PT-015 | 手机直连 V3 云端 | 关闭全部 Windows MCP/Tunnel/watchdog 服务后由手机上行；Cloud MCP 可读非空计划、训练、睡眠和同步新鲜度 |
 | PT-016 | V2 root 迁移保留 | 覆盖安装 0.23.0 后旧 V2 state 在首次 V3 成功前仍存在，但新版不调用 V2、不双写、不生成新 root |
 | PT-017 | V3 计划 bootstrap/OCC | 空云端首次接受手机计划库；bootstrap 后旧 expected revision 返回 conflict，candidate 与服务器库均可恢复且不自动覆盖 |
-| PT-018 | V3 PC-off 三轮 | 停止 Windows 全部服务并关闭电脑；手机前台、后台 Doze、手机重启三轮分别验证计划、训练、睡眠、控制、断网补传、exactly-once、tombstone、cursor 和 stale 状态 |
+| PT-018 | V3 手机后台恢复 | 手机前台、后台 Doze、手机重启三种状态分别验证计划、训练、睡眠、控制、断网补传、exactly-once、tombstone、cursor 和 stale 状态；PC 不属于运行链路 |
 | PT-019 | 凭据迁移与备份边界 | 从 0.21.1 覆盖安装后 pairing/LAN/Gateway token 自动迁到 Keystore 密文且连接不中断；备份/设备迁移不含受保护 prefs；第三方显式/隐式 watchdog 广播不能拉起服务，系统开机和 app-private alarm 仍可恢复 |
 | PT-020 | 训练完成自动上云 | 电脑保持关机；蜂窝/Wi-Fi、前台/后台/Doze 中接收 `history_changed`，网络恢复后 V3 出现同一摘要/分段/聚合心率且无坐标、轨迹或逐点心率 |
 | PT-021 | Keystore provider IV | 覆盖安装和进程重启后 V3 device token 与 BLE/LAN/pairing secret 仍可用且 SharedPreferences 无 plaintext；旧 root 仅作迁移保留 |
@@ -170,17 +170,20 @@ git diff --check
 | API-021 | request/operation 重放返回首次结果；ID 改正文复用拒绝；plan revision conflict 保留 candidate；workout 同 ID 同内容幂等、不同内容 immutable conflict |
 | API-022 | route/latitude/longitude/coordinates/heartRateSamples、凭据和 token 在 Phone 请求、Worker、D1、MCP、日志和 APK 扫描均不存在；允许的睡眠明细和聚合心率正常存在 |
 | API-023 | `/sync/v3/channel` 只接受 Device Bearer Token，只发送 exact `sync_needed`；断线重连直接 exchange，重复 close/failure 不创建多个 timer |
-| API-024 | authority observation 仅经命名 service binding 读取；revision/freshness 只来自 V3 checkpoint/device/cursor，同 revision 稳定；验收前 PC-off 三项和 `supportsPcOff` 均 false |
-| API-025 | 短期 `watch:read` token 对 staging 完成 metadata、ready、MCP initialize、tools/list、状态、非空计划、真实训练/分段/心率、真实睡眠和 sync overview；不得用 mock/fixture/手工 D1 写入替代 Phone V3 数据 |
+| API-024 | authority observation 仅经命名 service binding 读取；revision/freshness 只来自 V3 checkpoint/device/cursor，同 revision 稳定；旧 `supportsPcOff` 只作兼容字段，不得替代 Phone Doze/重启恢复证据 |
+| API-025 | 正式 OAuth connector 完成 metadata、ready、MCP initialize、tools/list、状态、非空计划、训练/分段/心率、睡眠和 sync overview；合成记录必须从真实手表经 Phone V3 上行并显式标记、验后用产品删除链路清理，不得手工写 D1 |
 | API-026 | delete workout 命令相同 ID/正文返回首次结果，不同正文复用 ID 拒绝；只有手表 ACK 后 D1 写 tombstone，重复上传不得复活 |
 | API-027 | start/pause/resume/stop 成功结果在同一次 Phone sync 的第二次 exchange 被确认；离线不写失败 ACK，过期和迟到结果按合同拒绝 |
+| API-028 | `/v1/history` summary 保留已派生 splits/最佳配速/心率范围，同时不返回 route/coordinates/逐点心率；正式 ChatGPT 回读分段后删除测试记录，手表/MCP/D1 tombstone 三处一致 |
+| API-029 | 正式 MCP 创建计划后，云端库先落 Phone 和持久 plan outbox；瞬时下发失败自动重试到 Watch。同一 cloud source 严格防 revision 回退，source 切换建立独立水位；删除后 Cloud/Phone/Watch 均无目标计划且 outbox 为 0 |
 
 ### Phone 0.23.0 / Cloud V3 本地门禁（2026-07-30）
 
 - `CloudV3SyncTest` 覆盖隐私字段递归拒绝、plan conflict 双候选持久化、workout immutable/tombstone 分流、HTTP 往返并发编辑护栏、cursor ahead reset、命令结果即时 follow-up、重启去重、离线 pending 和过期不执行。
+- `PhonePlanProjectionSyncTest` 覆盖可用 BLE/LAN 状态、并发排空门禁，以及云 exchange 已成功但 Watch projection 未清空时 Worker 必须重试；`PlanLibraryStoreTest`/`CloudV3SyncTest` 覆盖 cloud source revision 域和稳定非秘密指纹。
 - `CloudV3Sync.sync()` 在进程内串行；WebSocket 使用轻量 command exchange，live status 与 full history/sleep 采集分离；命令成功后同次调用立即二次 exchange。
 - Watch `/v1/control/delete_workout` 使用 commandId/expiresAt/controlRevision/workoutId 和持久 request signature cache；删除已不存在记录仍返回幂等成功，不同正文复用 ID 返回 409。
-- `:app:testDebugUnitTest :phone:testDebugUnitTest`、双模块 `lintDebug`、debug/release assemble 全部通过。这里只证明本地构建与状态机合同，不是 staging、真机控制时延或 PC-off 证据。
+- `:app:testDebugUnitTest :phone:testDebugUnitTest`、双模块 debug assemble 已通过；Lint/release 在本批次最终门禁记录。这里只证明本地构建与状态机合同，不替代真机传感器或手机后台恢复证据。
 
 ### Cloud V3 staging 远端合同（2026-07-30）
 
@@ -196,7 +199,17 @@ git diff --check
 - Phone 0.23.0 通过可达 Custom Domain 完成首次 V3 exchange：1 个真实 device receipt、5 个计划、3 条训练、24 条睡眠；最新睡眠含 session/stage，训练/MCP 明确返回 `rawRoute=local_only`、`heartRateSamples=local_only`。
 - start/pause/resume/stop 真机端到端分别为 6412/7394/7213/9199 ms，均收到 Watch ACK 且最终 `STOPPED`。手机进程停止时 Cloud MCP start 命令先 pending，30 秒后 expired；保留过期行再恢复 Phone 后仍未 delivered、无 result，Watch 保持 `STOPPED`。
 - Cloud MCP 创建临时计划后 Phone 拉取并以 `cloud_replace` 经安全 BLE outbox 到达 Watch；修复时间戳 revision 与 Cloud revision 混域后 pending 归零。临时计划删除后云端、Phone、Watch 三处均回滚。
-- 现有 3 条训练均无 splits，真实公里分段门禁仍未通过。用户 ChatGPT connector 重新授权、Doze/手机重启和三轮 PC-off 未执行，`supportsPcOff=false`。
+- 用户 ChatGPT 新建 staging OAuth connector，经 DCR 和 owner consent 精确授权 `watch:read`、`watch:write`、`watch:control`；ChatGPT 枚举 21 个按 scope 标注的 Cloud V3 工具。本次会话仅允许并依次调用 `watch_get_status`、`watch_list_plans`、`watch_list_workouts`、`watch_get_latest_sleep`、`watch_get_sync_overview`，实际回读 5 个计划、3 条训练、1 条最新睡眠，`authority=cloud_authoritative`、`freshness=fresh`、1 个活跃设备且无工具错误。
+- 现有 3 条训练均无 splits，真实公里分段门禁仍未通过。Doze/手机重启和三轮 PC-off 未执行，`supportsPcOff=false`。
+
+### Cloud V3 正式环境与 ChatGPT 分段/计划往返验收（2026-07-30，API-025/026/028/029）
+
+- 后续云集成验收按用户决定直接使用正式 Worker、正式 D1 与正式 OAuth；上方 staging 章节仅保留历史证据。可达 Custom Domain 的名称虽然含 `staging`，但路由已绑定正式 Worker，staging 配置不再声明该域名；ChatGPT 使用正式 canonical MCP audience。
+- Watch 0.21.1（32）与 Phone 0.23.0（19）均已覆盖安装并保留配对/业务数据。Phone 使用 Keystore 包装的正式 device token，最近 exchange 为 HTTP 200；正式 `/readyz` 的 storage/OAuth/authority 均 ready。
+- `BUG-043` 修复后，显式标记“合成公里验收（非真实训练）”的 1.2 km 记录从真实 OWW221 历史索引经 Phone V3 上行。正式 ChatGPT connector 使用固定基础 scope `watch:read/watch:write/watch:control` 完成 owner consent；`watch_list_workouts` 返回 2 个分段：1000 m/300000 ms 与 200 m/60000 ms，均为 300 s/km；`watch_get_sync_overview` 返回 `cloud_authoritative/fresh`。
+- 验收后只允许一次 `watch_delete_workout`。手表返回 `DELETED`，ChatGPT 再列训练确认目标 ID 不存在且剩余 3 条；ADB 只读检查 `workout_index.json` 为 absent；正式 D1 保留 immutable workout fact 并写 1 条 tombstone，产品列表按 tombstone 隐藏。没有手工修改 D1。
+- 正式 ChatGPT 创建唯一临时计划后，Phone revision 3 已落库但首次 Watch 下发失败；修复持久重试与 cloud source 水位后，该计划自动到达 Phone/Watch 且 projection outbox 归零。随后正式 `watch_delete_plan` 获 ACK，ChatGPT 复查 ID/名称不存在、计划库 revision 4；ADB 只读复核 Phone/Watch revision 均为 4、目标计划均不存在、projection 与 Cloud V3 outbox 均为 0。
+- 该记录证明摘要序列化、手表→手机→正式云端→ChatGPT MCP 与反向删除控制完整；它不证明 GNSS 距离、佩戴心率或户外配速精度，这些继续由 WT-005/018 覆盖。PC 不在生产链路；尚未覆盖 Phone Doze/重启补偿。
 
 ### 2026-07-30 V2 staging 历史只读审计（BUG-041）
 
@@ -291,16 +304,15 @@ git diff --check
 - 监听器硬化：绑定失败路径现有明确日志与退避重试，`logcat -s PhonePlanBridge` 可见 `API listening on 8766`。
 - 未覆盖：开阔户外 GNSS 多普勒配速对比、非充电长时间功耗、MIUI 自启动关闭时的恢复行为。
 
-## 6. 建议优先补齐的自动测试
+## 6. 当次开发闭环门禁
 
-1. `Stage`/`PlanStore` 编解码、默认计划和法特莱克识别。
-2. `WorkoutRecord` schema 1/2 兼容和统计计算。
-3. 距离来源切换、GPS 过滤、step counter 基线和阶段跨越算法。
-4. 暂停/恢复/完成状态机和“历史只保存一次”。
-5. `PlanLibraryStore`/`PhonePlanLibrary` 迁移、revision、选择与删除。
-6. 手表 8765 与手机 8766 的协议契约测试。
-7. 手机 `MutationGuardTest` 覆盖重复、ID 复用、旧 revision 和旧客户端兼容；API-015 的进程终止场景仍需仪器/真机测试。
-8. 加密同步故障注入：SharedPreferences commit 失败、ACK 丢失、change 解密失败、cursor 回退、冲突容量满、WorkManager 进程终止和恢复包/批准包重放。
+每个开发批次在结束前执行 [maintenance-workflow.md](maintenance-workflow.md) 的完成门禁，并满足：
+
+- 功能改动覆盖正常路径、边界值、失败路径和兼容读取；不以“能编译”代替行为验证。
+- Bug 修复必须有修复前可失败、修复后可通过的自动化回归；设备或外部服务限制无法自动化时，必须补充本文件中的编号用例和实际证据。
+- 当前批次发现的同根因入口一并排查；相同 Bug 复发时增强原用例，不只增加日志或更换错误文案。
+- 测试发现的当前范围内问题必须修复并重跑相关门禁，不转写成普通 TODO。
+- 已知但不属于当前授权范围的历史缺陷只在 `bugs.md` 保留事实；真实外部阻断写明证据和唯一关闭条件。
 
 ## 7. 发布门禁
 
@@ -309,7 +321,7 @@ git diff --check
 - 两个模块从干净构建成功，无新增编译警告。
 - P0/P1 开放缺陷为 0；例外必须在 Release notes 明示并由维护者接受。
 - 与改动相关的真机和 API 用例通过，结果记录到 `project-log.md`。
-- Cloud V3 必须同时匹配实现提交、staging deployment revision、OAuth scope/远端探测、PT-015 至 PT-025 中适用的真实设备证据和 project manifest；缺任一项时保持 `supportsPcOff=false`。
+- Cloud V3 必须同时匹配实现提交、正式 deployment revision、OAuth scope/远端探测、PT-015 至 PT-025 中适用的真实设备证据和 project manifest。历史 staging 结果不再作为新发布门禁；旧 `supportsPcOff` 标志在 manifest 迁移前不得冒充手机后台恢复证据。
 - `versionCode`、`versionName` 与 CHANGELOG 一致。
 - APK 使用预期签名；debug 包标记为 prerelease。
 - 计算并记录两个 APK 的 SHA-256。

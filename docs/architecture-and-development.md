@@ -51,7 +51,7 @@
 | 手机伴侣 | `WatchConnectionManager`、`WatchCloudBridgeEvent`、`BleGattTransport`、`LanHttpTransport`、`phone/*` | 连接状态、传输选择、计划库、同步、历史详情、定位中继；严格解析手表同步提示并交给唯一后台任务 |
 | 手机云同步 | `CloudV3Sync`、`CloudV3Channel`、`EncryptedWatchSyncWorker`、`CloudSyncCredentials` | server-readable V3 exchange、持久 outbox/active request/cursor/receipt/conflict、Keystore device token、轻量命令拉取和后台恢复；V2 源码/state 仅作迁移回退且不双写 |
 | Cloud MCP | `watch-cloud-mcp` | 从 D1 V3 表读取计划、训练摘要、睡眠、状态和新鲜度；按 read/write/control scope 执行 OCC 写入和短期设备命令 |
-| 本地 MCP | `mcp/`、手机 8766、Windows 服务 | Deprecated；仅在 staging、非空 MCP 与三轮 PC-off 全部通过前暂留，不得继续扩展 |
+| 本地 MCP | `mcp/`、手机 8766、Windows 服务 | Deprecated；仅作迁移回滚资产，不进入生产能力判断，不得继续扩展，待独立清理批次卸载 |
 
 ### 2.1 手表视觉层
 
@@ -159,7 +159,7 @@ Watch 与 Phone manifest 均设置 `allowBackup=false`；Phone 的 Auto Backup /
 
 手机 8766 与 `PhonePlanBridgeService` 仅为迁移期本地 MCP 兼容门面；V3 中云端计划库才是主数据源，禁止继续为 8766 新增生产能力。
 
-手机仍暂时广播 `_watchintervals-phone._tcp.`，供尚未卸载的 Windows Watch MCP 回滚使用。Cloud MCP 验收后与 8766 listener、专用本地 token 一并删除。
+手机仍暂时广播 `_watchintervals-phone._tcp.`，供尚未卸载的 Windows Watch MCP 回滚使用；它将与 8766 listener、专用本地 token 在独立迁移清理批次一并删除，不再作为 Cloud MCP 验收前置。
 
 ### 手机 Cloud V3 同步
 
@@ -167,17 +167,17 @@ Phone 0.23.0 的 canonical 路由为 Device Bearer Token 认证的 `POST /sync/v
 
 `watch_cloud_v3` state 保存 outbox、active request、cursor、workout/sleep receipt、冲突双方、已执行命令和待回传结果。exchange 在进程内统一串行；相同 active request 原样重试，HTTP 409 `cursor_ahead` 只按响应 `resetCursor` 清 active request并重建，不能丢 outbox。ACK 才写 receipt；普通 conflict 从 outbox 移入持久 conflict store，并附带本地 candidate 和服务器计划库，不能冒充成功。HTTP 往返期间本地计划 revision/fingerprint 变化时，响应不得覆盖新编辑；若同时存在远端 revision 冲突，则阻止该本地 revision 自动重传，直到用户再次编辑或显式解决。
 
-首次成功 V3 同步时，手机以现有计划库引导空云端；此后云端为主版本。云端 plan group/library 使用 revision OCC，workout 是 create-once fact，sleep 按 source revision 增量覆盖。Phone 从 `/v1/history` 只复制允许的 summary、splits、stage results、聚合心率和 data source summary；睡眠首次读 31 天，读取失败不生成删除。云端计划变化落入 `PhonePlanLibrary` 后，以 `cloud_replace` 操作进入 `PhoneSyncOutbox` 并经安全 BLE/LAN 路由同步手表。手表为 Cloud V3 单独持久化最后 cloud revision，不能把云端小整数 revision 与迁移前本地时间戳 revision 直接比较；同一 cloud revision 域仍严格拒绝回退。
+首次成功 V3 同步时，手机以现有计划库引导空云端；此后云端为主版本。云端 plan group/library 使用 revision OCC，workout 是 create-once fact，sleep 按 source revision 增量覆盖。Phone 从 `/v1/history` 只复制允许的 summary、splits、stage results、聚合心率和 data source summary；睡眠首次读 31 天，读取失败不生成删除。云端计划变化落入 `PhonePlanLibrary` 后，以 `cloud_replace` 操作进入 `PhoneSyncOutbox` 并经安全 BLE/LAN 路由同步手表；一次下发失败后由连接状态 observer、10/60 秒前台心跳和 WorkManager 持久重试继续排空，不依赖用户点击“立即同步”。手表为 Cloud V3 单独持久化最后 cloud revision 和不含凭据的 cloud source 指纹：同一 source 严格拒绝 revision 回退，切换正式数据源时只重置该 source 的云端水位，不能把旧 staging、正式云和迁移前本地时间戳混在同一数值域。
 
 `CloudV3Channel` 由前台 `PhoneCompanionService` 使用 OkHttp 4.12.0 维持 `/sync/v3/channel`。通道只接收 exact `{type:"sync_needed"}`，收到后直接发起不读取历史/睡眠的轻量 exchange，并以 WorkManager 兜底。凭据尚未配置也持续指数补连，单实例只允许一个 reconnect timer。训练中 live status 每 10 秒、空闲每 60 秒上传；两者不重复扫描历史。命令执行成功后同一 `sync()` 立即进行第二次 exchange 回传 ACK；手表不可达时不提前上报 failed，云端维持 pending/delivered 并在 30 秒后过期，Phone 每次执行前再次检查过期时间。
 
 删除训练通过 `/v1/control/delete_workout` 发送 commandId、expiresAt、controlRevision 和 workoutId。手表复用持久 `command_cache`，相同 ID/正文返回首次结果，不同正文复用 ID 返回 409；删除效果本身幂等。只有 Phone 回传手表成功结果后，云端才写独立 workout tombstone 并隐藏摘要，后续设备上传同一训练会得到 `workout_deleted` 且 receipt 阻止复活。
 
-V2 `EncryptedWatchSync`、root/recovery/approval 源码与旧 state 暂时保留，Phone 0.23.0 不调用、不双写，也不会在 V3 失败时自动回退。只有 staging 真数据、所有活跃设备 V3 receipt、三轮 PC-off 和生产非空 MCP 回读全部通过后，才删除 V2、手机 8766、本地 `mcp/`、Tunnel 和 Windows 服务；手表 8765 与 BLE/LAN transport 保留。
+V2 `EncryptedWatchSync`、root/recovery/approval 源码与旧 state 暂时保留，Phone 0.23.0 不调用、不双写，也不会在 V3 失败时自动回退。正式 Cloud V3 已完成非空数据和分段回读；V2、手机 8766、本地 `mcp/`、Tunnel 和 Windows 服务只作为迁移资产单独清理，不再参与生产验收。手表 8765 与 BLE/LAN transport 保留。
 
 Watch Worker 另提供仅命名 service binding 可达的 authority observation entrypoint。请求必须精确使用 vendor `Accept`、`Authorization: Capability <产品独立 secret>` 和完整 HTTPS `/authority/watch` audience；公网同路径固定拒绝。authority revision、freshness 和 device state 只从 V3 checkpoint/device/cursor 及其经过 exact-field 校验的源记录计算；相关 V3 state、change、operation、command、audit 或撤销状态变化才推进 authority checkpoint。每个 revision 的 exact-field observation 首次生成后持久化，后续读取保持 truth、`observedAt`、`expiresAt` 完全一致，中央签名 authority 因而得到稳定 observationHash。过期、损坏、额外字段、依赖或 revision 不可用时返回非 200，Watch Worker 不生成签名。
 
-当前证据覆盖 V3 本地 Android/Worker/OAuth 合同与构建，以及 staging 真实 Phone 上行、非空计划/训练/睡眠 MCP 回读、四类在线手表 ACK、离线命令过期不迟到执行和 Cloud MCP 计划经安全 outbox 到表。真实公里分段、用户 ChatGPT 重新授权、中央两跳、Doze/重启与三轮 PC-off 尚未完成，因此本节不得被解释为生产可用或 `supportsPcOff=true`。
+当前证据覆盖 V3 本地 Android/Worker/OAuth 合同与构建、正式 Phone 上行、非空计划/训练/睡眠、用户 ChatGPT OAuth 三 scope、合成公里分段精确回读以及手表 ACK 后的删除 tombstone。PC、Windows MCP 和 Tunnel 不属于该运行链路。仍未覆盖的是开阔户外 GNSS/心率真实性、手机 Doze/重启补偿和多设备计划冲突。
 
 `POST /v1/auth/token` 用于一次性签发独立 Watch MCP Bearer Token。未迁移设备可使用当前 6 位配对码 bootstrap；完成安全 BLE 配对且旧码已清除的设备，使用已配对长期 LAN 凭据 bootstrap。签发请求仍要求 UUID `requestId` 与 `expectedRevision`，重复请求返回首次 token，旧 revision 或已有 token 的新请求返回 409。token 不写入日志、仓库或命令行。
 
@@ -224,6 +224,7 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 6. 378×496 手表界面固定执行文字溢出、底部安全区、横纵手势冲突检查。
 7. 修复缺陷时先在 `bugs.md` 建号，再补测试或可复现验证步骤。
 8. 厂商健康数据通过公开 Store Binder 和运行时匹配的 protobuf 类读取；禁止提交厂商 APK、反编译产物、权限记录或真实健康数据。
+9. 每次改动执行 [maintenance-workflow.md](maintenance-workflow.md)；不新增普通 TODO、占位实现或无回归证据的缺陷修复。
 
 ## 9. Git 和发布规范
 
@@ -237,7 +238,7 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 ## 10. 独立 Watch MCP、云端 MCP 与 ChatGPT 通道
 
 - 目标生产链路固定为 `手表 <-> 手机 <-> 云端 <-> Cloud MCP <-> ChatGPT`。Cloud MCP 从 D1 V3 读取计划、训练摘要/分段/聚合心率、睡眠明细、实时状态和同步新鲜度，并按 `watch:read`、`watch:write`、`watch:control` 分别授权读取、计划写入/训练删除和短期控制命令。
-- 旧本机链路 `ChatGPT -> Watch 专属 Tunnel -> PoyiWatchMcp -> 手机 8766 -> BLE/LAN -> 手表` 已 Deprecated，仅在 V3 staging、非空 MCP 回读、三轮 PC-off 和生产验收完成前保留回滚能力；不得继续扩展或据此宣称电脑关闭可用。
+- 旧本机链路 `ChatGPT -> Watch 专属 Tunnel -> PoyiWatchMcp -> 手机 8766 -> BLE/LAN -> 手表` 已 Deprecated，只保留迁移回滚能力；生产 connector 已直接连接 Cloud MCP，不得继续扩展本机链路。
 - `PoyiWatchMcp` 只监听 `127.0.0.1:8768`，同端口提供 `/mcp`、`/healthz`、`/readyz`、`/metrics` 及 OAuth Protected Resource 元数据；避开 PersonalMcpGateway 的 8760/8761，且不加载其模块。
 - MCP 只发现手机 `_watchintervals-phone._tcp.local.`，以 Bearer Token 认证并固定首次验证的 `phoneDeviceId`。它不直接连接手表、不读取 Android 数据库、不使用 ADB 或固定 IP。
 - `PoyiWatchTunnel` 使用独立 Tunnel ID、独立 Runtime Key 和 `127.0.0.1:8880` 健康端口，仅连接 Watch MCP。两个 WinSW 服务均自动启动和失败重启。

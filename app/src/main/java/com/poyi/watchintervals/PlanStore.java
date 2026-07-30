@@ -11,6 +11,7 @@ public final class PlanStore {
     private static final String KEY_NAME = "current_name";
     private static final String KEY_GROUP = "current_group";
     private static final String KEY_REQUIREMENT = "current_requirement";
+    private static final String KEY_EXPLICIT_EMPTY = "explicit_empty";
 
     private PlanStore() {}
 
@@ -42,27 +43,41 @@ public final class PlanStore {
     }
 
     public static ArrayList<Stage> load(Context context) {
-        ArrayList<Stage> result = decode(context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY, null));
+        android.content.SharedPreferences preferences = context.getSharedPreferences(
+                PREF, Context.MODE_PRIVATE);
+        return resolveLoadedStages(preferences.getString(KEY, null),
+                preferences.getBoolean(KEY_EXPLICIT_EMPTY, false));
+    }
+
+    static ArrayList<Stage> resolveLoadedStages(String encoded, boolean explicitEmpty) {
+        if (explicitEmpty) return new ArrayList<>();
+        ArrayList<Stage> result = decode(encoded);
         return result.isEmpty() ? defaultPlan() : result;
     }
 
     public static void save(Context context, ArrayList<Stage> stages) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY, encode(stages)).apply();
+        if (!context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                .putString(KEY, encode(stages)).putBoolean(KEY_EXPLICIT_EMPTY, false).commit()) {
+            throw new IllegalStateException("plan_commit_failed");
+        }
     }
 
     public static String name(Context context) {
+        if (isExplicitlyEmpty(context)) return "暂无训练计划";
         android.content.SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         if (preferences.contains(KEY_NAME)) return preferences.getString(KEY_NAME, "自定义训练");
         return looksLikeFartlek(load(context)) ? "法特莱克跑" : looksLikeDefault(load(context)) ? "1千米 + 200米" : "自定义训练";
     }
 
     public static String group(Context context) {
+        if (isExplicitlyEmpty(context)) return "计划库为空";
         android.content.SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         if (preferences.contains(KEY_GROUP)) return preferences.getString(KEY_GROUP, "我的计划");
         return looksLikeFartlek(load(context)) ? "变速训练" : looksLikeDefault(load(context)) ? "间歇训练" : "我的计划";
     }
 
     public static String requirement(Context context) {
+        if (isExplicitlyEmpty(context)) return "请在手机或云端添加计划后再开始训练。";
         android.content.SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         if (preferences.contains(KEY_REQUIREMENT)) return preferences.getString(KEY_REQUIREMENT, "按阶段顺序完成训练。");
         if (looksLikeFartlek(load(context))) return "快跑 2 分钟，快走恢复 1 分钟，连续完成 6 组。\n快跑阶段保持可控强度，恢复阶段等待心率下降。";
@@ -86,8 +101,24 @@ public final class PlanStore {
     }
 
     public static void saveProfile(Context context, String name, String group, String requirement, ArrayList<Stage> stages) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+        if (!context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
                 .putString(KEY, encode(stages)).putString(KEY_NAME, name).putString(KEY_GROUP, group)
-                .putString(KEY_REQUIREMENT, requirement).apply();
+                .putString(KEY_REQUIREMENT, requirement).putBoolean(KEY_EXPLICIT_EMPTY, false)
+                .commit()) {
+            throw new IllegalStateException("plan_profile_commit_failed");
+        }
+    }
+
+    public static void clearProfile(Context context) {
+        if (!context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                .remove(KEY).remove(KEY_NAME).remove(KEY_GROUP).remove(KEY_REQUIREMENT)
+                .putBoolean(KEY_EXPLICIT_EMPTY, true).commit()) {
+            throw new IllegalStateException("plan_profile_clear_failed");
+        }
+    }
+
+    public static boolean isExplicitlyEmpty(Context context) {
+        return context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .getBoolean(KEY_EXPLICIT_EMPTY, false);
     }
 }

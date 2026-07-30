@@ -39,6 +39,7 @@ Phone 只从手表 `/v1/history` 读取 summary；任何 V3 请求出现 `route`
 - `POST /sync/v3/exchange` 使用 requestId/deviceId/cursor，plan/workout/sleep 各最多 25 项；重复 ID 同正文返回首次结果，不同正文复用 ID 拒绝。
 - 所有进程内 exchange 串行。active request 在网络前 `commit()`，失败后原样重试；`cursor_ahead` 只按服务器 `resetCursor` 清 active request 并重建，不丢 outbox。
 - plan 使用 expected revision OCC。普通 conflict 从 outbox 移入持久 conflict store，保留本地 candidate、ACK 和服务器计划库；HTTP 往返期间本地 revision/fingerprint 变化时，旧响应不得覆盖新编辑。
+- 云端计划先落 Phone 缓存和持久 plan outbox，再投影到 Watch；瞬时 BLE/LAN 失败由连接恢复、前台心跳和 WorkManager 自动重试。同一 cloud source 使用独立单调 revision 水位，切换数据源不会继承旧 source 的水位。
 - workout 是 create-once fact；同 ID 同内容幂等，不同内容冲突。训练删除只在手表 command ACK 后由云端写独立 tombstone，后续上传不能复活。
 - 睡眠首次回填最近 31 天，此后增量更新；暂时读不到不推断删除。
 - `watch_cloud_v3.xml` 被 Auto Backup 和 device transfer 排除。
@@ -59,17 +60,22 @@ Phone 只从手表 `/v1/history` 读取 summary；任何 V3 请求出现 `route`
 - `watch:control`：开始、暂停、继续、停止和命令状态。
 - `offline_access` 只作为连接协议 scope，不授予 Watch 数据权限。
 - device token 不能调用 MCP，OAuth token 不能调用 exchange。
-- authority observation 只读取 V3 checkpoint/device/cursor；真实验收前 `supportsPcOff=false`。
+- authority observation 只读取 V3 checkpoint/device/cursor。PC 不属于生产运行时；旧 `supportsPcOff` 字段只保留兼容，不再替代手机后台恢复证据。
 
-## 尚未完成的验收
+## 正式环境验收状态
 
-本地自动化和 APK 构建不能替代以下门禁：
+已完成：
 
-1. 用户手动重新授权真实 ChatGPT connector 新 scope；代理不得代点 consent。
-2. 完成一条真实超过 1 公里的训练，使云端出现非空公里分段；现有真实训练已回读摘要和平均心率，但没有 splits。
-3. D1/MCP/运行日志最终扫描确认无坐标、轨迹数组、逐点心率、凭据和 token。
-4. 实际关闭电脑与全部 Windows 服务，完成手机前台、后台 Doze、手机重启三轮 PC-off。
+1. Watch 0.21.1（32）与 Phone 0.23.0（19）已覆盖安装；Phone 使用 Keystore 包装的正式 device token，正式 exchange 返回 HTTP 200。
+2. 正式 Worker、D1 migration、10 个 authority trigger 和 OAuth `watch:read/watch:write/watch:control` 均 ready；正式 ChatGPT connector 已完成 owner consent。
+3. 显式标记的 1.2 km 合成记录从真实手表索引经 Phone 上传正式 D1，ChatGPT 精确回读 1000 m + 200 m 两个分段和 `cloud_authoritative/fresh` 状态。
+4. ChatGPT 通过正式 `watch_delete_workout` 清理该记录；手表索引和 MCP 列表均无该 ID，D1 按设计保留 immutable fact 并写 tombstone。
+5. ChatGPT 在正式环境创建临时计划，Phone 首次投影失败后由持久重试自动到达 Watch；修复跨 source revision 冲突后两端一致。正式删除返回 ACK，Cloud 列表无目标，Phone/Watch revision 均为 4，目标计划和两类 outbox 均为 0。
 
-已完成的 staging 真机证据：真实 Phone receipt、5 个计划、3 条训练、24 条睡眠；最新睡眠包含 session/stage；start/pause/resume/stop 均在 10 秒内 ACK；离线 start 命令 30 秒过期且恢复后未 delivered、未执行；Cloud MCP 临时计划经 Phone 和安全 BLE outbox 到达 Watch，随后云端、Phone、Watch 三处精确回滚。
+尚未完成：
 
-V3 staging 已完成基础远端合同，但生产发布、ChatGPT OAuth consent、Windows 服务卸载和本地 MCP 删除仍需在对应门禁后由用户确认执行。生产非空 MCP 回读、三轮 PC-off 和服务卸载全部通过前，不关闭 `BUG-041`，不设置 `supportsPcOff=true`。
+1. 开阔户外 GNSS、真实佩戴心率和传感器切换精度；合成分段不能替代这些测试。
+2. Phone 在后台 Doze 和手机重启后的自动补传/WebSocket 恢复。
+3. V2、手机 8766、本地 MCP/Tunnel 与 Windows 服务的迁移清理；它们不在生产链路，也不再作为云端验收前置。
+
+后续 Cloud 集成测试直接在正式环境进行。历史 staging 数据只作为过去的契约/故障证据，不再新增 staging 验收。用于正式环境的合成数据必须显式标注、走完整产品链路，并在验收后通过产品删除命令清理。

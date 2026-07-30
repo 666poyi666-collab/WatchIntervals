@@ -15,6 +15,40 @@ public class CloudV3SyncTest {
                 CloudV3Sync.channelEndpoint("https://watch.example/sync/v3/exchange"));
     }
 
+    @Test public void serverRevisionDomainIsOwnerScopedAndLegacyFallbackIsDeviceScoped()
+            throws Exception {
+        CloudSyncCredentials.Config first = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange", "dw1.device-one.abcdefghijklmnopqrstuvwxyz123456");
+        CloudSyncCredentials.Config same = new CloudSyncCredentials.Config(
+                "https://two.example/sync/v3/exchange", "dw1.device-one.abcdefghijklmnopqrstuvwxyz123456");
+        CloudSyncCredentials.Config second = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange", "dw1.device-two.abcdefghijklmnopqrstuvwxyz123456");
+        JSONObject advertised = new JSONObject().put("revisionDomainId", "v3d.production-owner");
+        assertEquals("v3d.production-owner", CloudV3Sync.revisionDomainId(advertised, first));
+        assertEquals(CloudV3Sync.revisionDomainId(advertised, first),
+                CloudV3Sync.revisionDomainId(advertised, second));
+        assertEquals(CloudV3Sync.legacyCloudSourceId(first),
+                CloudV3Sync.legacyCloudSourceId(same));
+        assertNotEquals(CloudV3Sync.legacyCloudSourceId(first),
+                CloudV3Sync.legacyCloudSourceId(second));
+        assertTrue(CloudV3Sync.validRevisionDomain("v3d.production-owner"));
+        assertFalse(CloudV3Sync.validRevisionDomain("device-one"));
+    }
+
+    @Test public void activeRequestIsBoundToTheExactCredentialGeneration() throws Exception {
+        CloudSyncCredentials.Config first = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange", "dw1.device-one.abcdefghijklmnopqrstuvwxyz123456");
+        CloudSyncCredentials.Config rotated = new CloudSyncCredentials.Config(
+                "https://one.example/sync/v3/exchange", "dw1.device-one.abcdefghijklmnopqrstuvwxyz654321");
+        JSONObject active = new JSONObject().put("credentialFingerprint",
+                CloudV3Sync.credentialFingerprint(first));
+        assertTrue(CloudV3Sync.activeMatchesCredential(active, first));
+        assertFalse(CloudV3Sync.activeMatchesCredential(active, rotated));
+        assertFalse(CloudV3Sync.sameCredential(first, rotated));
+        assertEquals(CloudV3Sync.configBindingId(first),
+                CloudV3Sync.configBindingId(rotated));
+    }
+
     @Test public void rejectsRouteCoordinatesAndHeartSamplesAtAnyDepth() throws Exception {
         assertTrue(CloudV3Sync.containsForbidden(new JSONObject().put("route", new JSONArray())));
         assertTrue(CloudV3Sync.containsForbidden(new JSONObject().put("nested",
@@ -80,6 +114,32 @@ public class CloudV3SyncTest {
         JSONObject edited = localLibrary(41, "Edited during HTTP round trip");
         assertFalse(CloudV3Sync.shouldApplyCloudPlan(active, edited));
         assertFalse(CloudV3Sync.shouldApplyCloudPlan(new JSONObject(), original));
+        assertEquals(CloudV3Sync.planFingerprint(original),
+                CloudV3Sync.cloudPlanFingerprint(cloudLibrary("Before request")));
+    }
+
+    @Test public void cloudAndPhoneFingerprintsShareNullAndSortOrderSemantics()
+            throws Exception {
+        JSONObject cloud = cloudLibrary("Ungrouped");
+        cloud.put("selectedPlanId", JSONObject.NULL);
+        cloud.getJSONArray("groups").getJSONObject(0).put("sortOrder", 7);
+        cloud.getJSONArray("plans").getJSONObject(0)
+                .put("groupId", JSONObject.NULL).put("sortOrder", 12);
+        JSONObject local = new JSONObject(cloud.toString())
+                .put("schemaVersion", 3).put("revision", 9)
+                .put("selectedPlanId", "").put("deletedPlanIds", new JSONArray());
+        local.getJSONArray("plans").getJSONObject(0)
+                .put("groupId", "").put("updatedAt", 100).put("revision", 9);
+
+        assertEquals(CloudV3Sync.cloudPlanFingerprint(cloud),
+                CloudV3Sync.planFingerprint(local));
+        JSONObject projected = CloudV3Sync.cloudPlanLibrary(local);
+        assertTrue(projected.isNull("selectedPlanId"));
+        assertTrue(projected.getJSONArray("plans").getJSONObject(0).isNull("groupId"));
+        assertEquals(12, projected.getJSONArray("plans").getJSONObject(0)
+                .getInt("sortOrder"));
+        assertEquals(7, projected.getJSONArray("groups").getJSONObject(0)
+                .getInt("sortOrder"));
     }
 
     @Test public void cursorAheadClearsOnlyActiveRequestAndKeepsOutbox() throws Exception {
@@ -179,6 +239,22 @@ public class CloudV3SyncTest {
 
         assertSame(current, rebound);
         assertEquals("v3c2", rebound.getString("cursor"));
+    }
+
+    @Test public void endpointAuthorityChangeResetsStateEvenWhenDeviceIdIsReused()
+            throws Exception {
+        JSONObject current = emptyState().put("deviceId", "watch-current")
+                .put("configBindingId", "old-binding").put("cursor", "v3c2")
+                .put("activeRequest", new JSONObject());
+
+        JSONObject rebound = CloudV3Sync.bindStateToConfig(
+                current, "watch-current", "new-binding");
+
+        assertNotSame(current, rebound);
+        assertEquals("watch-current", rebound.getString("deviceId"));
+        assertEquals("new-binding", rebound.getString("configBindingId"));
+        assertFalse(rebound.has("cursor"));
+        assertFalse(rebound.has("activeRequest"));
     }
 
     @Test public void commandResultRequiresImmediateFollowUpAndSurvivesRestartState() throws Exception {

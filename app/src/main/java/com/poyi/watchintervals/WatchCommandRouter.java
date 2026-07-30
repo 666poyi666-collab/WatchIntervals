@@ -73,7 +73,11 @@ final class WatchCommandRouter implements AutoCloseable {
                 new JSONObject().put("accepted",false).put("commandId",commandId)
                         .put("error","state_mismatch").put("actualState",actual).put("httpStatus",409)));
         Intent intent=new Intent(context,WorkoutService.class);
-        if("start".equals(action))intent.setAction(WorkoutService.ACTION_START).putExtra("plan",PlanStore.encode(PlanStore.load(context)));
+        if("start".equals(action)){
+            java.util.ArrayList<Stage> stages=PlanStore.load(context);
+            if(stages.isEmpty())return error(409,"plan_unavailable");
+            intent.setAction(WorkoutService.ACTION_START).putExtra("plan",PlanStore.encode(stages));
+        }
         else if("pause".equals(action))intent.setAction(WorkoutService.ACTION_PAUSE);
         else if("resume".equals(action))intent.setAction(WorkoutService.ACTION_RESUME);
         else if("toggle".equals(action))intent.setAction(WorkoutService.ACTION_TOGGLE);

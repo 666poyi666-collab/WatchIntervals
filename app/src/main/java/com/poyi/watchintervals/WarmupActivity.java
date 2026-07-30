@@ -56,6 +56,12 @@ public class WarmupActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         plan = getIntent().getStringExtra("plan");
         stages = PlanStore.decode(plan);
+        if (stages.isEmpty() && PlanStore.isExplicitlyEmpty(this)) {
+            android.widget.Toast.makeText(this, "当前没有可开始的训练计划",
+                    android.widget.Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
         if (stages.isEmpty()) stages = PlanStore.defaultPlan();
         plan = PlanStore.encode(stages);
         buildUi();

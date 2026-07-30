@@ -321,6 +321,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         if (!restored) {
             resetSession();
             stages = decodePlan(intent);
+            if (stages.isEmpty()) { stopSelf(); return; }
             running = true;
             workoutStartedAt = System.currentTimeMillis();
             openNewFileStore();
@@ -340,6 +341,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         if (running || preparing) return;
         resetSession();
         stages = decodePlan(intent);
+        if (stages.isEmpty()) { stopSelf(); return; }
         preparing = true;
         startForeground(NOTIFICATION_ID, notification());
         startSensors();
@@ -356,7 +358,10 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             catch (IllegalArgumentException ignored) {}
         }
         ArrayList<Stage> result = PlanStore.decode(plan);
-        return result.isEmpty() ? PlanStore.defaultPlan() : result;
+        if (!result.isEmpty()) return result;
+        result = PlanStore.load(this);
+        if (!result.isEmpty() || PlanStore.isExplicitlyEmpty(this)) return result;
+        return PlanStore.defaultPlan();
     }
 
     private void resetSession() {
@@ -1215,7 +1220,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         // received ACTION_START. Keep that transient state renderable instead
         // of indexing an empty stage list.
         if (stages.isEmpty()) stages = PlanStore.load(this);
-        if (stages.isEmpty()) stages = PlanStore.defaultPlan();
+        if (stages.isEmpty()) throw new IllegalStateException("plan_unavailable");
         stageIndex = Math.max(0, Math.min(stageIndex, stages.size() - 1));
         tick();
         if (running || preparing) refreshSensorRegistrations();

@@ -6,6 +6,7 @@
 
 | 文档 | 维护内容 | 何时更新 |
 | --- | --- | --- |
+| [maintenance-workflow.md](maintenance-workflow.md) | 每次开工、当次闭环、Bug 防复发、完成与例外规则 | 每次开工必读；工作流变化时更新 |
 | [product-requirements.md](product-requirements.md) | 用户、场景、需求编号、验收标准、范围 | 新增或改变产品行为时 |
 | [architecture-and-development.md](architecture-and-development.md) | 模块、状态、数据、接口、构建和代码规范 | 改架构、协议、存储或工具链时 |
 | [testing.md](testing.md) | 自动化策略、手表/手机/MCP 回归矩阵、发布门禁 | 修 Bug、新增功能或发现新风险时 |
@@ -25,7 +26,7 @@
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.23.0`（19） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | Watch `0.21.1` / Phone `0.23.0` Cloud V3 staging 候选；真实 Phone receipt、5 个计划、3 条训练、24 条睡眠、四类在线控制、离线过期不迟到执行及 Cloud MCP 计划到表已通过。真实公里分段、用户 ChatGPT 重绑、Doze/重启与三轮 PC-off 尚未完成，`supportsPcOff=false` |
+| 发布状态 | Watch `0.21.1` / Phone `0.23.0` 已安装并连接正式 Cloud V3；正式 Worker/D1/OAuth、Phone 上行、ChatGPT 三 scope connector、1.2 km/2 分段合成全链路回读和产品删除 tombstone 已通过。PC 不在运行链路；剩余真机风险是户外 GNSS/心率与手机 Doze/重启恢复 |
 
 ## 事实来源
 
@@ -40,7 +41,9 @@
 5. 发布前执行 [testing.md](testing.md) 的门禁，禁止只凭“能编译”判定可发布。
 6. 日志不得记录配对码、API Key、Token、精确家庭网络地址或真实运动轨迹。
 7. 提交说明采用 `type(scope): summary`；建议类型为 `feat`、`fix`、`docs`、`test`、`refactor`、`build`、`chore`。
+8. 不建立普通 TODO/待办池；当前可解决的问题当次闭环，真实外部阻断按 [maintenance-workflow.md](maintenance-workflow.md) 记录证据和关闭条件。
+9. Bug 修复必须留下能防止相同根因复发的自动化测试，无法自动化时留下编号人工用例和验证证据。
 
 ## 新对话启动清单
 
-后续让 AI/Codex 继续开发时，先要求读取本索引、需求文档、开放 Bug 和相关源码；开发结束后要求更新文档、构建、执行对应回归并记录证据。这能把 Vibe Coding 从临时对话转为可审计的工程过程。
+后续让 AI/Codex 继续开发时，先读取本索引、[maintenance-workflow.md](maintenance-workflow.md)、相关需求/Bug/测试和源码；开发结束前完成实现、回归、文档和项目日志闭环。除用户明确延期或有已举证的外部阻断外，不把当前能解决的问题留到下一次对话。

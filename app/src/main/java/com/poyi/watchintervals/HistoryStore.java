@@ -138,8 +138,27 @@ final class HistoryStore {
     }
 
     static synchronized JSONArray toJson(Context context) {
+        migrateLegacy(context);
+        reconcile(context);
+        try { return summariesForSync(readIndex(context)); }
+        catch (Exception error) {
+            android.util.Log.w("HistoryStore", "Unable to read workout summaries", error);
+            return new JSONArray();
+        }
+    }
+
+    /** Preserve already-derived summary fields without loading private route or heart samples. */
+    static JSONArray summariesForSync(JSONArray index) throws Exception {
         JSONArray result = new JSONArray();
-        for (WorkoutRecord record : load(context)) try { result.put(record.toSummaryJson()); } catch (Exception ignored) {}
+        for (int i = 0; i < index.length(); i++) {
+            JSONObject item = index.optJSONObject(i);
+            if (item == null) continue;
+            JSONObject summary = new JSONObject(item.toString());
+            summary.remove("route");
+            summary.remove("heartRateSamples");
+            summary.remove("coordinates");
+            result.put(summary);
+        }
         return result;
     }
 

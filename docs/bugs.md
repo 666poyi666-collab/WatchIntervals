@@ -5,7 +5,9 @@
 
 严重度：P0 数据损坏/训练核心不可用；P1 核心行为错误或高风险；P2 有降级路径；P3 体验或维护问题。状态使用 `Open`、`In Progress`、`Fixed`、`Verified`、`Won't Fix`。
 
-## 1. 开放项
+## 1. 编号缺陷台账
+
+本节是事实和证据台账，不是 TODO 清单。状态、根因、修复和回归按 [maintenance-workflow.md](maintenance-workflow.md) 维护；当前批次新发现且可解决的问题必须当次闭环，历史 `Open` 项只表示尚未进入当前授权范围的已确认缺陷。
 
 ### BUG-001：关键路径自动化测试仍不完整
 
@@ -135,13 +137,12 @@
 
 ### BUG-014：计划 outbox 尚未形成完整可靠同步协议
 
-- 状态：Open
+- 状态：Verified（由 BUG-044 的完整快照投影协议关闭）
 - 严重度：P2
-- 影响：手机 0.11.0-debug 候选
-- 已实现：持久 operationId、完整库 revision、ACK 清理、手表最近 500 个 operationId 去重、旧 revision 冲突、重启后保留 pending、MCP 手表回读验证。
-- 未实现：per-plan 操作与 revision、真实 tombstone、后台退避调度、死信状态、乱序操作合并规则，以及普通手机 UI 同步后的手表内容回读。
-- 当前约束：完整库快照入队时压缩旧快照；离线时只能报告 pending，不得描述为可靠同步已经完成。
-- 关闭条件：API-014 和重启/离线/ACK 丢失/乱序矩阵通过，手机与手表最终状态经回读一致。
+- 影响：手机 0.11.0-debug 至 Phone 0.23.0 早期候选
+- 根因：早期协议只有随机 operationId、完整库快照和 ACK 清理，没有独立后台调度、ACK-loss 重放身份、损坏 journal 恢复或空库语义。
+- 关闭实现：当前计划投影以完整 Phone 权威快照合并乱序变化，相同内容生成稳定 operationId，ACK receipt 与 pending 删除同次提交；journal 可从 `PhonePlanLibrary` 重建，独立 Worker/连接恢复/前台心跳补偿，Watch 支持空库并持久去重。详细根因、防复发和真机证据统一维护在 BUG-044。
+- 验证：API-029 正式计划创建/删除往返已确认 Phone/Watch 最终一致且 pending 为 0；ACK-loss、旧 ACK 与并发新快照、损坏编码和空库由 JVM 回归覆盖。
 
 ### BUG-015：BLE 认证尚未达到正式安全配对要求
 
@@ -396,28 +397,52 @@
 - 处理：三个 Keystore wrapper 统一改为 `Cipher.init(ENCRYPT_MODE, key)`，从 provider 读取并校验 12-byte `Cipher.getIV()` 后与 ciphertext 一起持久化；decrypt 格式保持兼容。
 - 验证：关联 `PT-021`。真实 Phone androidTest 验证 nonce 不重复、正确 AAD 回解、错误 AAD 拒绝，以及 staging device token/root 均以 ciphertext/nonce 保存、旧 plaintext v1 配置清除；force-stop 后仍可回解，并持久化网络约束的一次性/周期 WorkManager。真实 Watch 覆盖安装后通过 provider-generated nonce、正确/错误 AAD 回解，并在进程停止后确认自定义 action 与显式伪造 `BOOT_COMPLETED` 均不能拉起进程。未执行设备重启，不把本项证据扩张为 PC-off 完成。
 
-### BUG-041：Cloud V3 尚无 staging 真数据与 PC-off 证据，不能退役本地 MCP
+### BUG-041：Cloud V3 后台恢复证据与迁移资产清理尚未完成
 
-- 状态：Open，阻断 `REQ-SYNC-004`、`REQ-SYNC-016` 至 019、`API-025` 至 027
-- 严重度：P0（发布阻断）
+- 状态：Fixed，待手机 Doze/重启验证
+- 严重度：P1
 - 发现版本：Watch 0.21.1 / Phone 0.22.1 V2 staging；延续影响 Phone 0.23.0 Cloud V3 候选
 - 环境：V3 staging Watch deployment `824ca395-5f63-4d73-9a61-aea29c1b04ee` / commit `74e90b6888eba55ec47cfdaa5f3706f4a7f6c758`；OAuth deployment `acc012e0-06bf-44cb-a973-bc7bb6ba6b5c`
-- 现象：V2 staging 曾出现 health/ready/OAuth 全绿但 projection 0 行，证明“服务在线”不能替代实际业务数据。V3 现已有真实 Phone receipt、非空计划/训练/睡眠回读、在线控制、离线不迟到执行和计划到表证据；真实公里分段、用户 ChatGPT 重绑、Doze/重启和三轮 PC-off 仍未完成。
-- 影响：不能宣称 ChatGPT 已获得真实训练计划和任务数据，不能设置 `supportsPcOff=true`，也不能删除本地 MCP、Tunnel、手机 8766 或卸载 Windows 服务。
+- 现象：V2 staging 曾出现 health/ready/OAuth 全绿但业务数据为空，证明“服务在线”不能替代实际业务回读。正式 V3 现已有 Phone receipt、计划/训练/睡眠、ChatGPT 三 scope OAuth、合成公里分段回读、在线删除 ACK 和 tombstone；未完成项只剩手机 Doze/重启补偿与旧迁移资产清理。
+- 影响：核心生产链路已经确认不经过 PC；Windows MCP/Tunnel/手机 8766 不再参与能力判断。手机被系统长时间限制或重启后的自动恢复仍有真机风险。
 - 已处理：V3 authority 改为只读 V3 checkpoint/device/cursor；Phone 持久化 outbox/active request/cursor/receipt/conflict，保护并发计划编辑；WebSocket 直接轻量 exchange；成功命令同次二次 exchange；离线命令不提前 ACK；训练删除经手表幂等控制 ACK 后才写云端 tombstone；route/坐标/逐点心率双端拒绝。
-- 验证：Android 双模块单测、Lint、debug/release 构建通过；Worker static/schema/D1/Worker 为 8/5/8/38，OAuth Worker/script 为 35/6，均通过 typecheck。staging 真实数据为 1 个活跃设备、5 个计划、3 条训练、24 条睡眠；四类在线控制为 6412/7394/7213/9199 ms。离线 start 命令恢复后保持 expired、从未 delivered；Cloud MCP 临时计划已在 Phone/Watch 双端回读并回滚。现有训练无 splits，因此公里分段仍开放。
-- 关闭条件：V3 staging migration 和固定 revision 部署；用户手动重新授权新 scope；ChatGPT 创建计划并到达手表；真实训练摘要/分段/心率和真实睡眠非空回读；四类在线控制均在 10 秒内 exactly-once；离线命令过期后不迟到执行；D1/MCP/日志隐私扫描通过；关闭电脑完成前台、Doze、手机重启三轮；生产非空回读后卸载本地服务。全部完成后才关闭本项并设置 `supportsPcOff=true`。
+- 验证：Android 双模块单测和 debug 构建、Worker/OAuth 分层测试与 typecheck 已通过。正式 D1 保留真实计划、3 条非测试训练和 24 条睡眠；ChatGPT 正式 connector 精确回读 1.2 km/2 分段，`authority=cloud_authoritative`、`freshness=fresh`。正式删除命令返回 `DELETED`，手表索引与 MCP 列表均无测试 ID，D1 写 1 条 tombstone。历史 staging 四类在线控制与离线过期不迟到执行仍作为回归证据。
+- 关闭条件：Phone 在后台 Doze 和手机重启后能自动恢复 V3 exchange/WebSocket；旧 V2、8766、Windows MCP/Tunnel 作为独立迁移清理批次处理。PC-off 不再是运行时门禁。
 
-### BUG-042：Cloud V3 revision 被手表本地时间戳 revision 拒绝
+### BUG-042：计划 revision 缺少 owner/library authority domain
+
+- 状态：Fixed，待正式 `v3d.*` 真机投影确认
+- 严重度：P1
+- 影响：Watch 0.21.1 / Phone 0.23.0 Cloud V3 staging 与正式候选
+- 根因：Cloud V3 使用从 1 开始的单调 revision，迁移前 Phone/Watch 使用时间戳；第一轮按 device identity 派生 source 又把设备身份误当成计划 revision authority。同一 owner 的多台 Phone 会错误切域，不同 authority 也缺少服务端稳定边界；Watch 还允许已绑定正式源后回退到 staging/legacy。
+- 修复：Worker 对每个成功 V3 exchange 返回 owner/library 级稳定 `revisionDomainId`；production/staging 分别配置不同 `v3d.*` 值，缺失或非法时 `/readyz` 与 exchange fail closed。Phone 把该 domain 与库 revision/fingerprint、投影元数据原子保存；旧无字段响应仅走一次 legacy device fallback。Watch 允许 legacy→`v3d.*` 单向升级，同一 domain 严格防回退，一旦绑定 authority domain 就拒绝其他 `v3d.*`、legacy 或无 source 覆盖。
+- 防复发测试：Worker 黑盒覆盖精确 domain、replay、计划 conflict，以及缺失/空/短值/非法字符/超长配置 fail closed；`CloudV3SyncTest` 覆盖多设备共享服务端 domain、credential generation 与 endpoint authority 重绑；`PlanLibraryStoreTest` 覆盖 legacy 升级、同源回退和退休来源 fence。
+- 验证：上一轮 legacy source 已完成正式计划 revision 3→4 真机往返；新 owner-domain 实现已通过 Worker/Android 自动化，尚需部署正式 Worker 并确认 Watch 保存的 source 为 production `v3d.*` 后恢复 `Verified`。
+
+### BUG-043：手表历史摘要 API 丢失已派生公里分段
 
 - 状态：Verified
 - 严重度：P1
-- 影响：Watch 0.21.1 / Phone 0.23.0 Cloud V3 staging 候选
-- 根因：Cloud V3 使用从 1 开始的单调 revision，迁移前 Phone/Watch 计划库使用毫秒时间戳；手表把两者放在同一数值域比较，导致首个 Cloud MCP 计划下发返回 conflict。
-- 处理：Cloud 下发使用显式 `cloud_replace` 操作；Watch 为云端 revision 单独持久化单调水位，云端替换不再与本地时间戳比较，旧 cloud revision 仍拒绝。BLE/LAN 两条传输共用 `PlanLibraryStore.applySyncOperations`。
-- 验证：`PlanLibraryStoreTest` 覆盖迁移与回退；真机 Cloud MCP 创建临时计划后 Phone revision 8 与 Watch 均回读命中，安全 outbox pending 归零，删除后云端/Phone/Watch 均回到 0 条临时计划。
+- 影响：Watch 0.21.1 / Phone 0.23.0 正式 Cloud V3
+- 复现：手表 `summary.json` 已含 `splits`，但 `/v1/history` 返回的同一记录没有分段，Phone 与 Cloud MCP 因而只能上传空数组。
+- 根因：`HistoryStore.toJson()` 先调用 `load()`，经 `WorkoutRecord.fromJson()` 重建对象后再调用 `toSummaryJson()`；`fromJson()` 不保留已派生的 splits/最佳配速/心率范围，且 summary 路径有意不加载完整路线，无法再次计算。
+- 影响范围与同类入口排查：问题只影响 summary 列表/云同步；完整本地详情仍可从样本文件计算。新路径直接使用 reconcile 后的摘要索引，并显式移除 route、coordinates 和逐点心率，避免修复分段时扩大云端数据面。
+- 修复位置：`HistoryStore.toJson()` / `summariesForSync()`。
+- 防复发测试：`HistoryStoreSummaryTest.cloudSummariesPreserveDerivedSplitsWithoutPrivateSamples` 覆盖保留 splits、最佳配速、心率范围以及剔除私有样本。
+- 验证：合成记录从真实手表索引经 Phone 正式 V3 上传，ChatGPT `watch_list_workouts` 精确回读 1200 m、2 个分段；随后正式 `watch_delete_workout` 获手表 ACK，手表/MCP 消失且 D1 写 tombstone。合成数据仅验证摘要与同步，不替代户外传感器测试。
 
-## 2. 已修复/历史项
+### BUG-044：Phone→Watch 计划投影缺少可恢复 journal 与独立后台语义
+
+- 状态：Fixed，待 Doze/重启与 ACK-loss 真机故障注入
+- 严重度：P1
+- 影响：Phone 0.23.0 正式 Cloud V3 候选
+- 复现：正式 ChatGPT 创建临时计划后，Cloud 与 Phone revision 3 已可回读，但 45 秒内 Watch 无该计划；只有用户在 Phone 手动触发“立即同步”时，持久 plan outbox 才会再次尝试。
+- 扩大根因：初版修复仍把投影重试绑在需要互联网/Cloud credential 的 Worker；相同快照会生成新 operationId，ACK 丢失后无法命中 `already_applied`；损坏 outbox 被当作空队列；持久写忽略 `commit()` 失败；空计划库在 Watch 被拒绝；Cloud 响应、Phone 本地编辑和 Watch ACK 之间仍有覆盖/崩溃窗口。排空方法还在类锁内执行最长 20 秒网络 I/O，可阻塞 10 秒命令确认。
+- 修复：新增无网络约束、无 Cloud credential 依赖的 `PhonePlanProjectionWorker`，一次性任务与 15 分钟周期任务由 boot/watchdog/连接恢复/前台心跳共同调度。`PhoneSyncOutbox` 以 snapshot fingerprint 生成稳定 operationId，ACK receipt 与 pending 删除同次 `commit()`；journal 损坏先备份，再从 Phone 完整计划库重建。网络 I/O 移出锁，旧 ACK 只合并其实际发送的 operationId，不能删除并发入队的新快照。Cloud 计划在同一 Phone 锁内 compare-and-apply，并把 projection operation/source/revision/fingerprint 同次提交；Watch 所有关键写检查 `commit()`，支持空库并清理选中 profile，ACK 只在库/profile/source/revision/去重记录全部落盘后返回。
+- 防复发测试：`PhoneSyncOutboxTest` 覆盖 ACK-loss 保留 ID、新快照压缩、损坏编码、网络期间新快照与非请求 ACK；`PhonePlanProjectionSyncTest` 覆盖无 Cloud credential/互联网时仍重试；`PhonePlanLibrarySyncFormatTest`/`CloudV3SyncTest` 覆盖原子云应用和 concurrent local edit；`PlanLibraryStoreTest` 覆盖空库与 authority fence。
+- 验证：上一候选无需手动同步即完成正式临时计划创建/删除，Phone/Watch revision 4 且两类 outbox 为 0；扩大修复已通过 JVM 自动化。真实 Phone Doze/重启、SharedPreferences 失败和 ACK-loss 断点仍按 PT-010/PT-018/PT-025 做故障注入，因此当前状态为 `Fixed` 而非 `Verified`。
+
+## 2. 早期历史项
 
 以下记录依据源码注释、README 和本地回归文件名重建；精确修复提交在首个 Git 提交之前不存在，因此证据等级低于后续规范化记录。
 
@@ -446,7 +471,7 @@
 
 ```markdown
 ### BUG-NNN：标题
-- 状态：Open
+- 状态：In Progress/Fixed/Verified/Blocked
 - 严重度：P0/P1/P2/P3
 - 发现版本：
 - 环境：设备、系统、应用版本
@@ -455,7 +480,11 @@
 - 实际结果：
 - 预期结果：
 - 日志/截图：不得含敏感数据
-- 初步根因：
+- 根因：
+- 影响范围与同类入口排查：
+- 修复位置：
 - 修复提交：
-- 验证用例：
+- 防复发测试：自动化用例；无法自动化时填写编号人工用例
+- 验证命令与结果：
+- 外部阻断与唯一关闭条件：仅 `Blocked` 时填写
 ```

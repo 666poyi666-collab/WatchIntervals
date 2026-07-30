@@ -28,6 +28,7 @@ public class PhoneBootReceiver extends BroadcastReceiver {
         startServices(context);
         schedule(context);
         EncryptedWatchSyncWorker.schedule(context.getApplicationContext());
+        PhonePlanProjectionWorker.schedule(context.getApplicationContext());
     }
 
     static void startServices(Context context) {
