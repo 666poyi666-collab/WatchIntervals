@@ -1,5 +1,6 @@
 package com.poyi.watchintervals.phone;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -14,6 +15,7 @@ import android.view.View;
  * or copied SF Symbols. Geometry lives in a 24-unit viewport and therefore remains crisp at any
  * density.</p>
  */
+@SuppressLint("ViewConstructor") // Programmatic-only view requires an explicit product symbol.
 final class PhoneSymbolView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();

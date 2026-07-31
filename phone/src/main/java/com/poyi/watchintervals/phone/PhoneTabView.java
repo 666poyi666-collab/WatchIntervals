@@ -1,5 +1,6 @@
 package com.poyi.watchintervals.phone;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -10,6 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /** One accessible destination inside the floating phone navigation surface. */
+@SuppressLint("ViewConstructor") // Programmatic-only view requires its destination contract.
 final class PhoneTabView extends LinearLayout {
     private final PhoneNavigationSpec.Item item;
     private final PhoneSymbolView symbol;

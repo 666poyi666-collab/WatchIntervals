@@ -41,6 +41,7 @@
 ### Verification
 
 - 前一正式 ChatGPT 候选已回读合成记录 `1200 m`、`2` 个分段（1000 m/300 s、200 m/60 s），随后通过产品命令删除并写 D1 tombstone；临时计划完成 Cloud→Phone→Watch 创建和反向删除，Phone/Watch revision 均为 4 且两类 outbox 为 0。本批 Watch/Phone JVM 44/87 项、双模块 lint/debug/release、Worker 10/5/8/39 项、Markdown 链接和 diff 门禁全绿，四个 APK 哈希记录在项目日志；目标 Watch 不在线，旧验收不冒充新 `revisionDomainId`/空库/ACK-loss/指定 planId/命令 journal 证据。
+- 手机 UI 批次通过双模块 `test/lint/assembleDebug`（140 tasks）、MCP pytest 12/12、Markdown 本地链接和差异检查；API 35 模拟器验证 1.0×/2.0× 字体、深色启动画面、V3 设置、浮动底栏与四目的地可访问名称。厂商字体、多启动器蒙版和主题图标仍按 PT-026/027 留在发布真机门禁。
 
 ## [Watch 0.21.1 / Phone 0.22.1] - 未发布
 

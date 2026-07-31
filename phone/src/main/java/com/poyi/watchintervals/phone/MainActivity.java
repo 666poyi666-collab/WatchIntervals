@@ -98,11 +98,9 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Palette.BG);
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-        if(android.os.Build.VERSION.SDK_INT>=29)getWindow().setNavigationBarDividerColor(Palette.BG);
-        int statusBarResource=getResources().getIdentifier("status_bar_height","dimen","android");
-        int topInset=(statusBarResource>0?getResources().getDimensionPixelSize(statusBarResource):0)+dp(10);
-        int navBarResource=getResources().getIdentifier("navigation_bar_height","dimen","android");
-        int bottomInset=navBarResource>0?getResources().getDimensionPixelSize(navBarResource):0;
+        getWindow().setNavigationBarDividerColor(Palette.BG);
+        int topInset=dp(10);
+        int bottomInset=0;
         bottomSystemInset=bottomInset;
         float fontScale=getResources().getConfiguration().fontScale;
         navigationHeight=dp(Math.round(66f+Math.max(0f,fontScale-1f)*20f));
@@ -163,7 +161,7 @@ public class MainActivity extends Activity {
 
         planEditorPanel=new LinearLayout(this);planEditorPanel.setOrientation(LinearLayout.VERTICAL);planEditorPanel.setVisibility(View.GONE);
         LinearLayout editorHeader=new LinearLayout(this);editorHeader.setGravity(Gravity.CENTER_VERTICAL);
-        Button closeEditor=button("‹ 计划列表",Color.TRANSPARENT,Palette.MOVE);closeEditor.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(118),dp(48)));
+        Button closeEditor=button("‹ 计划列表",Color.TRANSPARENT,Palette.MOVE);closeEditor.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(118),dp(48)));
         planEditorPanel.addView(editorHeader);
         planEditorPanel.addView(text("编辑安排",22,true,Palette.TEXT));
         planEditorPanel.addView(text("安排信息",16,true,Palette.TEXT));
@@ -686,7 +684,7 @@ public class MainActivity extends Activity {
             LinearLayout planBlock=card();planBlock.setPadding(dp(16),dp(14),dp(16),dp(14));planBlock.setBackground(rounded(Palette.CARD,22));
             LinearLayout titleRow=new LinearLayout(this);titleRow.setGravity(Gravity.CENTER_VERTICAL);
             TextView header=text(group.optString("name"),19,true,Palette.TEXT);header.setSingleLine(false);titleRow.addView(header,new LinearLayout.LayoutParams(0,-2,1));
-            TextView count=text(arrangementCount+" 个安排",12,false,Palette.TEXT_DIM);count.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);titleRow.addView(count,new LinearLayout.LayoutParams(dp(82),dp(38)));
+            TextView count=text(arrangementCount+" 个安排",12,false,Palette.TEXT_DIM);count.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);titleRow.addView(count,new LinearLayout.LayoutParams(dp(82),dp(38)));
             planBlock.addView(titleRow);
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);
             Button addDay=button("＋ 添加安排",Palette.FILL_RUN,Palette.EXERCISE);actions.addView(addDay,new LinearLayout.LayoutParams(0,dp(48),1));
