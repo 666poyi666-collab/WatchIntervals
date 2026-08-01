@@ -614,3 +614,10 @@
 - 自动化：新增 `PhoneNavigationSpecTest` 固定四目的地顺序、唯一图形和可访问名称，`PhoneColorSpecTest` 对正文/提示/亮色按钮执行 4.5:1 门禁，`PhoneLauncherResourceTest` 验证 adaptive/round/monochrome 引用与中央 66dp 安全区；`:phone:testDebugUnitTest --rerun-tasks` 成功。API 35、1080×2400 模拟器覆盖安装后，计划页与断连训练页截图显示浮动底栏没有字体替代符，UI hierarchy 确认四个目的地的中文可访问名称和选中状态；最终设置页只含 V3、无 V2/恢复包入口，2.0× 字体截图未裁切底栏标签。Android 12+ 启动画面同步使用深蓝黑背景和原创前景，不再闪白。
 - 影响文件：Phone `MainActivity`、`HistoryDetailActivity`、`Palette`、新增 symbol/navigation/cloud setup/color contract、主题与 launcher 资源及四项单元测试；文档更新 requirements、architecture、testing、bugs、README 索引、CHANGELOG 和本日志。未安装或操作连接中的真实手机/手表，模拟器截图留在忽略的 `phone/build/reports/ui`，不进入 Git。
 - 最终门禁：首次完整 Lint 捕获 `AppTheme.Base` 点号命名造成的隐式资源父级循环，改名为 `BaseAppTheme` 后重跑 `gradlew test lint :app:assembleDebug :phone:assembleDebug`，140 tasks 成功；清理内部 inset resource、程序化 View constructor 与 RTL 新警告后再次全量通过，Phone Lint 为 0 errors。MCP pytest 12/12、15 份 Markdown 中 33 个本地链接与 `git diff --check` 通过。Watch/Phone debug APK SHA-256 分别为 `3B15B4932C00956CD8CA2F2A71F23F2977143396F33592FAC509E85670D6084F`、`37DBB0EDB42F26374759227AC0DC8EA1C51102184AB72A7842EDA8DC356A1064`。本批不发布、不安装真实设备；发布候选仍按 PT-026/027 执行厂商字体、业务长文案、多蒙版与 themed icon 真机门禁。
+
+## 2026-08-01：Phone 最新 debug 候选覆盖安装
+
+- 目标：按用户要求重新连接 Xiaomi xaga，并把当前工作区最新 Phone debug APK 覆盖安装到真实手机；保留现有应用数据，不操作平板、手表、配对码或云端凭据。
+- 连接与构建：无线 ADB 重新连接后识别为 `xaga / 22041216C`；执行 `:phone:assembleDebug` 成功。安装前设备报告 `versionName=0.23.0`、`versionCode=19`。
+- 安装与启动：`adb install -r phone-debug.apk` 返回 `Success`；安装后版本仍为 Phone `0.23.0`（19），`am start -W com.poyi.watchintervals.phone/.MainActivity` 返回 `Status: ok`，应用进程存活。
+- 精确产物验证：从设备包管理器返回的实际安装路径拉取 `base.apk` 到忽略的 `phone/build/reports/install`，设备侧与本地产物 SHA-256 均为 `37DBB0EDB42F26374759227AC0DC8EA1C51102184AB72A7842EDA8DC356A1064`。该证据只证明连接、覆盖安装、字节一致和冷启动成功，不冒充 PT-026/027 全页面视觉、Doze/重启或端到端云同步验收。
