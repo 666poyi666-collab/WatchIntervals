@@ -4,6 +4,12 @@ import org.junit.Test;
 import static org.junit.Assert.assertTrue;
 
 public class PhoneColorSpecTest {
+    @Test public void phoneDefaultsToAHighLuminanceReadingSurface() {
+        assertTrue("background must remain light", luminance(PhoneColorSpec.BG) >= 0.85);
+        assertTrue("content cards must remain light", luminance(PhoneColorSpec.CARD) >= 0.90);
+        assertContrast("primary text on page", PhoneColorSpec.TEXT, PhoneColorSpec.BG, 7.0);
+    }
+
     @Test public void textAndControlsMeetBodyContrastThreshold() {
         assertContrast("primary text on card", PhoneColorSpec.TEXT, PhoneColorSpec.CARD, 4.5);
         assertContrast("secondary text on raised card", PhoneColorSpec.TEXT_DIM,
@@ -16,6 +22,8 @@ public class PhoneColorSpecTest {
         assertContrast("walk label", PhoneColorSpec.STAND, PhoneColorSpec.FILL_WALK, 4.5);
         assertContrast("rest label", PhoneColorSpec.YELLOW, PhoneColorSpec.FILL_REST, 4.5);
         assertContrast("danger label", PhoneColorSpec.RED, PhoneColorSpec.FILL_DANGER, 4.5);
+        assertContrast("selected label", PhoneColorSpec.MOVE,
+                PhoneColorSpec.FILL_SELECTED, 4.5);
     }
 
     private static void assertContrast(String message, int first, int second, double minimum) {

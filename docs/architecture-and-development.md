@@ -64,7 +64,9 @@
 
 系统运动应用的旧路线不在 HealthKit `ExerciseSessionRecord` 中，而存于健康服务的 `sport_gps` 表，并经 `ISportAidlInterface2.queryGpsByte(sportId)` 返回压缩 protobuf。虽然 BinderProvider 外层 permission 标记为 normal，provider 内部仍校验调用包签名，第三方签名会得到 `signature not match`，因此本应用不能把该私有库当作稳定导入 API。系统运动和本应用的轨迹观察层现均使用 Baidu Map SDK 7.5.9 暗色矢量地图，但本应用只绘制自身保存的合法原始点，不读取或伪造系统私有路线。
 
-跑者图形由 `Ui.WorkoutGlyph` 以本地几何绘制：粗实心躯干、圆帽加权四肢和前倾重心保证 34–36 dp 下仍可辨识。按压由 `Ui.pressable()` 统一提供 `1 → 0.94 → 1` 的 RenderThread 缩放、轻微透明度与触觉反馈；准备倒计时复用 `Ui.popIn()`，每一拍单独触觉提示。实现只参考 OWW221 系统运动应用的视觉和交互原则，不复制厂商 path、图片、字体或其他专有资产。
+训练标志由 `Ui.WorkoutGlyph` 以本地几何绘制为开口路线与前进三角，和 Phone 的 WORKOUT symbol 使用同一视觉语法；34–38dp 下不再塞入难以辨认的头部、躯干和关节。按压由 `Ui.pressable()` 统一提供 `1 → 0.94 → 1` 的 RenderThread 缩放、轻微透明度与触觉反馈；准备倒计时复用 `Ui.popIn()`，每一拍单独触觉提示。实现只参考 OWW221 系统运动应用的视觉和交互原则，不复制厂商 path、图片、字体或其他专有资产。
+
+手机端 `com.heytap.health` 不在项目安装或数据访问链路中，`phone` 模块不链接其 provider/service。厂商健康数据只由 Watch 侧 `SystemSleepBridge`/`SystemExerciseBridge` 对已安装且与固件匹配的 `com.heytap.wearable.health` 做能力探测和只读桥接。OPPO Health 的关键接口受厂商 signature 权限和非导出组件保护；反编译后重签既不能覆盖原厂包，也不能获得厂商签名权限，因此不得把修改、重签或替换 OPPO Health 当成 Phone APK 的安装步骤。
 
 `WatchPagerLayout` 是主页和训练的唯一横向分页容器。它使用系统 paging touch slop、quintic ease-out 和按剩余距离计算的约 210–267 ms 吸附；固定页码由容器根据连续 `scrollX` 绘制，拖动时主动点同步位移并拉伸，不再由每页维护一组静态圆点。吸附过程中再次按下会接管仍有明显余量的运动，接近终点则先完成吸附，任何路径都必须回到整页。主页三张低频静态页可在空闲阶段预热当前页及相邻页的硬件层；训练五页包含每秒数据，禁止整页缓存，防止纹理持续失效反而增加合成成本。
 
@@ -72,9 +74,11 @@
 
 ### 2.2 手机视觉层
 
-手机继续使用 Java 动态 View，不引入另一套 UI 框架。`Palette`/`PhoneColorSpec` 提供内容层、功能浮层和原创训练强调色，并允许 JVM 直接验证对比度；`MainActivity` 保持计划/训练/历史/睡眠四个顶级目的地，滚动内容与底部浮动导航分层。底栏和独立可滚动连接设置层使用半透明深色渐变、细描边与同心圆角，内容卡保持实色，避免把 Liquid Glass 启发式效果扩散成卡片墙。系统栏采用深色 edge-to-edge，`WindowInsets` 是顶部、底栏和滚动尾部安全区的运行时事实，不再只依赖固定系统资源高度；底栏高度随 font scale 增长，避免大字体被固定 66dp 容器裁切。
+手机继续使用 Java 动态 View，不引入另一套 UI 框架。`Palette`/`PhoneColorSpec` 提供日光亮色内容层、克制的功能浮层和原创训练强调色，并允许 JVM 直接验证亮度与对比度；`MainActivity` 保持计划/训练/历史/睡眠四个顶级目的地，滚动内容与底部浮动导航分层。底栏和独立可滚动连接设置层使用半透明白色渐变、细描边、轻阴影与同心圆角，内容卡保持浅色实心，避免把玻璃启发式效果扩散成卡片墙。系统栏采用亮色 edge-to-edge，`WindowInsets` 是顶部、底栏和滚动尾部安全区的运行时事实，不再只依赖固定系统资源高度；底栏高度随 font scale 增长，避免大字体被固定 66dp 容器裁切。
 
-`PhoneNavigationSpec` 固定目的地顺序、短标签和可访问名称；`PhoneTabView` 提供至少 48dp 触控区、选中状态与胶囊反馈；`PhoneSymbolView` 在 24×24 视口绘制项目原创的计划、训练、历史、睡眠、返回与定位图形，不依赖 OEM 字体中的 Unicode 图标。启动器使用原创“间歇路线”自适应矢量，并提供 Android 13 monochrome 层。具体来源、许可边界与资源清单见 [phone-ui-design.md](phone-ui-design.md)；Apple UI Kit、SF 字体、SF Symbols 与 Activity Rings 路径均不进入 APK 或仓库。
+`PhoneNavigationSpec` 固定目的地顺序、短标签和可访问名称；`PhoneTabView` 提供至少 48dp 触控区、选中状态与胶囊反馈；`PhoneSymbolView` 在 24×24 视口绘制项目原创的计划、训练、历史、睡眠、返回与定位图形，不依赖 OEM 字体中的 Unicode 图标。Phone 与 Watch 启动器共享同一组原创“间歇路线” path、颜色、深色背景和自适应安全区，Phone 另提供 Android 13 monochrome 层；单元测试跨模块比较 path，阻止两个入口再次漂移。具体来源、许可边界与资源清单见 [phone-ui-design.md](phone-ui-design.md)；Apple UI Kit、SF 字体、SF Symbols 与 Activity Rings 路径均不进入 APK 或仓库。
+
+手机睡眠页采用 offline-first 投影。`PhoneSleepRepository` 把每次成功读取的最近 31 天 `record/session/stage` 合并进 SharedPreferences schema 1；传输失败、权限暂不可用或 ready 空列表都不删除既有记录，损坏/未来 schema 安全忽略。`PhoneSleepOverview` 只聚合系统实际提供的多 session 总时长、深睡、浅睡、REM、清醒、评分、血氧、心率和呼吸；`SleepStageBarView` 按真实分钟比例绘制并提供 TalkBack 描述，缺少完整阶段字段时隐藏图而不是补零。前台睡眠页、手动全量同步和 Cloud V3 的 31 天采集入口均更新同一缓存。
 
 Phone 0.23.0 的活动设置页只展示 Cloud V3 `/sync/v3/exchange` 与 Keystore device token。V2 root/recovery/approval 源码与旧 state 按迁移要求保留，但不再挂接 UI、调用或生成新 root；视觉文案不得把 V3 描述为应用层加密同步。
 
@@ -102,9 +106,10 @@ Phone 0.23.0 的活动设置页只展示 Cloud V3 `/sync/v3/exchange` 与 Keysto
 16. 每个成功 V3 exchange 必须携带 owner/library 级 `revisionDomainId`；domain、revision、fingerprint 和 Watch projection metadata 同步持久化。仅尚未绑定 authority 的旧在途响应可一次使用 legacy source；Phone 或 Watch 一旦绑定 `v3d.*`，缺 domain、其他 authority、legacy 或无 source 都必须 fail closed。
 17. Phone→Watch journal 保存完整当前快照；同一 pending 重试保留 operationId，但 A→B→A 的新一轮 A 必须使用新 ID，即使历史 `lastAck` 也是 A 且仍有 pending B。完整库变更（包括删除）统一写 `upsert`，legacy `delete` 只在读取时兼容并升级。receipt 和 projection fingerprint 绑定 Watch device + pairing generation；journal 损坏先备份，再从 Phone 权威库重建。
 18. Watch 先从本次收到的 library materialize/clear selected profile，再提交计划库、operation/source/revision 水位和去重记录；任一步失败都不 ACK。Phone 在同次提交中写 ACK receipt 并删除 pending，提交失败不得报告 synced。网络 I/O 不持有 journal 锁，旧 ACK 不能删除并发新快照。
-19. `plans=[]` 或 `selectedPlanId=null` 是合法主库状态；Phone/Watch 均保存空选择，Watch 设置显式 empty marker、清理旧 profile 并拒绝新训练启动，不能回退到首次安装默认计划。
-20. Cloud active request 绑定精确 endpoint + device token generation；endpoint/device authority 改变时，旧 cursor/outbox/active request 先备份并整体换域。网络响应的最终凭据复核与 `applyResponse()` 全部本地副作用在 `CloudSyncCredentials` 同一 class monitor 内完成，不得把旧响应标成新凭据来源。
-21. `start` 命令携带的 planId 是执行目标，不得静默退回当前选择。Watch 在任何训练副作用前同步提交 command signature、resolved explicit action 和 pending journal；`toggle` 首次只解析一次为 pause/resume。首次提交失败不执行，最终结果提交失败后的重试也只能执行已固化的幂等 action。
+19. 活动训练的状态仍只属于 `WorkoutService`；启动器/任务/通知只负责路由到现有 `TrainingActivity`，不得因 `MainActivity` 属于同一包就把它当作训练界面。阶段声音/震动由服务触发，Activity 只显示不超过 2 秒且不接管焦点/触摸的瞬时投影。
+20. `plans=[]` 或 `selectedPlanId=null` 是合法主库状态；Phone/Watch 均保存空选择，Watch 设置显式 empty marker、清理旧 profile 并拒绝新训练启动，不能回退到首次安装默认计划。
+21. Cloud active request 绑定精确 endpoint + device token generation；endpoint/device authority 改变时，旧 cursor/outbox/active request 先备份并整体换域。网络响应的最终凭据复核与 `applyResponse()` 全部本地副作用在 `CloudSyncCredentials` 同一 class monitor 内完成，不得把旧响应标成新凭据来源。
+22. `start` 命令携带的 planId 是执行目标，不得静默退回当前选择。Watch 在任何训练副作用前同步提交 command signature、resolved explicit action 和 pending journal；`toggle` 首次只解析一次为 pause/resume。首次提交失败不执行，最终结果提交失败后的重试也只能执行已固化的幂等 action。
 
 ## 4. 数据和存储
 
@@ -121,6 +126,7 @@ Phone 0.23.0 的活动设置页只展示 Cloud V3 `/sync/v3/exchange` 与 Keysto
 | 手机敏感凭据 | SharedPreferences 密文 + Android Keystore `poyi.watchintervals.phone.secrets.v1` | BLE pairing secret、LAN credential、短期 pairing code、Gateway API token | 旧 plaintext 字段首次读取时原子迁移；解密/迁移失败时不签发替代 token、不删除旧值 |
 | V3 云端数据 | D1 `watch_v3_*` | owner/device/plan/workout/sleep/live/change/operation/command/audit | server-readable；永久保存允许数据，workout create-once，删除使用独立 tombstone |
 | 手机 V3 state | SharedPreferences `watch_cloud_v3` + Android Keystore | protocol 3、`v3c<base36>` cursor | 持久 outbox/active request/receipt/conflict/command result；device token 只以 Keystore 包装密文保存；备份与设备迁移均排除 |
+| 手机睡眠离线投影 | SharedPreferences `phone_sleep_cache` | schema 1，最多 31 个按时间去重 record | 保存最后成功的 31 天 HealthKit `record/session/stage` 与缓存/来源时间；新响应优先合并，失败、空列表和损坏数据不清除有效记录 |
 | V2 迁移 state | SharedPreferences `encrypted_watch_sync_v1` | `/sync/v2/exchange` 历史格式 | 首次 V3 成功前保留但 Phone 0.23.0 不启用、不双写；不再生成或使用业务 E2EE root |
 | Windows 本地 MCP/Tunnel | `%ProgramData%/Poyi/WatchMcp` | Deprecated | Cloud MCP 验收前只保留回滚能力；不得据此宣称 PC-off，通过后再停止、卸载和删源码 |
 
@@ -241,7 +247,7 @@ BAIDU_MAP_AK=YOUR_LOCAL_KEY
 5. 网络动作必须设置连接/读取超时，校验状态码和 JSON 字段。
 6. 378×496 手表界面固定执行文字溢出、底部安全区、横纵手势冲突检查。
 7. 修复缺陷时先在 `bugs.md` 建号，再补测试或可复现验证步骤。
-8. 厂商健康数据通过公开 Store Binder 和运行时匹配的 protobuf 类读取；禁止提交厂商 APK、反编译产物、权限记录或真实健康数据。
+8. 厂商健康数据通过公开 Store Binder 和运行时匹配的 protobuf 类读取；禁止提交厂商 APK、反编译产物、权限记录或真实健康数据，也禁止把反编译、重签或覆盖 OPPO 健康列为本项目的安装依赖。
 9. 每次改动执行 [maintenance-workflow.md](maintenance-workflow.md)；不新增普通 TODO、占位实现或无回归证据的缺陷修复。
 
 ## 9. Git 和发布规范

@@ -2,13 +2,7 @@ package com.poyi.watchintervals.phone;
 
 import android.graphics.Color;
 
-/**
- * Fitness-dark design tokens for the phone app.
- *
- * <p>The companion used to wear a beige Material-ish coat of many inline colours; the visual
- * rebuild uses a platform-neutral training palette — true black behind #1C1C1E cards, white
- * figures, and original coral/mint/cyan accents doing the colour work.
- */
+/** Light, data-first design tokens for the phone companion. */
 final class Palette {
     private Palette() {}
 
@@ -17,11 +11,12 @@ final class Palette {
     static final int CARD = PhoneColorSpec.CARD;
     static final int CARD_HIGH = PhoneColorSpec.CARD_HIGH;
     static final int CARD_DEEP = PhoneColorSpec.CARD_DEEP;
-    /** Floating functional layer: translucent, high-contrast, and separate from content cards. */
-    static final int GLASS_TOP = Color.argb(244, 52, 52, 57);
-    static final int GLASS_BOTTOM = Color.argb(235, 25, 25, 28);
-    static final int GLASS_BORDER = Color.argb(72, 255, 255, 255);
-    static final int GLASS_SELECTED = Color.argb(42, 255, 77, 103);
+    static final int BORDER = PhoneColorSpec.BORDER;
+    /** Floating functional layer: translucent daylight glass above the content cards. */
+    static final int GLASS_TOP = Color.argb(250, 255, 255, 255);
+    static final int GLASS_BOTTOM = Color.argb(242, 245, 248, 251);
+    static final int GLASS_BORDER = Color.argb(210, 214, 221, 229);
+    static final int GLASS_SELECTED = Color.argb(255, 252, 231, 236);
     static final int TEXT = PhoneColorSpec.TEXT;
     static final int TEXT_DIM = PhoneColorSpec.TEXT_DIM;
     static final int HINT = PhoneColorSpec.HINT;
@@ -42,4 +37,9 @@ final class Palette {
     static final int FILL_REST = PhoneColorSpec.FILL_REST;
     static final int FILL_DANGER = PhoneColorSpec.FILL_DANGER;
     static final int FILL_SELECTED = PhoneColorSpec.FILL_SELECTED;
+
+    static final int SLEEP_DEEP = PhoneColorSpec.SLEEP_DEEP;
+    static final int SLEEP_LIGHT = PhoneColorSpec.SLEEP_LIGHT;
+    static final int SLEEP_REM = PhoneColorSpec.SLEEP_REM;
+    static final int SLEEP_AWAKE = PhoneColorSpec.SLEEP_AWAKE;
 }

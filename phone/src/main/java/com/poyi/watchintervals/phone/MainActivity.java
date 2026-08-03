@@ -97,7 +97,9 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Palette.BG);
         getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                        | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         getWindow().setNavigationBarDividerColor(Palette.BG);
         int topInset=dp(10);
         int bottomInset=0;
@@ -112,10 +114,16 @@ public class MainActivity extends Activity {
         // "连接手表" card topped every tab forever; for a paired phone, connection is status, not
         // a task, so setup collapses behind a tap on the status row.
         LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.VERTICAL);header.setPadding(dp(20),topInset,dp(20),dp(4));
+        LinearLayout brandRow=new LinearLayout(this);brandRow.setGravity(Gravity.CENTER_VERTICAL);
+        PhoneSymbolView brandMark=new PhoneSymbolView(this,PhoneSymbol.BRAND);
+        brandMark.setTint(Palette.MOVE);brandMark.setEmphasized(true);
+        brandRow.addView(brandMark,new LinearLayout.LayoutParams(dp(28),dp(28)));
         TextView productTitle=text("步序",18,true,Palette.TEXT);
         productTitle.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
         productTitle.setLetterSpacing(.08f);
-        header.addView(productTitle);
+        LinearLayout.LayoutParams productTitleParams=new LinearLayout.LayoutParams(-2,dp(36));
+        productTitleParams.leftMargin=dp(8);brandRow.addView(productTitle,productTitleParams);
+        header.addView(brandRow);
         LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);statusRow.setClickable(true);statusRow.setFocusable(true);
         statusDot=new View(this);statusDot.setBackground(rounded(Color.GRAY,10));
         LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
@@ -150,7 +158,7 @@ public class MainActivity extends Activity {
         planLibraryPanel=new LinearLayout(this);planLibraryPanel.setOrientation(LinearLayout.VERTICAL);
         currentWatchPlan=text("手表当前安排  ·  连接后读取",13,false,Palette.TEXT_DIM);
         currentWatchPlan.setPadding(dp(14),dp(8),dp(14),dp(8));
-        currentWatchPlan.setBackground(rounded(Palette.CARD,14));
+        currentWatchPlan.setBackground(roundedStroke(Palette.CARD,14,Palette.BORDER,1));
         LinearLayout.LayoutParams currentPlanParams=new LinearLayout.LayoutParams(-1,dp(42));currentPlanParams.topMargin=dp(14);planLibraryPanel.addView(currentWatchPlan,currentPlanParams);
         LinearLayout libraryHeader = new LinearLayout(this); libraryHeader.setGravity(Gravity.CENTER_VERTICAL);
         libraryHeader.addView(text("我的计划",20,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(64),1));
@@ -203,7 +211,8 @@ public class MainActivity extends Activity {
         liveState=text("未在训练",13,true,Palette.TEXT_DIM);liveState.setGravity(Gravity.CENTER);liveState.setMaxLines(2);
         ringCenter.addView(liveTime);ringCenter.addView(liveState);
         ringBox.addView(ringCenter,new FrameLayout.LayoutParams(dp(150),-2,Gravity.CENTER));
-        ringBox.setBackground(rounded(Palette.CARD,24));
+        ringBox.setBackground(roundedStroke(Palette.CARD,24,Palette.BORDER,1));
+        ringBox.setElevation(dp(2));
         LinearLayout.LayoutParams ringBoxParams=new LinearLayout.LayoutParams(-1,dp(220));ringBoxParams.topMargin=dp(16);
         controlCard.addView(ringBox,ringBoxParams);
         liveMeta=text("连接手表后显示实时数据",14,false,Palette.TEXT_DIM);liveMeta.setGravity(Gravity.CENTER_HORIZONTAL);controlCard.addView(liveMeta);
@@ -215,7 +224,7 @@ public class MainActivity extends Activity {
         historySummary = text("连接后读取", 14, false, Palette.TEXT_DIM); historyCard.addView(historySummary);
         historyList = new LinearLayout(this); historyList.setOrientation(LinearLayout.VERTICAL); historyCard.addView(historyList);
         sleepCard = section(); sleepCard.addView(pageTitle("睡眠", "恢复也是训练的一部分"));
-        sleepSummary = text("连接后读取手表系统睡眠", 14, false, Palette.TEXT_DIM); sleepCard.addView(sleepSummary);
+        sleepSummary = text("已同步的数据会保存在本机，离线也能查看", 14, false, Palette.TEXT_DIM); sleepCard.addView(sleepSummary);
         sleepList = new LinearLayout(this); sleepList.setOrientation(LinearLayout.VERTICAL); sleepCard.addView(sleepList);
 
         FrameLayout content=new FrameLayout(this);
@@ -470,8 +479,25 @@ public class MainActivity extends Activity {
             if(expected.isEmpty()&&!actual.isEmpty())getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",actual).apply();
             JSONObject library = PhonePlanLibrary.load(this); if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");PhoneSyncOutbox.drain(this,watchConnection);
             JSONObject plan = new JSONObject(watchConnection.requestBlocking("GET","/v1/plan/profile","",20_000L)); JSONArray history = new JSONArray(watchConnection.requestBlocking("GET","/v1/history","",20_000L));
+            JSONObject sleepCandidate=null;
+            boolean sleepHadRecords=false;
+            try {
+                JSONObject value=new JSONObject(watchConnection.requestBlocking(
+                        "GET","/v1/sleep?days=31","",25_000L));
+                if("ready".equals(value.optString("state"))) {
+                    sleepHadRecords=value.optJSONArray("records")!=null
+                            &&value.optJSONArray("records").length()>0;
+                    sleepCandidate=PhoneSleepRepository.mergeAndSave(
+                            this,value,System.currentTimeMillis());
+                }
+            } catch(Exception sleepError) {
+                android.util.Log.w("PhoneMain","Sleep refresh did not block the main sync",
+                        sleepError);
+            }
+            final JSONObject syncedSleep=sleepCandidate;
+            final boolean syncedSleepHadRecords=sleepHadRecords;
             CloudSnapshotSync.syncAsync(this);
-            runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · " + transportLabel(watchConnection.snapshot())); showPlan(plan); showHistory(history); ensureLocationRelay(); });
+            runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · " + transportLabel(watchConnection.snapshot())); showPlan(plan); showHistory(history);if(currentSection==3&&syncedSleep!=null)showSleep(syncedSleep,!syncedSleepHadRecords,syncedSleepHadRecords?null:"手表本次没有返回新记录，保留上次数据"); ensureLocationRelay(); });
         });
     }
 
@@ -753,39 +779,133 @@ public class MainActivity extends Activity {
     }
 
     private void loadSleep(){
-        sleepSummary.setText("正在读取手表系统睡眠…");
+        final JSONObject cached=PhoneSleepRepository.load(this);
+        if(cached!=null)showSleep(cached,true,null);
+        else showSleepEmpty("本机还没有已同步的睡眠数据", "连接手表并同步一次后，这里可离线查看最近 31 天。");
+        WatchConnectionManager.Snapshot snapshot=watchConnection==null?null:watchConnection.snapshot();
+        boolean transportReady=snapshot!=null
+                && (snapshot.primaryTransport!=null||snapshot.lanAvailable);
+        if(!transportReady){
+            if(cached!=null)showSleep(cached,true,"当前离线");
+            return;
+        }
+        sleepSummary.setText(cached==null?"正在从手表读取最近 31 天…":cacheLabel(cached)+" · 正在后台刷新");
         io.execute(()->{try{
-            JSONObject result=new JSONObject(watchConnection.requestBlocking("GET","/v1/sleep?days=14","",20_000L));
-            runOnUiThread(()->showSleep(result));
-        }catch(Exception error){runOnUiThread(()->sleepSummary.setText("读取失败："+error.getMessage()));}});
+            JSONObject result=new JSONObject(watchConnection.requestBlocking(
+                    "GET","/v1/sleep?days=31","",25_000L));
+            if("ready".equals(result.optString("state"))){
+                boolean receivedRecords=result.optJSONArray("records")!=null
+                        &&result.optJSONArray("records").length()>0;
+                JSONObject saved=PhoneSleepRepository.mergeAndSave(
+                        this,result,System.currentTimeMillis());
+                runOnUiThread(()->showSleep(saved,!receivedRecords,receivedRecords
+                        ?null:"手表本次没有返回新记录，保留上次数据"));
+            }else runOnUiThread(()->showSleepUnavailable(result,cached));
+        }catch(Exception error){
+            String reason=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
+            runOnUiThread(()->{
+                if(cached!=null)showSleep(cached,true,"刷新失败："+reason);
+                else showSleepEmpty("暂时无法读取手表",reason);
+            });
+        }});
     }
 
-    private void showSleep(JSONObject result){
-        sleepList.removeAllViews();
+    private void showSleepUnavailable(JSONObject result,JSONObject cached){
         String state=result.optString("state");
-        if("permission_required".equals(state)){sleepSummary.setText("请在手表端打开步序并允许读取睡眠");return;}
-        if(!"ready".equals(state)){sleepSummary.setText("系统睡眠暂不可用："+result.optString("error","未知错误"));return;}
+        String reason="permission_required".equals(state)
+                ?"请在手表端打开步序并允许读取睡眠"
+                :"系统睡眠暂不可用："+result.optString("error","未知错误");
+        if(cached!=null)showSleep(cached,true,reason);
+        else showSleepEmpty("暂无可显示的睡眠记录",reason);
+    }
+
+    private void showSleep(JSONObject result,boolean cached,String note){
+        sleepList.removeAllViews();
         JSONArray records=result.optJSONArray("records");if(records==null)records=new JSONArray();
-        sleepSummary.setText("最近 14 天 · "+records.length()+" 条系统记录");
+        String summary=(cached?cacheLabel(result):"刚刚从手表更新并保存到本机")
+                +" · "+records.length()+" 晚";
+        sleepSummary.setText(note==null||note.isEmpty()?summary:summary+" · "+note);
+        if(records.length()==0){
+            showSleepEmpty("最近没有睡眠记录", "系统已返回空列表；没有用估算数据补齐。");
+            return;
+        }
         for(int i=0;i<records.length();i++){
             JSONObject record=records.optJSONObject(i);if(record==null)continue;
-            JSONArray sessions=record.optJSONArray("sessions");
-            long start=record.optLong("timestamp");int deep=0,rem=0,stageCount=0,sessionCount=sessions==null?0:sessions.length();
-            for(int j=0;j<sessionCount;j++){
-                JSONObject session=sessions.optJSONObject(j);if(session==null)continue;
-                long sessionStart=session.optLong("startTime");if(sessionStart>0&&(start<=0||sessionStart<start))start=sessionStart;
-                deep+=session.optInt("deepDurationMinutes");rem+=session.optInt("remDurationMinutes");
-                JSONArray stages=session.optJSONArray("stages");stageCount+=stages==null?0:stages.length();
+            PhoneSleepOverview overview=PhoneSleepOverview.from(record);
+            LinearLayout row=card();row.setPadding(dp(16),dp(15),dp(16),dp(16));
+            String date=overview.timestamp>0L
+                    ?new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(overview.timestamp))
+                    :"日期未返回";
+            row.addView(text(date,15,true,Palette.TEXT_DIM));
+
+            LinearLayout hero=new LinearLayout(this);hero.setOrientation(LinearLayout.HORIZONTAL);
+            hero.addView(sleepHero("睡眠评分",overview.scoreAvailable
+                    ?overview.sleepScore+" 分":"--"),weight());
+            hero.addView(sleepHero("总时长",overview.durationAvailable
+                    ?sleepMinutes(overview.totalDurationMinutes):"--"),weight());
+            row.addView(hero);
+
+            row.addView(text("睡眠结构",15,true,Palette.TEXT));
+            if(overview.stageBreakdownAvailable){
+                SleepStageBarView chart=new SleepStageBarView(this);chart.setOverview(overview);
+                LinearLayout.LayoutParams chartParams=new LinearLayout.LayoutParams(-1,dp(18));
+                chartParams.setMargins(0,dp(7),0,dp(8));row.addView(chart,chartParams);
+            }else{
+                row.addView(text("系统未返回完整的深睡、浅睡、REM 与清醒时长，比例图已隐藏。",13,false,Palette.TEXT_DIM));
             }
-            int duration=record.optInt("totalDurationMinutes");
-            int score=record.optInt("sleepScore"),spo2=record.optInt("spo2AveragePercent");
-            LinearLayout row=cardHigh();row.setPadding(dp(16),dp(12),dp(16),dp(12));
-            row.addView(text(new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(start)),15,true,Palette.TEXT_DIM));
-            row.addView(text(PhoneFormat.minutesHuman(duration)+" · 评分 "+(score>0?score:"--")+" · 平均血氧 "+(spo2>0?spo2+"%":"--"),16,true,Palette.TEXT));
-            String sessionLabel=sessionCount>1?" · "+sessionCount+" 段睡眠":"";
-            row.addView(text("深睡 "+PhoneFormat.minutesHuman(deep)+" · REM "+PhoneFormat.minutesHuman(rem)+" · "+stageCount+" 个阶段"+sessionLabel,13,false,Palette.TEXT_DIM));
-            LinearLayout.LayoutParams params=margin();params.topMargin=dp(10);sleepList.addView(row,params);
+            LinearLayout first=new LinearLayout(this),second=new LinearLayout(this);
+            first.addView(sleepStageMetric("深睡",overview.deepMinutes,
+                    overview.deepAvailable,Palette.SLEEP_DEEP),weight());
+            first.addView(sleepStageMetric("浅睡",overview.lightMinutes,
+                    overview.lightAvailable,Palette.SLEEP_LIGHT),weight());
+            second.addView(sleepStageMetric("REM",overview.remMinutes,
+                    overview.remAvailable,Palette.SLEEP_REM),weight());
+            second.addView(sleepStageMetric("清醒",overview.awakeMinutes,
+                    overview.awakeAvailable,Palette.SLEEP_AWAKE),weight());
+            row.addView(first);row.addView(second);
+
+            ArrayList<String> health=new ArrayList<>();
+            if(overview.spo2Available)health.add("平均血氧 "+overview.spo2AveragePercent+"%");
+            if(overview.heartRateAvailable)health.add("睡眠心率 "+overview.heartRateBenchmarkBpm+" bpm");
+            if(overview.breathRateAvailable)health.add("呼吸 "+String.format(Locale.CHINA,"%.1f 次/分",overview.breathRateBenchmarkPerMinute));
+            row.addView(text(health.isEmpty()?"血氧、心率与呼吸数据未返回":android.text.TextUtils.join(" · ",health),13,false,Palette.TEXT_DIM));
+            row.addView(text(overview.sessionCount+" 段睡眠 · "+overview.rawStageCount+" 个系统原始阶段",12,false,Palette.HINT));
+            LinearLayout.LayoutParams params=margin();params.topMargin=dp(12);sleepList.addView(row,params);
         }
+    }
+
+    private void showSleepEmpty(String title,String detail){
+        sleepList.removeAllViews();
+        LinearLayout empty=card();empty.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView heading=text(title,16,true,Palette.TEXT);heading.setGravity(Gravity.CENTER);
+        TextView body=text(detail,13,false,Palette.TEXT_DIM);body.setGravity(Gravity.CENTER);
+        empty.addView(heading);empty.addView(body);
+        LinearLayout.LayoutParams params=margin();params.topMargin=dp(14);sleepList.addView(empty,params);
+        sleepSummary.setText(detail);
+    }
+
+    private String cacheLabel(JSONObject cached){
+        long cachedAt=cached.optLong("cachedAt");
+        return cachedAt>0L?"本机数据 · "+new SimpleDateFormat("MM月dd日 HH:mm",Locale.CHINA)
+                .format(new Date(cachedAt))+" 同步":"本机已保存的数据";
+    }
+
+    private TextView sleepHero(String label,String value){
+        TextView view=text(label+"\n"+value,20,true,Palette.TEXT);view.setGravity(Gravity.CENTER);
+        view.setLineSpacing(dp(4),1f);view.setBackground(rounded(Palette.CARD_HIGH,16));
+        view.setPadding(dp(8),dp(12),dp(8),dp(12));return view;
+    }
+
+    private LinearLayout sleepStageMetric(String label,long minutes,boolean available,int color){
+        LinearLayout box=new LinearLayout(this);box.setGravity(Gravity.CENTER_VERTICAL);
+        View dot=new View(this);dot.setBackground(rounded(color,8));
+        LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(9),dp(9));
+        dotParams.rightMargin=dp(7);box.addView(dot,dotParams);
+        box.addView(text(label+"  "+(available?sleepMinutes(minutes):"--"),13,true,Palette.TEXT));return box;
+    }
+
+    private String sleepMinutes(long value){
+        return PhoneFormat.minutesHuman((int)Math.min(Integer.MAX_VALUE,Math.max(0L,value)));
     }
     private void runIo(Throwing action){ connection.setText("正在同步…"); io.execute(()->{ try{action.run();}catch(Exception error){
         // ExecutionException and friends often carry a null message; surface the cause instead
@@ -797,9 +917,9 @@ public class MainActivity extends Activity {
     interface Throwing{void run()throws Exception;}
     private String kindName(String kind){return "WALK".equals(kind)?"快走":"REST".equals(kind)?"休息":"跑步";}
     private LinearLayout section(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
-    private LinearLayout card(){LinearLayout v=section();v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(rounded(Palette.CARD,22));return v;}
-    private LinearLayout compactCard(){LinearLayout v=section();v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD,20));return v;}
-    private LinearLayout cardHigh(){LinearLayout v=card();v.setBackground(rounded(Palette.CARD_HIGH,18));return v;}
+    private LinearLayout card(){LinearLayout v=section();v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(roundedStroke(Palette.CARD,22,Palette.BORDER,1));v.setElevation(dp(1));return v;}
+    private LinearLayout compactCard(){LinearLayout v=section();v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(roundedStroke(Palette.CARD,20,Palette.BORDER,1));return v;}
+    private LinearLayout cardHigh(){LinearLayout v=card();v.setBackground(roundedStroke(Palette.CARD,18,Palette.BORDER,1));return v;}
     private LinearLayout.LayoutParams margin(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(16);return p;}
     private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1);p.setMargins(dp(3),dp(6),dp(3),dp(6));return p;}
     private TextView text(String s,int sp,boolean bold,int color){TextView v=new TextView(this);v.setText(s);v.setTextSize(sp);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);v.setTypeface(null,bold?Typeface.BOLD:Typeface.NORMAL);v.setPadding(0,dp(5),0,dp(5));return v;}

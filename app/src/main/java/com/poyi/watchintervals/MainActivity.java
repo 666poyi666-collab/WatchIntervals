@@ -86,25 +86,33 @@ public class MainActivity extends Activity {
      * restores the state; MainActivity immediately returns the user to its TrainingActivity view.
      */
     private boolean routeActiveWorkout() {
-        WorkoutUxPolicy.EntryDestination destination = WorkoutUxPolicy.entryDestination(
-                WorkoutService.hasRecoverableSession(this));
-        if (destination != WorkoutUxPolicy.EntryDestination.TRAINING) {
+        boolean shouldRoute = WorkoutUxPolicy.shouldRouteAppEntryToTraining(
+                WorkoutService.hasRecoverableSession(this), WorkoutUxPolicy.AppSurface.MAIN);
+        if (!shouldRoute) {
             routingToTraining = false;
             return false;
         }
         if (!routingToTraining) {
             routingToTraining = true;
-            startForegroundService(new Intent(this, WorkoutService.class)
-                    .setAction(WorkoutService.ACTION_START));
-            startActivity(new Intent(this, TrainingActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true));
+            openActiveWorkout();
         }
         return true;
     }
 
+    /** Every active-session entry reuses the existing training task and the service snapshot. */
+    private void openActiveWorkout() {
+        startForegroundService(new Intent(this, WorkoutService.class)
+                .setAction(WorkoutService.ACTION_START));
+        startActivity(new Intent(this, TrainingActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true));
+    }
+
     @Override protected void onPause() {
         clockHandler.removeCallbacks(clockUpdater);
+        // A completed launch is no longer "in flight" once Main leaves the foreground. If the
+        // system later reclaims TrainingActivity, the next Main resume must be allowed to reopen it.
+        routingToTraining = false;
         super.onPause();
     }
 
@@ -117,7 +125,7 @@ public class MainActivity extends Activity {
         root.setPadding(Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 6), Ui.dp(this, Ui.PAGE_MARGIN), Ui.dp(this, 4));
         root.setBackgroundColor(Ui.BLACK);
 
-        // Compact workout identity, matching the reference's runner mark + title + clock.
+        // Compact workout identity, matching the shared interval-route mark + title + clock.
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(Ui.workoutGlyph(this, Ui.LIME),
@@ -339,9 +347,7 @@ public class MainActivity extends Activity {
 
     private void startTraining() {
         if (WorkoutService.hasRecoverableSession(this)) {
-            startForegroundService(new Intent(this, WorkoutService.class).setAction(WorkoutService.ACTION_START));
-            startActivity(new Intent(this, TrainingActivity.class)
-                    .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true));
+            openActiveWorkout();
             return;
         }
         if (stages == null || stages.isEmpty()) {

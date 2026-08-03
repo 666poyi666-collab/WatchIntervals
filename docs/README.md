@@ -22,12 +22,12 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 基线日期 | 2026-08-01 |
+| 基线日期 | 2026-08-03 |
 | 手表应用 | `app`，`com.poyi.watchintervals`，`0.21.1`（32） |
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.23.0`（19） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | Watch `0.21.1` / Phone `0.23.0` 候选已连接正式 Cloud V3，并通过 ChatGPT 三 scope、1.2 km/2 分段回读和产品删除 tombstone。正式 Worker 已部署 server revision domain；最新 Phone debug 候选已于 2026-08-01 覆盖安装 Xiaomi xaga，设备侧 `base.apk` 与本地产物 SHA-256 一致且启动成功。OWW221 当前未连接，Watch 新候选尚未覆盖；PC 不在运行链路，外部风险仍含户外 GNSS/心率与 Phone Doze/重启恢复 |
+| 发布状态 | Watch `0.21.1` / Phone `0.23.0` 最新本地候选已完成 Phone 日光亮色、双端统一图标、31 天离线睡眠总览、训练阶段轻提示与活动训练界面恢复；API 35 模拟器、双模块单测/Lint/构建均通过。2026-08-01 安装的 Xiaomi 包已被本批源码取代；2026-08-03 最终设备探测仅见临时模拟器，验证后已停止，当前 ADB/mDNS 无设备，Xiaomi xaga 与 OWW221 均未在线，因此最新候选尚未覆盖真实设备。手机 OPPO 健康保持厂商原包，项目仍通过独立 Phone APK、独立 Watch APK 和手表 HealthKit bridge 工作；外部门禁为 PT-026/027/028、WT-026/027、BUG-016 双端重连，以及既有户外 GNSS/心率与 Phone Doze/重启恢复 |
 
 ## 事实来源
 

@@ -621,3 +621,15 @@
 - 连接与构建：无线 ADB 重新连接后识别为 `xaga / 22041216C`；执行 `:phone:assembleDebug` 成功。安装前设备报告 `versionName=0.23.0`、`versionCode=19`。
 - 安装与启动：`adb install -r phone-debug.apk` 返回 `Success`；安装后版本仍为 Phone `0.23.0`（19），`am start -W com.poyi.watchintervals.phone/.MainActivity` 返回 `Status: ok`，应用进程存活。
 - 精确产物验证：从设备包管理器返回的实际安装路径拉取 `base.apk` 到忽略的 `phone/build/reports/install`，设备侧与本地产物 SHA-256 均为 `37DBB0EDB42F26374759227AC0DC8EA1C51102184AB72A7842EDA8DC356A1064`。该证据只证明连接、覆盖安装、字节一致和冷启动成功，不冒充 PT-026/027 全页面视觉、Doze/重启或端到端云同步验收。
+
+## 2026-08-03：亮色 Phone、离线睡眠与活动训练恢复闭环（REQ-UI-006/011/012/013、REQ-DATA-017/018、REQ-WORKOUT-008/009，BUG-050/051/052）
+
+- 目标：直接处理用户指出的 Phone 深色/粗糙排版、双端图标漂移、已同步睡眠断连不可见、睡眠缺少完整总览、阶段切换浮层烦扰，以及训练亮屏/再次打开后落到主页的问题；训练功能本身未由用户实测，不把本地验证冒充真机运动结论。
+- Phone 视觉：默认主题切为高对比日光亮色，画布、实心数据卡、半透明设置层/底栏、输入框和系统栏统一浅色层级；设置、计划、训练、历史详情和睡眠共用 `Palette`/`PhoneColorSpec`。Phone/Watch launcher 改用完全一致的原创“间歇路线” path、颜色、背景和安全区，跨模块资源测试锁定一致性；Watch 应用内原跑者小人替换为小尺寸更清楚的开口路线/前进图形。
+- 睡眠：新增 `PhoneSleepRepository` schema 1，成功读取最近 31 天后按时间原子合并并最多保留 31 条；读写都会对 legacy/当前缓存去重、倒序和截断。断连、权限暂不可用、刷新异常或 ready 空列表都保留最后成功数据，损坏/未来 schema 安全降级。`PhoneSleepOverview` 聚合每晚全部 session，显示评分、总时长、深睡、浅睡、REM、清醒、血氧、心率、呼吸和四阶段比例图；缺失数据保持 `--`，`SleepStageBarView` 提供 TalkBack 描述。
+- Watch 训练：阶段推进由唯一状态所有者 `WorkoutService` 发出 160ms 短音和短震动，Activity 只投影 1.8 秒不可聚焦、不可点击且不阻断横滑的提示；同一更新若也跨公里，不叠加第二张圈卡/震动。Activity 停止时清空瞬时 View 和游标，恢复首帧只作基线，不重播息屏期间已经发生的提示。启动器、任务和通知统一把可恢复会话带回现有 `TrainingActivity`，服务不再每秒抢前台，`WorkoutService` 仍是唯一状态所有者。
+- OPPO 健康安装边界：静态证据确认手机 `com.heytap.health` 的关键 provider/service 受厂商 signature 权限和非导出组件保护；重签包不能覆盖厂商签名包，也得不到相同权限。正确链路仍是独立 Phone APK ↔ 独立 Watch APK ↔ 手表已安装的 `com.heytap.wearable.health` HealthKit bridge；本批没有修改、重签、覆盖或提交任何厂商 APK。
+- 自动化门禁：隔离输出目录执行 `:app:testDebugUnitTest :phone:testDebugUnitTest :app:lintDebug :phone:lintDebug :app:assembleDebug :phone:assembleDebug --rerun-tasks --no-daemon`，98 tasks 全部成功；Watch 57/57、Phone 98/98，两个模块均 0 test failure/error、Lint 0 error（Watch 40 warning、Phone 29 warning）。`git diff --check` 与 15 份已跟踪 Markdown 本地链接检查通过。
+- 模拟器证据：API 35、1080×2340 覆盖亮色设置/计划、睡眠空态、离线双 session 总览、2.0× 字体和 app drawer；UI hierarchy 确认四目的地可访问名称/选中状态及阶段图描述。证据位于忽略目录 `.gradle/codex-build-20260803-ux/ui`，不进入 Git。
+- 最终 debug APK：Watch `0.21.1`（32）8,482,170 bytes，SHA-256 `677AA79A9C373111A27F91DD04B92FE2AD24F447B9D76CA8394F3EB890F792AF`；Phone `0.23.0`（19）8,620,957 bytes，SHA-256 `F593BF49E9472482EDDDE95891765C8B790BE5860567D53DE5002B72AA76F9AF`。产物位于忽略的 `.gradle/codex-build-20260803-ux/{app,phone}/outputs/apk/debug/`，不进入 Git。
+- 外部门禁：2026-08-03 最终设备探测只见临时 API 35 模拟器；最新 Phone APK 覆盖安装并冷启动成功后已停止模拟器，当前 ADB/mDNS 无设备。Xiaomi xaga 与 OWW221 均未在线，故没有对真实设备执行覆盖安装，也无法复现用户再次报告的偶发连接失败。关闭条件唯一且明确：两台设备上线并授权 ADB 后安装上述两个候选，执行 Phone PT-026/027/028、Watch WT-026/027，并按 BUG-016 保存双端断联/退避/GATT/恢复证据；户外 GNSS/心率及 Phone Doze/重启继续按既有用例验收。

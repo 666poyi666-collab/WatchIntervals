@@ -6,6 +6,8 @@
 
 ### Added
 
+- 手机睡眠页新增 31 天本地离线投影、最近同步时间、评分/总时长双指标，以及深睡、浅睡、REM、清醒比例图；多段睡眠完整聚合，缺失字段保持未知而不补零。
+- 手表训练阶段切换新增服务侧短促提示音与震动，界面只显示 1.8 秒、不可聚焦且不拦截横滑的轻量下一阶段提示。
 - 新增 server-readable Cloud V3：Device Bearer Token 认证的 `/sync/v3/exchange`、持久 outbox/active request/cursor/receipt/conflict，以及 D1 计划、训练摘要、睡眠、实时状态和命令数据面。
 - 手机前台新增 OkHttp WebSocket `/sync/v3/channel`；通道只接收 `sync_needed`，命令正文仍由轻量 exchange 拉取，断线和运行中补配置均自动重连。
 - Cloud MCP 新增 `watch:read`、`watch:write`、`watch:control` 权限隔离，可读取真实计划、训练摘要/分段/聚合心率、睡眠和新鲜度，并创建计划或训练控制命令。
@@ -13,6 +15,8 @@
 
 ### Changed
 
+- 手机默认视觉由深色候选切换为高对比日光亮色：浅灰画布、白色内容卡、半透明白色功能层和亮色系统栏覆盖四目的地、连接设置与历史详情；正文、次级文字、按钮和状态由自动化对比度门禁约束（`REQ-UI-006/011/013`）。
+- Phone 与 Watch 启动器统一为同一组原创“间歇路线”矢量 path、颜色、背景和安全区，并由跨模块资源测试防止再次漂移；手表应用内训练标志改为更简洁的路线/前进几何（`REQ-UI-012`）。
 - 建立长期维护与当次闭环规范：每次开工读取统一事实源，当前可解决的问题当次完成，Bug 修复记录根因并增加防复发测试，只有已举证的外部阻断或用户明确延期才允许保留未闭环项。
 - 云端成为计划主版本，手机计划库改为离线缓存；首次 V3 可引导空云端，之后所有计划写入使用 expected revision，旧 revision conflict 保留本地 candidate 和服务器库。
 - 业务数据不再做应用层 E2EE；HTTPS、安全 BLE、OAuth 和 Android Keystore device-token 包装继续保留。V2 源码/state 暂留迁移回退，但 0.23.0 不启用、不双写。
@@ -23,6 +27,9 @@
 
 ### Fixed
 
+- 修复 Phone 睡眠页把当前连接当作数据可见性的硬前置；前台查看、手动同步和 Cloud V3 采集现在共用 `phone_sleep_cache`，断连、权限暂不可用、空响应或刷新失败均保留最后成功数据，损坏缓存安全降级（`BUG-051`）。
+- 修复活动训练亮屏/点启动器后可能停在主页的问题；启动器、任务和通知统一路由到现有 `TrainingActivity`，不再由服务每秒抢前台，`WorkoutService` 仍是唯一训练状态所有者（`BUG-052`）。
+- 修复双端 launcher 各自维护不同图形、手机端深色令牌与用户亮色偏好冲突的问题（`BUG-050`）。
 - 修复手表 `/v1/history` 通过 `WorkoutRecord.fromJson()` 重建摘要时丢失已派生 `splits`、最佳配速与心率范围的问题；同步接口现在直接深拷贝 reconcile 后的摘要索引，并显式剔除轨迹、坐标集合和逐点心率（`BUG-043`）。
 - 修复 WorkManager 与前台同步并发读写同一 V3 state、cursor ahead 无限重试、conflict 被误当 ACK、旧云端响应覆盖 HTTP 往返期间新本地编辑的问题。
 - 修复命令成功后仅等待下一次 WorkManager 才回传 ACK 的延迟；现在同一次同步立即二次 exchange。手表离线不提前上报失败，30 秒过期后不再执行旧命令。

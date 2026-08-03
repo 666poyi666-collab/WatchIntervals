@@ -4,7 +4,6 @@ import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
@@ -18,6 +17,8 @@ import android.location.GnssStatus;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -91,7 +92,6 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private int sessionSteps = 0;
     private int gpsSatelliteCount = 0, gpsSatellitesUsed = 0;
     private long lastCheckpoint = 0;
-    private long lastForegroundCheckElapsed;
     private Location lastLocation;
     private Location latestGpsLocation;
     private final ArrayList<Location> routePoints = new ArrayList<>();
@@ -128,6 +128,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     private PowerManager.WakeLock wakeLock;
     private CancellationSignal currentLocationSignal;
     private final Handler clockHandler = new Handler(Looper.getMainLooper());
+    private ToneGenerator cueTone;
+    private final Runnable releaseCueTone = this::releaseCueTone;
     private final GnssStatus.Callback gnssStatusCallback = new GnssStatus.Callback() {
         @Override public void onStarted() {
             synchronized (WorkoutService.this) { gpsProviderEnabled = true; }
@@ -151,31 +153,11 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             synchronized (WorkoutService.this) {
                 if (running) {
                     tick();
-                    keepTrainingTaskForeground();
                 }
             }
             clockHandler.postDelayed(this, 500L);
         }
     };
-
-    private void keepTrainingTaskForeground() {
-        long now = SystemClock.elapsedRealtime();
-        if (now - lastForegroundCheckElapsed < 1000L) return;
-        lastForegroundCheckElapsed = now;
-        ActivityManager manager = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
-        boolean alreadyForeground = false;
-        try {
-            java.util.List<ActivityManager.RunningTaskInfo> tasks = manager == null ? null : manager.getRunningTasks(1);
-            alreadyForeground = tasks != null && !tasks.isEmpty() && tasks.get(0).topActivity != null
-                    && getPackageName().equals(tasks.get(0).topActivity.getPackageName());
-        } catch (RuntimeException ignored) { /* The activity-start fallback below is still valid. */ }
-        if (alreadyForeground) return;
-        Intent reopen = new Intent(this, TrainingActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true);
-        try { startActivity(reopen); }
-        catch (RuntimeException error) { android.util.Log.w("WorkoutService", "Unable to restore training task", error); }
-    }
 
     public final class LocalBinder extends Binder { public WorkoutService service() { return WorkoutService.this; } }
     @Override public IBinder onBind(Intent intent) { return binder; }
@@ -221,6 +203,12 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     }
 
     public static boolean hasRecoverableSession(Context context) {
+        WorkoutService service = activeInstance;
+        if (service != null) {
+            synchronized (service) {
+                if (service.running) return true;
+            }
+        }
         if (WorkoutFileStore.hasRecoverable(context)) return true;
         android.content.SharedPreferences preferences = context.getSharedPreferences(SESSION_PREF, MODE_PRIVATE);
         return preferences.getBoolean("active", false)
@@ -707,12 +695,13 @@ public class WorkoutService extends Service implements LocationListener, SensorE
 
     private Notification notification() {
         Intent open = new Intent(this, preparing ? WarmupActivity.class : TrainingActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra("plan", PlanStore.encode(stages));
+        if (!preparing) open.putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true);
         PendingIntent content = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         String text = planCompleted ? "计划完成 · 自由记录" : preparing ? "正在准备 " + currentStage().name() : currentStage().name() + " · 剩余 " + remainingText();
         Notification.Builder builder = new Notification.Builder(this, CHANNEL)
-                .setSmallIcon(com.poyi.watchintervals.R.drawable.ic_launcher)
+                .setSmallIcon(com.poyi.watchintervals.R.drawable.ic_workout_notification)
                 .setContentTitle("步序").setContentText(text).setContentIntent(content).setOngoing(running || preparing);
         if (preparing) {
             Intent cancel = new Intent(this, WorkoutService.class).setAction(ACTION_CANCEL_PREPARE);
@@ -1137,6 +1126,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
 
     private void applyDistanceDelta(double meters, WorkoutMetricsAccumulator.Source source) {
         if (meters <= 0d || stages.isEmpty()) return;
+        int stageBeforeDelta = stageIndex;
+        boolean planCompletedBeforeDelta = planCompleted;
         metrics.add(SystemClock.elapsedRealtime(), meters, source);
         recordSourceTransition(source);
         if (planCompleted) { totalMeters += meters; freeRecordingDistanceMeters += meters; return; }
@@ -1156,7 +1147,12 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         }
         // Automatic kilometre laps, as on any serious running watch: a short double buzz and the
         // UI shows the lap card off the snapshot delta.
-        if (liveStats.onDistance(totalMeters, activeMillis) != null) vibrate(new long[]{0, 120, 70, 120});
+        boolean stageChanged = stageIndex != stageBeforeDelta
+                || planCompleted != planCompletedBeforeDelta;
+        if (liveStats.onDistance(totalMeters, activeMillis) != null
+                && WorkoutUxPolicy.allowLapCue(stageChanged)) {
+            vibrate(new long[]{0, 120, 70, 120});
+        }
     }
 
     private void recordSourceTransition(WorkoutMetricsAccumulator.Source source) {
@@ -1173,7 +1169,6 @@ public class WorkoutService extends Service implements LocationListener, SensorE
         Stage stage = currentStage();
         boolean reached = stage.unit == Stage.Unit.DISTANCE ? stageMeters >= stage.target : stageMillis >= stage.target * 1000L;
         if (!reached) return;
-        vibrate(new long[]{0, 260, 100, 260, 100, 500});
         try { completedStageResults.put(new org.json.JSONObject().put("index", stageIndex + 1).put("name", stage.name())
                 .put("unit", stage.unit.name()).put("target", stage.target).put("completedAtMs", activeMillis)
                 .put("totalDistanceMeters", Math.round(totalMeters * 10d) / 10d)); } catch (Exception ignored) {}
@@ -1186,6 +1181,7 @@ public class WorkoutService extends Service implements LocationListener, SensorE
             stageMeters = currentStage().unit == Stage.Unit.DISTANCE ? currentStage().target : stageMeters;
             stageMillis = currentStage().unit == Stage.Unit.TIME ? currentStage().target * 1000L : stageMillis;
             metrics.resetWindow(); speedFusion.reset();
+            playStageCue(true);
             getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification());
             saveSession(true);
         } else {
@@ -1194,8 +1190,32 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     }
 
     private void announceStage() {
-        vibrate(new long[]{0, 130, 80, 130});
+        playStageCue(false);
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification());
+    }
+
+    /** A short audio/haptic signal replaces the old stacked, second-long vibration sequence. */
+    private void playStageCue(boolean planCompleted) {
+        WorkoutUxPolicy.Cue cue = WorkoutUxPolicy.cue(planCompleted);
+        vibrate(cue.vibrationPattern());
+        clockHandler.removeCallbacks(releaseCueTone);
+        releaseCueTone();
+        try {
+            cueTone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, cue.toneVolumePercent);
+            int tone = planCompleted ? ToneGenerator.TONE_PROP_ACK : ToneGenerator.TONE_PROP_PROMPT;
+            cueTone.startTone(tone, cue.toneDurationMillis);
+            clockHandler.postDelayed(releaseCueTone, cue.toneDurationMillis + 80L);
+        } catch (RuntimeException error) {
+            releaseCueTone();
+            android.util.Log.w("WorkoutService", "Unable to play stage cue", error);
+        }
+    }
+
+    private void releaseCueTone() {
+        if (cueTone == null) return;
+        try { cueTone.release(); }
+        catch (RuntimeException error) { android.util.Log.w("WorkoutService", "Unable to release stage cue", error); }
+        cueTone = null;
     }
 
     private void vibrate(long[] pattern) {
@@ -1409,6 +1429,8 @@ public class WorkoutService extends Service implements LocationListener, SensorE
     @Override public void onDestroy() {
         saveSession(true);
         clockHandler.removeCallbacks(clock);
+        clockHandler.removeCallbacks(releaseCueTone);
+        releaseCueTone();
         stopSensors();
         if (systemExerciseBridge != null) {
             if (running || preparing) systemExerciseBridge.end();

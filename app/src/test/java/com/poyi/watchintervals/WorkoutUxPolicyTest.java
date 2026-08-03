@@ -16,6 +16,18 @@ public class WorkoutUxPolicyTest {
                 WorkoutUxPolicy.entryDestination(false));
     }
 
+    @Test public void onlyTrainingSurfaceCountsAsAnAlreadyRestoredActiveEntry() {
+        assertFalse(WorkoutUxPolicy.shouldRouteAppEntryToTraining(true,
+                WorkoutUxPolicy.AppSurface.TRAINING));
+        assertTrue(WorkoutUxPolicy.shouldRouteAppEntryToTraining(true,
+                WorkoutUxPolicy.AppSurface.MAIN));
+        assertTrue(WorkoutUxPolicy.shouldRouteAppEntryToTraining(true,
+                WorkoutUxPolicy.AppSurface.OTHER_IN_APP));
+        for (WorkoutUxPolicy.AppSurface surface : WorkoutUxPolicy.AppSurface.values()) {
+            assertFalse(WorkoutUxPolicy.shouldRouteAppEntryToTraining(false, surface));
+        }
+    }
+
     @Test public void firstSnapshotAndRepeatedSnapshotsDoNotCreateTransitionCards() {
         assertFalse(WorkoutUxPolicy.stageNotice(-1, 1, false).visible);
         assertFalse(WorkoutUxPolicy.stageNotice(1, 1, false).visible);
@@ -34,6 +46,37 @@ public class WorkoutUxPolicyTest {
 
     @Test public void planCompletionDoesNotCoverFreeRecordingWithAStageCard() {
         assertFalse(WorkoutUxPolicy.stageNotice(2, 3, true).visible);
+    }
+
+    @Test public void kilometreCueDoesNotStackOverCoincidentStageChange() {
+        assertFalse(WorkoutUxPolicy.allowLapCue(true));
+        assertTrue(WorkoutUxPolicy.allowLapCue(false));
+    }
+
+    @Test public void resumedPresentationBaselinesStageAndLapWithoutReplayingOldCues() {
+        WorkoutUxPolicy.TransientCueTracker tracker =
+                new WorkoutUxPolicy.TransientCueTracker();
+
+        assertFalse(tracker.observeStage(1, false).visible);
+        assertFalse(tracker.shouldShowLap(0, false));
+        assertTrue(tracker.observeStage(2, false).visible);
+        assertTrue(tracker.shouldShowLap(1, false));
+
+        tracker.reset();
+
+        assertFalse(tracker.observeStage(3, false).visible);
+        assertFalse(tracker.shouldShowLap(2, false));
+        assertTrue(tracker.observeStage(4, false).visible);
+        assertTrue(tracker.shouldShowLap(3, false));
+    }
+
+    @Test public void trackerConsumesCoincidentLapEvenWhenItsCardIsSuppressed() {
+        WorkoutUxPolicy.TransientCueTracker tracker =
+                new WorkoutUxPolicy.TransientCueTracker();
+        assertFalse(tracker.shouldShowLap(0, false));
+        assertFalse(tracker.shouldShowLap(1, true));
+        assertFalse(tracker.shouldShowLap(1, false));
+        assertTrue(tracker.shouldShowLap(2, false));
     }
 
     @Test public void cueIsBriefAndCallersCannotMutateItsPattern() {

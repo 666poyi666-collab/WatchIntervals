@@ -210,6 +210,12 @@ final class CloudV3Sync {
         try {
             JSONObject sleep = new JSONObject(watch.requestBlocking(
                     "GET", "/v1/sleep?days=31", "", 25_000L));
+            try {
+                PhoneSleepRepository.mergeAndSave(context, sleep, System.currentTimeMillis());
+            } catch (Exception cacheError) {
+                android.util.Log.w("WatchCloudV3", "Unable to persist phone sleep cache",
+                        cacheError);
+            }
             collectSleep(state, outbox, sleep.optJSONArray("records"));
         } catch (Exception unavailable) { /* A temporary read failure is not a deletion. */ }
     }

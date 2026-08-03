@@ -53,6 +53,7 @@
             android:exported="false" />
         <activity
             android:name=".TrainingActivity"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:taskAffinity=""
             android:exported="false" />
@@ -68,6 +69,7 @@
             android:exported="false" />
         <activity
             android:name=".MainActivity"
+            android:alwaysRetainTaskState="true"
             android:screenOrientation="portrait"
             android:taskAffinity=""
             android:exported="true">

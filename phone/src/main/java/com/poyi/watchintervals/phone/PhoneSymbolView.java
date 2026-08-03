@@ -64,6 +64,29 @@ final class PhoneSymbolView extends View {
         paint.setStyle(Paint.Style.STROKE);
         path.reset();
         switch (symbol) {
+            case BRAND:
+                paint.setStrokeWidth(emphasized ? 1.95f : 1.7f);
+                path.moveTo(7.11f, 7.78f);
+                path.lineTo(14.89f, 7.78f);
+                path.cubicTo(16.24f, 7.78f, 17.33f, 8.87f, 17.33f, 10.22f);
+                path.cubicTo(17.33f, 11.57f, 16.24f, 12.67f, 14.89f, 12.67f);
+                path.lineTo(9.78f, 12.67f);
+                canvas.drawPath(path, paint);
+                path.reset();
+                path.moveTo(14.22f, 12.67f);
+                path.lineTo(9.11f, 12.67f);
+                path.cubicTo(7.76f, 12.67f, 6.67f, 13.76f, 6.67f, 15.11f);
+                path.cubicTo(6.67f, 16.46f, 7.76f, 17.56f, 9.11f, 17.56f);
+                path.lineTo(16.22f, 17.56f);
+                canvas.drawPath(path, paint);
+                paint.setStyle(Paint.Style.FILL);
+                path.reset();
+                path.moveTo(14.44f, 16f);
+                path.lineTo(16.89f, 17.56f);
+                path.lineTo(14.44f, 19.11f);
+                path.close();
+                canvas.drawPath(path, paint);
+                break;
             case PLAN:
                 rect.set(3.25f, 3.75f, 20.75f, 20.25f);
                 canvas.drawRoundRect(rect, 4f, 4f, paint);

@@ -30,7 +30,8 @@ public class TrainingActivity extends Activity {
     private static final int ROUTE_PAGE = 4;
     private WorkoutService service;
     private boolean bound;
-    private int displayedStage = -1;
+    private final WorkoutUxPolicy.TransientCueTracker transientCueTracker =
+            new WorkoutUxPolicy.TransientCueTracker();
     private int displayedStageAccent = Integer.MIN_VALUE;
     private int displayedControlTone = Integer.MIN_VALUE;
     private boolean displayedPauseStyle;
@@ -50,7 +51,6 @@ public class TrainingActivity extends Activity {
     private Ui.HeartTrace heartTrace;
     private TextView splitTitle, splitDetail;
     private LinearLayout splitNotice;
-    private int displayedSplitCount = -1;
     private LinearLayout controls, stopConfirmation, transitionNotice, routePanel;
     private View stopScrim;
     private TextView transitionTitle, transitionDetail, routeSummary;
@@ -88,6 +88,11 @@ public class TrainingActivity extends Activity {
             }
             startForegroundService(serviceIntent);
         }
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
     }
 
     private void buildUi() {
@@ -349,10 +354,10 @@ public class TrainingActivity extends Activity {
      * flash every running watch does. First refresh only syncs the counter so recovering an
      * in-progress session does not replay an old lap.
      */
-    private void maybeShowSplit(WorkoutService.Snapshot s) {
-        if (displayedSplitCount < 0) { displayedSplitCount = s.live.splitCount; return; }
-        if (s.live.splitCount <= displayedSplitCount) return;
-        displayedSplitCount = s.live.splitCount;
+    private void maybeShowSplit(WorkoutService.Snapshot s, boolean stageTransitionVisible) {
+        // A kilometre boundary can also end a distance stage. The stage change is the actionable
+        // cue; do not stack a larger three-second lap card on top of its short transition card.
+        if (!transientCueTracker.shouldShowLap(s.live.splitCount, stageTransitionVisible)) return;
         if (splitNotice == null) return;
         splitTitle.setText(String.format(Locale.CHINA, "第 %d 公里", s.live.lastSplitIndex));
         splitDetail.setText("配速 " + SpeedFusion.formatPace(s.live.lastSplitPaceSecondsPerKm));
@@ -466,6 +471,13 @@ public class TrainingActivity extends Activity {
         handler.removeCallbacks(update);
         handler.removeCallbacks(hideTransition);
         handler.removeCallbacks(hideSplit);
+        // Removing a delayed callback must also clear its transient view. Otherwise a screen-off
+        // during the 1.8 s card leaves that card visible forever when the same Activity resumes.
+        hideTransition.run();
+        hideSplit.run();
+        // Stage/lap changes continue in WorkoutService while this presentation is stopped. The
+        // first snapshot after resume is a baseline, not a reason to replay those old cards.
+        transientCueTracker.reset();
         if (bound) { unbindService(connection); bound = false; service = null; }
         super.onStop();
     }
@@ -489,10 +501,9 @@ public class TrainingActivity extends Activity {
     private void renderSnapshot(WorkoutService.Snapshot s) {
         int visiblePage = workoutPager == null ? CORE_PAGE : workoutPager.getCurrentItem();
         String stageSummary = s.stageName + " " + stageTargetText(s);
-        WorkoutUxPolicy.StageNotice stageNotice = WorkoutUxPolicy.stageNotice(
-                displayedStage, s.stageNumber, s.planCompleted);
+        WorkoutUxPolicy.StageNotice stageNotice = transientCueTracker.observeStage(
+                s.stageNumber, s.planCompleted);
         if (stageNotice.visible) showTransition(stageSummary, stageNotice.durationMillis);
-        displayedStage = s.stageNumber;
 
         int accent = s.planCompleted ? Ui.CYAN : s.paused ? Ui.MUTED : s.waitingForGps ? Ui.AMBER : s.stageName.equals("快走") ? Ui.CYAN : s.stageName.equals("休息") ? Ui.AMBER : Ui.LIME;
         if (visiblePage == STAGE_PAGE) {
@@ -580,7 +591,7 @@ public class TrainingActivity extends Activity {
                     s.live.maxHeartRate > 0 ? String.valueOf(s.live.maxHeartRate) : "--");
         }
 
-        maybeShowSplit(s);
+        maybeShowSplit(s, stageNotice.visible);
 
         if (visiblePage == CONTROL_PAGE) {
             Ui.setTextIfChanged(controlState,

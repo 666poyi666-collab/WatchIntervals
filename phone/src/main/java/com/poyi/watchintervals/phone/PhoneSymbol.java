@@ -5,6 +5,7 @@ package com.poyi.watchintervals.phone;
  * platform-owned glyphs, so the same vector language can be rendered consistently everywhere.
  */
 enum PhoneSymbol {
+    BRAND,
     PLAN,
     WORKOUT,
     HISTORY,

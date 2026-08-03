@@ -7,6 +7,7 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RadialGradient;
+import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -259,26 +260,28 @@ final class Ui {
     }
 
     /**
-     * Filled runner silhouette, drawn from independent geometry rather than a font or vendor
-     * asset. A solid torso and weighted limbs stay readable at 34dp; the old jointed stick figure
-     * looked broken because every bend had equal visual weight.
+     * Original interval-route mark shared with the phone's WORKOUT symbol language.
+     *
+     * <p>A single open route and forward action stay crisp at 34dp and avoid the anatomical noise
+     * of the previous tiny runner. Geometry is code-native and scales from a normalized viewport;
+     * no font, vendor glyph or bitmap is involved.</p>
      */
     static final class WorkoutGlyph extends View {
-        private final Paint disc = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint body = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint limbs = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path torso = new Path();
-        private final Path limbPath = new Path();
+        private final Paint halo = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint route = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint action = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path actionPath = new Path();
+        private final RectF routeBounds = new RectF();
         private final int color;
         private float left, top, scale;
 
         WorkoutGlyph(Context context, int color) {
             super(context);
             this.color = color;
-            body.setStyle(Paint.Style.FILL);
-            limbs.setStyle(Paint.Style.STROKE);
-            limbs.setStrokeCap(Paint.Cap.ROUND);
-            limbs.setStrokeJoin(Paint.Join.ROUND);
+            route.setStyle(Paint.Style.STROKE);
+            route.setStrokeCap(Paint.Cap.ROUND);
+            route.setStrokeJoin(Paint.Join.ROUND);
+            action.setStyle(Paint.Style.FILL);
             // Every current instance sits next to a semantic title or inside an already-labelled
             // card. Announcing a generic "训练" for the decoration only duplicates TalkBack.
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -292,51 +295,30 @@ final class Ui {
             left = (width - scale) / 2f;
             top = (height - scale) / 2f;
 
-            disc.setShader(new RadialGradient(x(.46f), y(.43f), scale * .52f,
-                    Color.argb(58, Color.red(color), Color.green(color), Color.blue(color)),
-                    Color.argb(12, Color.red(color), Color.green(color), Color.blue(color)),
+            halo.setShader(new RadialGradient(x(.50f), y(.50f), scale * .50f,
+                    Color.argb(54, Color.red(color), Color.green(color), Color.blue(color)),
+                    Color.argb(7, Color.red(color), Color.green(color), Color.blue(color)),
                     Shader.TileMode.CLAMP));
-            // Keep the runner a single high-contrast silhouette. A directional gradient looked
-            // muddy at the watch's 34dp sizes and made the feet disappear against the dark disc.
-            body.setShader(null);
-            limbs.setShader(null);
-            body.setColor(color);
-            limbs.setColor(color);
-            limbs.setStrokeWidth(scale * .092f);
+            route.setShader(null);
+            action.setShader(null);
+            route.setColor(color);
+            action.setColor(color);
+            route.setStrokeWidth(scale * .078f);
+            routeBounds.set(x(.20f), y(.20f), x(.80f), y(.80f));
 
-            // Forward-leaning torso: broad shoulder, narrow waist and a visible hip weight.
-            torso.reset();
-            torso.moveTo(x(.52f), y(.30f));
-            torso.cubicTo(x(.47f), y(.32f), x(.41f), y(.42f), x(.40f), y(.49f));
-            torso.cubicTo(x(.39f), y(.55f), x(.44f), y(.59f), x(.50f), y(.57f));
-            torso.lineTo(x(.61f), y(.43f));
-            torso.cubicTo(x(.66f), y(.36f), x(.60f), y(.28f), x(.52f), y(.30f));
-            torso.close();
-
-            limbPath.reset();
-            // Rear arm pulls back while the front arm drives forward.
-            limbPath.moveTo(x(.49f), y(.36f));
-            limbPath.lineTo(x(.37f), y(.40f));
-            limbPath.lineTo(x(.27f), y(.51f));
-            limbPath.moveTo(x(.58f), y(.35f));
-            limbPath.lineTo(x(.68f), y(.44f));
-            limbPath.lineTo(x(.79f), y(.34f));
-            // One leg extends behind, the other lifts and reaches forward.
-            limbPath.moveTo(x(.47f), y(.54f));
-            limbPath.lineTo(x(.38f), y(.69f));
-            limbPath.lineTo(x(.24f), y(.80f));
-            limbPath.moveTo(x(.50f), y(.55f));
-            limbPath.lineTo(x(.62f), y(.63f));
-            limbPath.lineTo(x(.79f), y(.61f));
-
+            // Same open-ring/forward-action grammar as PhoneSymbol.WORKOUT, tightened for 34dp.
+            actionPath.reset();
+            actionPath.moveTo(x(.43f), y(.36f));
+            actionPath.lineTo(x(.68f), y(.50f));
+            actionPath.lineTo(x(.43f), y(.64f));
+            actionPath.close();
         }
 
         @Override protected void onDraw(android.graphics.Canvas canvas) {
             if (scale <= 0f) return;
-            canvas.drawCircle(getWidth() / 2f, getHeight() / 2f, scale * .48f, disc);
-            canvas.drawPath(limbPath, limbs);
-            canvas.drawPath(torso, body);
-            canvas.drawCircle(x(.62f), y(.21f), scale * .078f, body);
+            canvas.drawCircle(getWidth() / 2f, getHeight() / 2f, scale * .48f, halo);
+            canvas.drawArc(routeBounds, -78f, 293f, false, route);
+            canvas.drawPath(actionPath, action);
         }
     }
 

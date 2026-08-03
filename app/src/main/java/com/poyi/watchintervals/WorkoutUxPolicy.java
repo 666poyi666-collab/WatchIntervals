@@ -17,11 +17,18 @@ final class WorkoutUxPolicy {
     private static final long[] PLAN_COMPLETE_VIBRATION = {0L, 100L, 70L, 160L};
 
     enum EntryDestination { MAIN, TRAINING }
+    enum AppSurface { TRAINING, MAIN, OTHER_IN_APP }
 
     private WorkoutUxPolicy() {}
 
     static EntryDestination entryDestination(boolean hasRecoverableWorkout) {
         return hasRecoverableWorkout ? EntryDestination.TRAINING : EntryDestination.MAIN;
+    }
+
+    /** An explicit entry may replace any in-app surface, but never fights another foreground app. */
+    static boolean shouldRouteAppEntryToTraining(boolean hasRecoverableWorkout,
+                                                  AppSurface currentSurface) {
+        return hasRecoverableWorkout && currentSurface != AppSurface.TRAINING;
     }
 
     static StageNotice stageNotice(int displayedStageNumber, int currentStageNumber,
@@ -34,9 +41,46 @@ final class WorkoutUxPolicy {
                 : StageNotice.HIDDEN;
     }
 
+    /** A coincident kilometre split must not stack a second card/buzz over the stage change. */
+    static boolean allowLapCue(boolean stageChangedOnSameUpdate) {
+        return !stageChangedOnSameUpdate;
+    }
+
     static Cue cue(boolean planCompleted) {
         return new Cue(STAGE_TONE_DURATION_MILLIS, STAGE_TONE_VOLUME_PERCENT,
                 planCompleted ? PLAN_COMPLETE_VIBRATION : NEXT_STAGE_VIBRATION);
+    }
+
+    /**
+     * Activity-local cursor for transient cards. Resetting it when the presentation stops makes
+     * the first snapshot after screen-off/task restore a baseline, so a cue that already happened
+     * in the service is not replayed by a reused {@code TrainingActivity}.
+     */
+    static final class TransientCueTracker {
+        private int displayedStageNumber = -1;
+        private int displayedSplitCount = -1;
+
+        StageNotice observeStage(int currentStageNumber, boolean planCompleted) {
+            StageNotice notice = stageNotice(displayedStageNumber, currentStageNumber,
+                    planCompleted);
+            displayedStageNumber = currentStageNumber;
+            return notice;
+        }
+
+        boolean shouldShowLap(int currentSplitCount, boolean stageChangedOnSameUpdate) {
+            if (displayedSplitCount < 0) {
+                displayedSplitCount = currentSplitCount;
+                return false;
+            }
+            if (currentSplitCount <= displayedSplitCount) return false;
+            displayedSplitCount = currentSplitCount;
+            return allowLapCue(stageChangedOnSameUpdate);
+        }
+
+        void reset() {
+            displayedStageNumber = -1;
+            displayedSplitCount = -1;
+        }
     }
 
     static final class StageNotice {

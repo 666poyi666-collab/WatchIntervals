@@ -32,6 +32,8 @@ public class HistoryDetailActivity extends Activity {
         getWindow().setStatusBarColor(Palette.BG);
         getWindow().setNavigationBarColor(Palette.BG);
         getWindow().setNavigationBarDividerColor(Palette.BG);
+        getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                |android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         Configuration.getInstance().load(this,getSharedPreferences("osmdroid",MODE_PRIVATE));
         Configuration.getInstance().setUserAgentValue(getPackageName());
         JSONObject record;
@@ -78,7 +80,7 @@ public class HistoryDetailActivity extends Activity {
     private ArrayList<GeoPoint> points(JSONArray route){ArrayList<GeoPoint> result=new ArrayList<>();if(route!=null)for(int i=0;i<route.length();i++){Object raw=route.opt(i);double lat=Double.NaN,lon=Double.NaN;if(raw instanceof JSONArray){JSONArray p=(JSONArray)raw;if(p.length()>=2){lat=p.optDouble(0,Double.NaN);lon=p.optDouble(1,Double.NaN);}}else if(raw instanceof JSONObject){JSONObject p=(JSONObject)raw;lat=p.optDouble("latitude",Double.NaN);lon=p.optDouble("longitude",Double.NaN);}if(Double.isFinite(lat)&&Double.isFinite(lon))result.add(AmapTileSource.fromWgs84(lat,lon));}return result;}
     private LinearLayout dataLine(String label,String value){LinearLayout row=new LinearLayout(this);row.setPadding(0,dp(9),0,dp(9));TextView left=text(label,14,false,Palette.TEXT);TextView right=text(value,14,true,Palette.TEXT);right.setGravity(Gravity.END);row.addView(left,new LinearLayout.LayoutParams(0,-2,1f));row.addView(right,new LinearLayout.LayoutParams(-2,-2));return row;}
     private Marker marker(GeoPoint point,String title,int color){Marker marker=new Marker(map);marker.setPosition(point);marker.setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_CENTER);marker.setTitle(title);GradientDrawable icon=new GradientDrawable();icon.setShape(GradientDrawable.OVAL);icon.setColor(color);icon.setStroke(dp(3),Color.WHITE);icon.setSize(dp(20),dp(20));marker.setIcon(icon);return marker;}
-    private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(12),dp(18),dp(12));v.setBackground(round(Palette.CARD,16));return v;}
+    private LinearLayout card(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setPadding(dp(18),dp(12),dp(18),dp(12));GradientDrawable background=round(Palette.CARD,16);background.setStroke(dp(1),Palette.BORDER);v.setBackground(background);v.setElevation(dp(1));return v;}
     private TextView metricCell(String label,String value,boolean hero){TextView v=text(label+"\n"+value,hero?18:16,true,Palette.TEXT);v.setGravity(Gravity.CENTER);v.setLineSpacing(dp(4),1f);v.setPadding(dp(3),dp(13),dp(3),dp(13));return v;}
     private TextView text(String value,int size,boolean bold,int color){TextView v=new TextView(this);v.setText(value);v.setTextSize(size);v.setTextColor(color);if(bold)v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return v;}
     private GradientDrawable round(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
