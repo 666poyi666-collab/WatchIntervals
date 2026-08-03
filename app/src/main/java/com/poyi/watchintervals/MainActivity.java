@@ -33,6 +33,8 @@ public class MainActivity extends Activity {
     private TextView weeklyLine;
     private LinearLayout pagerHistoryList, pagerPlanList;
     private TextView pagerHistorySummary, pagerPlanTitle;
+    private boolean routingToTraining;
+    private boolean sleepPermissionChecked;
     private final Handler clockHandler = new Handler(Looper.getMainLooper());
     private final Runnable clockUpdater = new Runnable() { @Override public void run() {
         updateClock();
@@ -48,6 +50,13 @@ public class MainActivity extends Activity {
         startForegroundService(new Intent(this, WatchBridgeService.class));
         startForegroundService(new Intent(this, WatchLinkService.class));
         buildUi();
+        if (routeActiveWorkout()) return;
+        requestSleepPermissionOnce();
+    }
+
+    private void requestSleepPermissionOnce() {
+        if (sleepPermissionChecked) return;
+        sleepPermissionChecked = true;
         if (!getPreferences(MODE_PRIVATE).getBoolean("sleep_permission_prompted", false)) {
             getPreferences(MODE_PRIVATE).edit().putBoolean("sleep_permission_prompted", true).apply();
             if (!SystemSleepBridge.requestPermission(this, REQUEST_SLEEP_PERMISSION)) {
@@ -58,6 +67,11 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (routeActiveWorkout()) {
+            clockHandler.removeCallbacks(clockUpdater);
+            return;
+        }
+        requestSleepPermissionOnce();
         stages = PlanStore.load(this);
         updatePlanPreview();
         updateSessionCallToAction();
@@ -65,6 +79,28 @@ public class MainActivity extends Activity {
         renderPagerPages();
         clockHandler.removeCallbacks(clockUpdater);
         clockHandler.post(clockUpdater);
+    }
+
+    /**
+     * The launcher is only an entry point while a checkpoint exists. WorkoutService owns and
+     * restores the state; MainActivity immediately returns the user to its TrainingActivity view.
+     */
+    private boolean routeActiveWorkout() {
+        WorkoutUxPolicy.EntryDestination destination = WorkoutUxPolicy.entryDestination(
+                WorkoutService.hasRecoverableSession(this));
+        if (destination != WorkoutUxPolicy.EntryDestination.TRAINING) {
+            routingToTraining = false;
+            return false;
+        }
+        if (!routingToTraining) {
+            routingToTraining = true;
+            startForegroundService(new Intent(this, WorkoutService.class)
+                    .setAction(WorkoutService.ACTION_START));
+            startActivity(new Intent(this, TrainingActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(TrainingActivity.EXTRA_PREPARED_SESSION, true));
+        }
+        return true;
     }
 
     @Override protected void onPause() {

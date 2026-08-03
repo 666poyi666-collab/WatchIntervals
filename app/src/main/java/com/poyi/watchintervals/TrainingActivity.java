@@ -1,7 +1,6 @@
 package com.poyi.watchintervals;
 
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -30,8 +29,7 @@ public class TrainingActivity extends Activity {
     /** Index of the live route panel inside {@link #workoutPager}. */
     private static final int ROUTE_PAGE = 4;
     private WorkoutService service;
-    private boolean bound, workoutCompleted;
-    private boolean allowTaskLeave;
+    private boolean bound;
     private int displayedStage = -1;
     private int displayedStageAccent = Integer.MIN_VALUE;
     private int displayedControlTone = Integer.MIN_VALUE;
@@ -41,7 +39,6 @@ public class TrainingActivity extends Activity {
     private boolean refreshDeferredByPager;
     private WorkoutService.Snapshot lastUiSnapshot;
     private long lastUiSnapshotElapsed;
-    private String lastStageSummary = "";
     private final java.text.SimpleDateFormat clockFormat =
             new java.text.SimpleDateFormat("HH:mm", Locale.CHINA);
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -115,8 +112,8 @@ public class TrainingActivity extends Activity {
         shell.addView(workoutPager, new FrameLayout.LayoutParams(-1, -1));
 
         transitionNotice = buildTransitionNotice();
-        FrameLayout.LayoutParams transitionParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 124), Gravity.CENTER);
-        transitionParams.leftMargin = Ui.dp(this, 16); transitionParams.rightMargin = Ui.dp(this, 16);
+        FrameLayout.LayoutParams transitionParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 88), Gravity.CENTER);
+        transitionParams.leftMargin = Ui.dp(this, 24); transitionParams.rightMargin = Ui.dp(this, 24);
         shell.addView(transitionNotice, transitionParams);
         splitNotice = buildSplitNotice();
         FrameLayout.LayoutParams splitParams = new FrameLayout.LayoutParams(-1, Ui.dp(this, 112), Gravity.CENTER);
@@ -386,17 +383,19 @@ public class TrainingActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(Gravity.CENTER);
-        panel.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
-        panel.setBackground(Ui.outlinedBackground(this, Ui.PANEL_ACTIVE, Ui.LIME, 24));
-        panel.setFocusable(true);
-        panel.setFocusableInTouchMode(true);
-        // The notice is an overlay, so it must start hidden.  Starting it visible
-        // consumed every horizontal gesture before the first real stage change.
+        panel.setPadding(Ui.dp(this, 14), Ui.dp(this, 9), Ui.dp(this, 14), Ui.dp(this, 9));
+        panel.setBackground(Ui.outlinedBackground(this, Color.rgb(22, 29, 26), Ui.LIME, 20));
+        // This is status feedback, never a dialog: it must not take focus, intercept a swipe or
+        // wait for acknowledgement while the runner is changing pace.
+        panel.setClickable(false);
+        panel.setFocusable(false);
+        panel.setFocusableInTouchMode(false);
+        panel.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         panel.setVisibility(View.GONE);
-        transitionTitle = Ui.bold(this, "阶段完成", 21, Ui.WHITE); transitionTitle.setGravity(Gravity.CENTER);
-        transitionDetail = Ui.text(this, "下一项", 14, Ui.LIME); transitionDetail.setGravity(Gravity.CENTER);
-        panel.addView(transitionTitle, new LinearLayout.LayoutParams(-1, Ui.dp(this, 40)));
-        panel.addView(transitionDetail, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
+        transitionTitle = Ui.bold(this, "下一阶段", 17, Ui.LIME); transitionTitle.setGravity(Gravity.CENTER);
+        transitionDetail = Ui.bold(this, "", 15, Ui.WHITE); transitionDetail.setGravity(Gravity.CENTER);
+        panel.addView(transitionTitle, new LinearLayout.LayoutParams(-1, Ui.dp(this, 28)));
+        panel.addView(transitionDetail, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
         return panel;
     }
 
@@ -469,22 +468,6 @@ public class TrainingActivity extends Activity {
         handler.removeCallbacks(hideSplit);
         if (bound) { unbindService(connection); bound = false; service = null; }
         super.onStop();
-        // During an active workout this task owns the foreground just like the
-        // system sports activity. Full-screen overlays and launcher transitions
-        // are moved behind it until the user explicitly ends the workout.
-        if (!allowTaskLeave && !workoutCompleted && !isFinishing()) {
-            final int taskId = getTaskId();
-            handler.postDelayed(() -> {
-                if (allowTaskLeave || isFinishing()) return;
-                ActivityManager manager = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
-                if (manager != null) manager.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
-                try {
-                    startActivity(new Intent(this, TrainingActivity.class)
-                            .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                            .putExtra(EXTRA_PREPARED_SESSION, true));
-                } catch (RuntimeException ignored) { /* Foreground service repeats the restore if needed. */ }
-            }, 250L);
-        }
     }
 
     private void refresh() {
@@ -506,10 +489,10 @@ public class TrainingActivity extends Activity {
     private void renderSnapshot(WorkoutService.Snapshot s) {
         int visiblePage = workoutPager == null ? CORE_PAGE : workoutPager.getCurrentItem();
         String stageSummary = s.stageName + " " + stageTargetText(s);
-        if (!s.planCompleted && displayedStage > 0 && s.stageNumber > displayedStage) showTransition(lastStageSummary, stageSummary);
+        WorkoutUxPolicy.StageNotice stageNotice = WorkoutUxPolicy.stageNotice(
+                displayedStage, s.stageNumber, s.planCompleted);
+        if (stageNotice.visible) showTransition(stageSummary, stageNotice.durationMillis);
         displayedStage = s.stageNumber;
-        if (!s.planCompleted) lastStageSummary = stageSummary;
-        workoutCompleted = false;
 
         int accent = s.planCompleted ? Ui.CYAN : s.paused ? Ui.MUTED : s.waitingForGps ? Ui.AMBER : s.stageName.equals("快走") ? Ui.CYAN : s.stageName.equals("休息") ? Ui.AMBER : Ui.LIME;
         if (visiblePage == STAGE_PAGE) {
@@ -704,13 +687,13 @@ public class TrainingActivity extends Activity {
         return SpeedFusion.formatPace(1000d / s.currentSpeedMps);
     }
 
-    private void showTransition(String previous, String next) {
-        if (transitionNotice == null || previous.isEmpty()) return;
-        transitionTitle.setText(previous + " 已完成");
-        transitionDetail.setText("下一项：" + next);
+    private void showTransition(String next, long durationMillis) {
+        if (transitionNotice == null || next.isEmpty()) return;
+        transitionTitle.setText("下一阶段");
+        transitionDetail.setText(next);
         transitionNotice.setVisibility(View.VISIBLE);
         handler.removeCallbacks(hideTransition);
-        handler.postDelayed(hideTransition, 2600L);
+        handler.postDelayed(hideTransition, durationMillis);
     }
 
     private String stageProgressText(WorkoutService.Snapshot s) {
@@ -726,7 +709,7 @@ public class TrainingActivity extends Activity {
     }
 
     private void confirmStop() {
-        if (workoutCompleted || stopConfirmation == null) return;
+        if (stopConfirmation == null) return;
         if (stopScrim != null) stopScrim.setVisibility(View.VISIBLE);
         stopConfirmation.setVisibility(View.VISIBLE);
         stopConfirmation.requestFocus();
@@ -745,10 +728,9 @@ public class TrainingActivity extends Activity {
         if (workoutPager != null) workoutPager.setCurrentItem(1,true);
     }
 
-    private void stopAndFinish() { allowTaskLeave = true; if (service != null) service.finishAndStop(); finish(); }
+    private void stopAndFinish() { if (service != null) service.finishAndStop(); finish(); }
     @Override public void onBackPressed() {
         if (workoutPager != null && workoutPager.getCurrentItem() != 1) { workoutPager.setCurrentItem(1, true); return; }
-        if (workoutCompleted) { allowTaskLeave = true; finish(); return; }
         if (stopConfirmation != null && stopConfirmation.getVisibility() == View.VISIBLE) hideStopConfirmation();
         else confirmStop();
     }
