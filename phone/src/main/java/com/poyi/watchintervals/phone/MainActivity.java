@@ -28,6 +28,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import com.poyi.watchintervals.phone.connection.WatchConnectionManager;
+import com.poyi.watchintervals.phone.connection.ConnectionState;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_LOCATION_RELAY = 44;
@@ -35,16 +36,27 @@ public class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<JSONObject> stages = new ArrayList<>();
     private EditText host, code, cloudEndpoint, cloudKey, planName, planGroup, planRequirement;
-    private TextView connection, historySummary, sleepSummary, currentWatchPlan;
-    private LinearLayout planList, historyList, sleepList, savedPlanList, planCard, controlCard, historyCard, sleepCard, planLibraryPanel, planEditorPanel;
+    private TextView connection, syncSummary, historySummary, sleepSummary, currentWatchPlan,
+            currentPlanSync, planDetailName, planDetailMeta, planDetailRequirement,
+            planDetailSequence, planEditorTitle;
+    private Button syncAction;
+    private LinearLayout planList, historyList, sleepList, savedPlanList, planCard,
+            controlCard, historyCard, sleepCard, planLibraryPanel, planDetailPanel,
+            planDetailStages, planEditorPanel;
     private String editingPlanId = "";
+    private String detailPlanId = "";
+    private String watchCurrentPlanId = "";
     private NsdManager nsdManager;
     private NsdManager.DiscoveryListener discoveryListener;
     private WifiManager.MulticastLock multicastLock;
     private boolean resolving;
     private boolean foreground;
     private WatchConnectionManager watchConnection;
-    private boolean autoSynced;
+    private final java.util.concurrent.atomic.AtomicBoolean fullSyncInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private ConnectionState previousConnectionState;
+    private boolean suppressPlanDraftTracking;
+    private boolean planDraftDirty;
     private View statusDot;
     private TextView setupChevron;
     private LinearLayout setupPanel;
@@ -60,11 +72,26 @@ public class MainActivity extends Activity {
     private String liveActionsState = "";
     private volatile boolean livePollInFlight;
     private final android.os.Handler liveHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final android.os.Handler syncRetryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable syncRetry = () -> {
+        if(foreground&&watchConnection!=null&&PhoneSyncPolicy.isTransportReady(
+                watchConnection.snapshot().state)&&!fullSyncInFlight.get())syncAll();
+    };
     private final Runnable livePoller = new Runnable() { @Override public void run() {
         pollLiveStatus();
         liveHandler.postDelayed(this, 5_000L);
     }};
-    private final WatchConnectionManager.Observer connectionObserver=snapshot->{connection.setText(connectionLabel(snapshot));updateStatusDot(snapshot);if(watchConnection!=null&&watchConnection.identity().isPaired()&&code!=null){code.setText("");code.setHint("已完成安全配对");}if(!autoSynced&&(snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE||snapshot.state==com.poyi.watchintervals.phone.connection.ConnectionState.CONNECTED_BLE_LAN)){autoSynced=true;syncAll();}};
+    private final WatchConnectionManager.Observer connectionObserver=snapshot->{
+        connection.setText(connectionLabel(snapshot));
+        updateStatusDot(snapshot);
+        if(watchConnection!=null&&watchConnection.identity().isPaired()&&code!=null){
+            code.setText("");code.setHint("已完成安全配对");
+        }
+        boolean shouldSync=PhoneSyncPolicy.shouldAutoSync(previousConnectionState,
+                snapshot.state,fullSyncInFlight.get());
+        previousConnectionState=snapshot.state;
+        if(shouldSync)syncAll();
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -85,6 +112,7 @@ public class MainActivity extends Activity {
         toggleSetup(!watchConnection.identity().isPaired());
         ensureBluetoothConnection();
         discoverWatch();
+        restoreUiState(state);
     }
 
     @Override protected void onResume() {
@@ -124,13 +152,25 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams productTitleParams=new LinearLayout.LayoutParams(-2,dp(36));
         productTitleParams.leftMargin=dp(8);brandRow.addView(productTitle,productTitleParams);
         header.addView(brandRow);
-        LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);statusRow.setClickable(true);statusRow.setFocusable(true);
+        LinearLayout statusRow=new LinearLayout(this);statusRow.setGravity(Gravity.CENTER_VERTICAL);
         statusDot=new View(this);statusDot.setBackground(rounded(Color.GRAY,10));
         LinearLayout.LayoutParams dotParams=new LinearLayout.LayoutParams(dp(10),dp(10));dotParams.rightMargin=dp(8);statusRow.addView(statusDot,dotParams);
-        connection=text("尚未连接",14,false,Palette.TEXT_DIM);statusRow.addView(connection,new LinearLayout.LayoutParams(0,-2,1));
-        setupChevron=text("设置",13,true,Palette.TEXT_DIM);statusRow.addView(setupChevron,new LinearLayout.LayoutParams(-2,-2));
-        statusRow.setOnClickListener(v->toggleSetup(setupScroll==null||setupScroll.getVisibility()!=View.VISIBLE));
-        header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(48)));
+        LinearLayout statusCopy=section();statusCopy.setClickable(true);statusCopy.setFocusable(true);
+        connection=text("尚未连接",14,true,Palette.TEXT);connection.setPadding(0,0,0,0);
+        syncSummary=text(lastSyncLabel(),12,false,Palette.TEXT_DIM);syncSummary.setPadding(0,0,0,0);
+        statusCopy.addView(connection);statusCopy.addView(syncSummary);
+        statusCopy.setOnClickListener(v->toggleSetup(setupScroll==null||setupScroll.getVisibility()!=View.VISIBLE));
+        statusRow.addView(statusCopy,new LinearLayout.LayoutParams(0,-2,1));
+        syncAction=button("同步",Palette.CARD_HIGH,Palette.TEXT);syncAction.setTextSize(13);
+        syncAction.setContentDescription("立即同步手表数据");
+        LinearLayout.LayoutParams syncParams=new LinearLayout.LayoutParams(dp(64),dp(40));
+        syncParams.rightMargin=dp(4);statusRow.addView(syncAction,syncParams);
+        setupChevron=text("设置",13,true,Palette.TEXT_DIM);setupChevron.setGravity(Gravity.CENTER);
+        setupChevron.setClickable(true);setupChevron.setFocusable(true);
+        setupChevron.setContentDescription("打开连接与云同步设置");
+        setupChevron.setOnClickListener(v->toggleSetup(setupScroll==null||setupScroll.getVisibility()!=View.VISIBLE));
+        statusRow.addView(setupChevron,new LinearLayout.LayoutParams(dp(48),dp(40)));
+        header.addView(statusRow,new LinearLayout.LayoutParams(-1,dp(60)));
 
         setupPanel=compactCard();
         setupPanel.setBackground(glassSurface(24));
@@ -156,22 +196,56 @@ public class MainActivity extends Activity {
         planCard = section();
         planCard.addView(pageTitle("训练计划", "把每一天的训练，排成看得懂的节奏"));
         planLibraryPanel=new LinearLayout(this);planLibraryPanel.setOrientation(LinearLayout.VERTICAL);
-        currentWatchPlan=text("手表当前安排  ·  连接后读取",13,false,Palette.TEXT_DIM);
-        currentWatchPlan.setPadding(dp(14),dp(8),dp(14),dp(8));
-        currentWatchPlan.setBackground(roundedStroke(Palette.CARD,14,Palette.BORDER,1));
-        LinearLayout.LayoutParams currentPlanParams=new LinearLayout.LayoutParams(-1,dp(42));currentPlanParams.topMargin=dp(14);planLibraryPanel.addView(currentWatchPlan,currentPlanParams);
+        LinearLayout currentPlanCard=compactCard();currentPlanCard.setPadding(dp(16),dp(13),dp(16),dp(13));
+        currentPlanCard.setBackground(roundedStroke(Palette.FILL_SELECTED,20,Palette.EXERCISE,1));
+        currentPlanCard.addView(text("手表当前安排",12,true,Palette.TEXT_DIM));
+        currentWatchPlan=text("连接后读取",18,true,Palette.TEXT);currentPlanCard.addView(currentWatchPlan);
+        currentPlanSync=text("手机修改会自动排队同步",12,false,Palette.TEXT_DIM);currentPlanCard.addView(currentPlanSync);
+        LinearLayout.LayoutParams currentPlanParams=margin();currentPlanParams.topMargin=dp(14);planLibraryPanel.addView(currentPlanCard,currentPlanParams);
         LinearLayout libraryHeader = new LinearLayout(this); libraryHeader.setGravity(Gravity.CENTER_VERTICAL);
-        libraryHeader.addView(text("我的计划",20,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(64),1));
-        Button createGroup=button("＋",Palette.MOVE,Palette.INK); createGroup.setTextSize(25); libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        libraryHeader.addView(text("我的训练计划",20,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(64),1));
+        Button createGroup=button("新建",Palette.MOVE,Palette.INK);createGroup.setContentDescription("新建训练计划分组");
+        libraryHeader.addView(createGroup,new LinearLayout.LayoutParams(dp(76),dp(48)));
         planLibraryPanel.addView(libraryHeader);
         savedPlanList=new LinearLayout(this); savedPlanList.setOrientation(LinearLayout.VERTICAL); planLibraryPanel.addView(savedPlanList);
         planCard.addView(planLibraryPanel);
 
+        planDetailPanel=section();planDetailPanel.setVisibility(View.GONE);
+        LinearLayout detailHeader=new LinearLayout(this);detailHeader.setGravity(Gravity.CENTER_VERTICAL);
+        Button closeDetail=button("返回计划",Color.TRANSPARENT,Palette.MOVE);
+        closeDetail.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
+        closeDetail.setContentDescription("返回训练计划列表");
+        detailHeader.addView(closeDetail,new LinearLayout.LayoutParams(0,dp(48),1));
+        Button editDetail=button("编辑",Palette.CARD_HIGH,Palette.TEXT);
+        detailHeader.addView(editDetail,new LinearLayout.LayoutParams(dp(72),dp(44)));
+        planDetailPanel.addView(detailHeader);
+        planDetailName=text("安排详情",28,true,Palette.TEXT);planDetailPanel.addView(planDetailName);
+        planDetailMeta=text("",14,false,Palette.TEXT_DIM);planDetailPanel.addView(planDetailMeta);
+        LinearLayout detailOverview=card();detailOverview.setPadding(dp(16),dp(14),dp(16),dp(14));
+        detailOverview.addView(text("训练节奏",12,true,Palette.TEXT_DIM));
+        planDetailSequence=text("",18,true,Palette.TEXT);planDetailSequence.setLineSpacing(dp(4),1f);
+        detailOverview.addView(planDetailSequence);
+        planDetailRequirement=text("",13,false,Palette.TEXT_DIM);detailOverview.addView(planDetailRequirement);
+        LinearLayout.LayoutParams detailOverviewParams=margin();detailOverviewParams.topMargin=dp(14);
+        planDetailPanel.addView(detailOverview,detailOverviewParams);
+        planDetailPanel.addView(text("阶段明细",17,true,Palette.TEXT));
+        planDetailStages=section();planDetailPanel.addView(planDetailStages);
+        Button useDetail=button("设为手表当前安排",Palette.EXERCISE,Palette.INK);
+        useDetail.setContentDescription("设为当前安排并同步到手表");
+        LinearLayout.LayoutParams useDetailParams=margin();useDetailParams.topMargin=dp(16);
+        planDetailPanel.addView(useDetail,useDetailParams);
+        Button deleteDetail=button("删除这个安排",Palette.FILL_DANGER,Palette.RED);
+        LinearLayout.LayoutParams deleteDetailParams=margin();deleteDetailParams.topMargin=dp(8);
+        planDetailPanel.addView(deleteDetail,deleteDetailParams);
+        planCard.addView(planDetailPanel);
+
         planEditorPanel=new LinearLayout(this);planEditorPanel.setOrientation(LinearLayout.VERTICAL);planEditorPanel.setVisibility(View.GONE);
         LinearLayout editorHeader=new LinearLayout(this);editorHeader.setGravity(Gravity.CENTER_VERTICAL);
-        Button closeEditor=button("‹ 计划列表",Color.TRANSPARENT,Palette.MOVE);closeEditor.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(dp(118),dp(48)));
+        Button closeEditor=button("返回详情",Color.TRANSPARENT,Palette.MOVE);closeEditor.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
+        closeEditor.setContentDescription("返回安排详情");editorHeader.addView(closeEditor,new LinearLayout.LayoutParams(0,dp(48),1));
+        Button saveTop=button("保存",Palette.EXERCISE,Palette.INK);editorHeader.addView(saveTop,new LinearLayout.LayoutParams(dp(72),dp(44)));
         planEditorPanel.addView(editorHeader);
-        planEditorPanel.addView(text("编辑安排",22,true,Palette.TEXT));
+        planEditorTitle=text("编辑安排",28,true,Palette.TEXT);planEditorPanel.addView(planEditorTitle);
         planEditorPanel.addView(text("安排信息",16,true,Palette.TEXT));
         planName = input("安排名称，例如：第1天"); planGroup = input("所属训练计划，例如：减肥计划");
         planRequirement = input("今天的训练说明（可选）");
@@ -190,10 +264,9 @@ public class MainActivity extends Activity {
         Button addWalk = button("+ 快走", Palette.FILL_WALK, Palette.STAND);
         Button addRest = button("+ 休息", Palette.FILL_REST, Palette.YELLOW);
         additions.addView(addRun, weight()); additions.addView(addWalk, weight()); additions.addView(addRest, weight()); planEditorPanel.addView(additions);
-        LinearLayout planActions=new LinearLayout(this);
-        Button saveLocal=button("保存安排",Palette.CARD_HIGH,Palette.TEXT);
-        Button save=button("保存并同步",Palette.EXERCISE,Palette.INK);
-        planActions.addView(saveLocal,weight()); planActions.addView(save,weight()); planEditorPanel.addView(planActions);
+        Button save=button("保存安排",Palette.EXERCISE,Palette.INK);
+        LinearLayout.LayoutParams saveParams=margin();saveParams.topMargin=dp(14);planEditorPanel.addView(save,saveParams);
+        planEditorPanel.addView(text("保存后自动同步；只有“设为当前”才会改变手表正在使用的安排。",12,false,Palette.TEXT_DIM));
         planCard.addView(planEditorPanel);
 
         // Live remote: the watch's /v1/status workout block drives the readout and which actions
@@ -266,17 +339,29 @@ public class MainActivity extends Activity {
         root.requestApplyInsets();
 
         connect.setOnClickListener(v -> syncAll());
+        syncAction.setOnClickListener(v -> syncAll());
         saveCloud.setOnClickListener(v -> saveCloudConfig());
         discover.setOnClickListener(v -> discoverWatch());
         addRun.setOnClickListener(v -> addStage("RUN", "DISTANCE", 1000));
         addWalk.setOnClickListener(v -> addStage("WALK", "DISTANCE", 200));
         addRest.setOnClickListener(v -> addStage("REST", "TIME", 60));
-        save.setOnClickListener(v -> savePlan());
-        saveLocal.setOnClickListener(v -> { if(saveLocalPlan(true)) showPlanLibrary(); });
+        save.setOnClickListener(v -> saveEditedPlan());
+        saveTop.setOnClickListener(v -> saveEditedPlan());
         createGroup.setOnClickListener(v -> showGroupNameDialog(null, ""));
-        closeEditor.setOnClickListener(v->showPlanLibrary());
+        closeDetail.setOnClickListener(v->showPlanLibrary());
+        editDetail.setOnClickListener(v->editDetailPlan());
+        useDetail.setOnClickListener(v->selectPlan(detailPlanId));
+        deleteDetail.setOnClickListener(v->confirmDeletePlan(detailPlanId));
+        closeEditor.setOnClickListener(v->leavePlanEditor());
         intervalPlan.setOnClickListener(v -> applyTemplate(false));
         fartlekPlan.setOnClickListener(v -> applyTemplate(true));
+        android.text.TextWatcher draftWatcher=new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence value,int start,int count,int after){}
+            public void onTextChanged(CharSequence value,int start,int before,int count){}
+            public void afterTextChanged(android.text.Editable value){markPlanDraftDirty();}
+        };
+        planName.addTextChangedListener(draftWatcher);planGroup.addTextChangedListener(draftWatcher);
+        planRequirement.addTextChangedListener(draftWatcher);
         showSection(0);
         renderSavedPlans();
     }
@@ -303,7 +388,10 @@ public class MainActivity extends Activity {
         controlScroll.setVisibility(section==1?View.VISIBLE:View.GONE);
         historyScroll.setVisibility(section==2?View.VISIBLE:View.GONE);
         sleepScroll.setVisibility(section==3?View.VISIBLE:View.GONE);
-        if(section==0)showPlanLibrary();
+        // Returning to the Plan tab resumes an open detail/editor instead of silently dropping it.
+        if(section==0&&planLibraryPanel.getVisibility()!=View.VISIBLE
+                &&planDetailPanel.getVisibility()!=View.VISIBLE
+                &&planEditorPanel.getVisibility()!=View.VISIBLE)showPlanLibrary();
         for(int i=0;i<navItems.length;i++)navItems[i].setActive(i==section);
         liveHandler.removeCallbacks(livePoller);
         if(section==1)liveHandler.post(livePoller);
@@ -461,9 +549,15 @@ public class MainActivity extends Activity {
     }
 
     private void syncAll() {
+        if(!fullSyncInFlight.compareAndSet(false,true)){
+            setSyncState("同步正在进行，完成后会自动更新");
+            return;
+        }
         android.content.SharedPreferences.Editor connectionEdit=getSharedPreferences("connection", MODE_PRIVATE).edit().putString("host", host.getText().toString().trim());
         connectionEdit.remove("code").apply();
-        runIo(() -> {
+        setSyncBusy(true,PhoneSyncPolicy.progressLabel(0,4,"准备同步"));
+        io.execute(() -> {
+        try {
             String pairing=code.getText().toString().trim();if(!watchConnection.identity().isPaired()&&pairing.length()!=6)throw new IllegalArgumentException("请输入手表上的 6 位配对码");
             watchConnection.configurePairing(pairing);watchConnection.configureLan(host.getText().toString().trim(),pairing);
             // BLE is preferred but not required: with a verified LAN transport the request layer
@@ -474,16 +568,18 @@ public class MainActivity extends Activity {
                 if(!watchConnection.snapshot().lanAvailable)
                     throw new IllegalStateException("蓝牙连接失败，且局域网不可达；请靠近手表或连接同一 Wi-Fi",bleError);
             }
+            setSyncState(PhoneSyncPolicy.progressLabel(1,4,"验证手表"));
             JSONObject status = new JSONObject(watchConnection.requestBlocking("GET","/v1/status","",20_000L));
             String expected=getSharedPreferences("connection",MODE_PRIVATE).getString("watch_device_id","");String actual=status.optString("deviceId");if(!expected.isEmpty()&&!expected.equals(actual))throw new IllegalStateException("发现的设备身份与已配对手表不一致");
             if(expected.isEmpty()&&!actual.isEmpty())getSharedPreferences("connection",MODE_PRIVATE).edit().putString("watch_device_id",actual).apply();
-            JSONObject library = PhonePlanLibrary.load(this); if(PhoneSyncOutbox.size(this)==0)PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");PhoneSyncOutbox.drain(this,watchConnection);
+            setSyncState(PhoneSyncPolicy.progressLabel(2,4,"同步训练计划"));
+            if(PhoneSyncOutbox.size(this)>0)PhoneSyncOutbox.drain(this,watchConnection);
             JSONObject plan = new JSONObject(watchConnection.requestBlocking("GET","/v1/plan/profile","",20_000L)); JSONArray history = new JSONArray(watchConnection.requestBlocking("GET","/v1/history","",20_000L));
+            setSyncState(PhoneSyncPolicy.progressLabel(3,4,"刷新睡眠"));
             JSONObject sleepCandidate=null;
             boolean sleepHadRecords=false;
             try {
-                JSONObject value=new JSONObject(watchConnection.requestBlocking(
-                        "GET","/v1/sleep?days=31","",25_000L));
+                JSONObject value=PhoneSleepSync.fetchRecent(watchConnection,31);
                 if("ready".equals(value.optString("state"))) {
                     sleepHadRecords=value.optJSONArray("records")!=null
                             &&value.optJSONArray("records").length()>0;
@@ -497,8 +593,25 @@ public class MainActivity extends Activity {
             final JSONObject syncedSleep=sleepCandidate;
             final boolean syncedSleepHadRecords=sleepHadRecords;
             CloudSnapshotSync.syncAsync(this);
-            runOnUiThread(() -> { connection.setText("已连接 " + status.optString("device") + " · " + transportLabel(watchConnection.snapshot())); showPlan(plan); showHistory(history);if(currentSection==3&&syncedSleep!=null)showSleep(syncedSleep,!syncedSleepHadRecords,syncedSleepHadRecords?null:"手表本次没有返回新记录，保留上次数据"); ensureLocationRelay(); });
-        });
+            long completedAt=System.currentTimeMillis();rememberLastSync(completedAt);
+            syncRetryHandler.removeCallbacks(syncRetry);
+            runOnUiThread(() -> {
+                showPlan(plan);showHistory(history);
+                if(currentSection==3&&syncedSleep!=null)showSleep(syncedSleep,!syncedSleepHadRecords,
+                        syncedSleepHadRecords?null:"手表本次没有返回新记录，保留上次数据");
+                setSyncBusy(false,PhoneSyncPolicy.successLabel(syncedSleepHadRecords,
+                        new SimpleDateFormat("HH:mm",Locale.CHINA).format(new Date(completedAt))));
+                ensureLocationRelay();
+            });
+        }catch(Exception error){
+            String reason=userError(error);
+            runOnUiThread(()->setSyncBusy(false,"同步未完成 · "+reason+" · 连接恢复后会重试"));
+            PhoneSleepSyncWorker.schedule(this);
+            syncRetryHandler.removeCallbacks(syncRetry);syncRetryHandler.postDelayed(syncRetry,30_000L);
+        }finally{
+            fullSyncInFlight.set(false);
+            runOnUiThread(()->{if(syncAction!=null)syncAction.setEnabled(true);});
+        }});
     }
 
     private void saveCloudConfig() {
@@ -562,56 +675,91 @@ public class MainActivity extends Activity {
     }
 
     private void showPlan(JSONObject profile) {
-        if(currentWatchPlan!=null)currentWatchPlan.setText("手表当前安排："+profile.optString("name")+" · "+profile.optString("group"));
-        planName.setText(profile.optString("name")); planGroup.setText(profile.optString("group")); planRequirement.setText(profile.optString("requirement"));
-        JSONArray array = profile.optJSONArray("stages"); if (array == null) array = new JSONArray();
-        stages.clear(); for (int index=0; index<array.length(); index++) { JSONObject item=array.optJSONObject(index); if(item!=null) stages.add(item); } renderPlan();
+        watchCurrentPlanId=profile.optString("id");
+        String name=profile.optString("name").trim(),group=profile.optString("group").trim();
+        if(currentWatchPlan!=null)currentWatchPlan.setText(name.isEmpty()?"手表暂无安排":name);
+        if(currentPlanSync!=null)currentPlanSync.setText(group.isEmpty()?"已从手表读取":group+" · 已在手表");
+        // Never project a remote refresh into the editor. It used to silently overwrite a draft
+        // during reconnect; explicit Edit is now the only path that changes form fields.
+        renderSavedPlans();
     }
 
     private void renderPlan() {
         planList.removeAllViews();
+        if(stages.isEmpty()){
+            TextView empty=text("还没有训练阶段 · 从下方添加跑步、快走或休息",14,false,Palette.TEXT_DIM);
+            empty.setGravity(Gravity.CENTER);planList.addView(empty,new LinearLayout.LayoutParams(-1,dp(64)));
+            return;
+        }
         for (int index=0; index<stages.size(); index++) {
             final int position=index; JSONObject stage=stages.get(index);
-            LinearLayout stageCard=cardHigh(); stageCard.setPadding(dp(14),dp(10),dp(14),dp(10));
-            LinearLayout row=new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout stageCard=cardHigh(); stageCard.setPadding(dp(14),dp(12),dp(14),dp(12));
             String kind=stage.optString("kind"), unit=stage.optString("unit"); int target=stage.optInt("target");
-            TextView label=text((position+1)+"  "+kindName(kind),17,true,Palette.TEXT); row.addView(label,new LinearLayout.LayoutParams(0,dp(48),1));
-            EditText value=input(""); value.setText(String.valueOf(target)); value.setInputType(android.text.InputType.TYPE_CLASS_NUMBER); row.addView(value,new LinearLayout.LayoutParams(dp(90),dp(48)));
-            Button unitButton=button("DISTANCE".equals(unit)?"距离 · 米":"时间 · 秒",Palette.CARD_HIGH,Palette.TEXT);unitButton.setTextSize(13); row.addView(unitButton,new LinearLayout.LayoutParams(dp(105),dp(48)));
-            stageCard.addView(row);
-            LinearLayout actions=new LinearLayout(this);
-            Button up=button("上移",Palette.CARD_HIGH,Palette.TEXT);
-            Button down=button("下移",Palette.CARD_HIGH,Palette.TEXT);
-            Button delete=button("删除阶段",Palette.FILL_DANGER,Palette.RED);
+            LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
+            TextView order=text(String.format(Locale.CHINA,"%02d",position+1),13,true,Palette.TEXT_DIM);
+            order.setGravity(Gravity.CENTER);order.setBackground(rounded(Palette.CARD_DEEP,12));
+            header.addView(order,new LinearLayout.LayoutParams(dp(38),dp(38)));
+            Button kindButton=button(kindName(kind),kindColor(kind),kindTextColor(kind));
+            LinearLayout.LayoutParams kindParams=new LinearLayout.LayoutParams(0,dp(44),1);kindParams.leftMargin=dp(8);header.addView(kindButton,kindParams);
+            Button delete=button("移除",Color.TRANSPARENT,Palette.RED);delete.setContentDescription("移除第"+(position+1)+"阶段");
+            header.addView(delete,new LinearLayout.LayoutParams(dp(64),dp(44)));stageCard.addView(header);
+            TextView targetLabel=text("目标",12,true,Palette.TEXT_DIM);stageCard.addView(targetLabel);
+            LinearLayout targetRow=new LinearLayout(this);targetRow.setGravity(Gravity.CENTER_VERTICAL);
+            EditText value=input(""); value.setText(String.valueOf(Math.max(1,target))); value.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            LinearLayout.LayoutParams valueParams=new LinearLayout.LayoutParams(0,dp(52),1);targetRow.addView(value,valueParams);
+            Button unitButton=button("DISTANCE".equals(unit)?"距离 · 米":"时间 · 秒",Palette.CARD_HIGH,Palette.TEXT);unitButton.setTextSize(13);
+            LinearLayout.LayoutParams unitParams=new LinearLayout.LayoutParams(dp(112),dp(52));unitParams.leftMargin=dp(8);targetRow.addView(unitButton,unitParams);
+            stageCard.addView(targetRow);
+            LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.END);
+            Button up=button("前移",Palette.CARD_HIGH,Palette.TEXT_DIM);
+            Button down=button("后移",Palette.CARD_HIGH,Palette.TEXT_DIM);
             up.setEnabled(position>0); down.setEnabled(position<stages.size()-1);
-            actions.addView(up,weight());actions.addView(down,weight());actions.addView(delete,weight());
-            stageCard.addView(actions);
+            actions.addView(up,new LinearLayout.LayoutParams(dp(76),dp(44)));
+            LinearLayout.LayoutParams downParams=new LinearLayout.LayoutParams(dp(76),dp(44));downParams.leftMargin=dp(6);actions.addView(down,downParams);
+            if(stages.size()>1)stageCard.addView(actions);
             value.addTextChangedListener(new android.text.TextWatcher(){
                 public void beforeTextChanged(CharSequence s,int start,int count,int after){}
-                public void onTextChanged(CharSequence s,int start,int before,int count){try{if(s.length()>0)stage.put("target",Math.max(1,Integer.parseInt(s.toString())));}catch(Exception ignored){}}
+                public void onTextChanged(CharSequence s,int start,int before,int count){
+                    try{
+                        if(s.length()==0){value.setError("请输入目标");return;}
+                        int parsed=Integer.parseInt(s.toString());
+                        if(parsed<1){value.setError("必须大于 0");return;}
+                        stage.put("target",parsed);markPlanDraftDirty();
+                    }catch(Exception invalid){value.setError("请输入有效数字");}
+                }
                 public void afterTextChanged(android.text.Editable value){}
             });
-            unitButton.setOnClickListener(v->{ try{ stage.put("unit","DISTANCE".equals(stage.optString("unit"))?"TIME":"DISTANCE"); }catch(Exception ignored){} renderPlan(); });
-            up.setOnClickListener(v->{if(position>0){JSONObject moved=stages.remove(position);stages.add(position-1,moved);renderPlan();}});
-            down.setOnClickListener(v->{if(position<stages.size()-1){JSONObject moved=stages.remove(position);stages.add(position+1,moved);renderPlan();}});
-            delete.setOnClickListener(v->{ stages.remove(position); renderPlan(); });
+            kindButton.setOnClickListener(v->{try{
+                String next=PhonePlanUiModel.nextKind(stage.optString("kind"));
+                String nextUnit=PhonePlanUiModel.normalizedUnit(next,stage.optString("unit"));
+                stage.put("kind",next).put("unit",nextUnit)
+                        .put("target",PhonePlanUiModel.defaultTarget(next,nextUnit));
+                markPlanDraftDirty();renderPlan();
+            }catch(Exception ignored){}});
+            unitButton.setEnabled(!"REST".equals(kind));
+            unitButton.setOnClickListener(v->{ try{
+                String from=stage.optString("unit"),to="DISTANCE".equals(from)?"TIME":"DISTANCE";
+                stage.put("unit",to).put("target",PhonePlanUiModel.convertedTarget(
+                        stage.optString("kind"),from,to,stage.optInt("target")));
+                markPlanDraftDirty();renderPlan();
+            }catch(Exception ignored){} });
+            up.setOnClickListener(v->{if(position>0){JSONObject moved=stages.remove(position);stages.add(position-1,moved);markPlanDraftDirty();renderPlan();}});
+            down.setOnClickListener(v->{if(position<stages.size()-1){JSONObject moved=stages.remove(position);stages.add(position+1,moved);markPlanDraftDirty();renderPlan();}});
+            delete.setOnClickListener(v->{ stages.remove(position);markPlanDraftDirty();renderPlan(); });
             LinearLayout.LayoutParams params=margin();params.topMargin=dp(8);planList.addView(stageCard,params);
         }
     }
 
-    private void addStage(String kind,String unit,int target){ try{ stages.add(new JSONObject().put("kind",kind).put("unit",unit).put("target",target)); }catch(Exception ignored){} renderPlan(); }
-    private void savePlan(){ if(!saveLocalPlan(false)) return; showPlanLibrary(); try {
-        PhonePlanLibrary.select(this, editingPlanId); JSONObject library=PhonePlanLibrary.load(this);
-        queueAndSyncLibrary(library,"完整计划库已同步到手表");
-    } catch(Exception error) { connection.setText("计划格式错误"); } }
+    private void addStage(String kind,String unit,int target){ try{ stages.add(new JSONObject().put("kind",kind).put("unit",unit).put("target",target));markPlanDraftDirty(); }catch(Exception ignored){} renderPlan(); }
     private void applyTemplate(boolean fartlek){ stages.clear(); try {
         if(fartlek){ if(planName.getText().toString().trim().isEmpty())planName.setText("变速跑安排"); planRequirement.setText("快跑 2 分钟，快走恢复 1 分钟，连续完成 6 组。"); for(int i=0;i<6;i++){stages.add(new JSONObject().put("kind","RUN").put("unit","TIME").put("target",120));stages.add(new JSONObject().put("kind","WALK").put("unit","TIME").put("target",60));} }
         else { if(planName.getText().toString().trim().isEmpty())planName.setText("距离间歇安排"); planRequirement.setText("跑步 1 千米，随后快走恢复 200 米；按阶段顺序完成。"); stages.add(new JSONObject().put("kind","RUN").put("unit","DISTANCE").put("target",1000)); stages.add(new JSONObject().put("kind","WALK").put("unit","DISTANCE").put("target",200)); }
-    }catch(Exception ignored){} renderPlan(); }
+    }catch(Exception ignored){} markPlanDraftDirty();renderPlan(); }
 
     private void newPlan(){
-        editingPlanId=""; stages.clear(); planName.setText(""); planGroup.setText(""); planRequirement.setText("");
-        addStage("RUN","DISTANCE",1000); showPlanEditor(); planName.requestFocus();
+        editingPlanId="";detailPlanId="";suppressPlanDraftTracking=true;stages.clear();
+        planName.setText(""); planGroup.setText("我的计划"); planRequirement.setText("");
+        suppressPlanDraftTracking=false;addStage("RUN","DISTANCE",1000); showPlanEditor();planDraftDirty=true;planName.requestFocus();
         Toast.makeText(this,"已新建空白计划，请填写名称和分组",Toast.LENGTH_SHORT).show();
     }
 
@@ -619,9 +767,9 @@ public class MainActivity extends Activity {
         String groupId=group.optString("id"),groupName=group.optString("name");
         JSONObject library=PhonePlanLibrary.load(this);JSONArray plans=library.optJSONArray("plans");int day=1;
         if(plans!=null)for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&groupId.equals(item.optString("groupId")))day++;}
-        editingPlanId="";stages.clear();planName.setText("第"+day+"天");planGroup.setText(groupName);
+        editingPlanId="";detailPlanId="";suppressPlanDraftTracking=true;stages.clear();planName.setText("第"+day+"天");planGroup.setText(groupName);
         planRequirement.setText("设置当天独立的跑步、快走与恢复内容。");
-        addStage("RUN","TIME",1200);showPlanEditor();planName.requestFocus();
+        suppressPlanDraftTracking=false;addStage("RUN","TIME",1200);showPlanEditor();planDraftDirty=true;planName.requestFocus();
     }
 
     private void showGroupNameDialog(JSONObject group,String initialName){
@@ -635,8 +783,8 @@ public class MainActivity extends Activity {
         dialog.setOnShowListener(ignored->dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String name=input.getText().toString().trim();if(name.isEmpty()){input.setError("请输入计划名称");return;}
             try{
-                if(group==null)PhonePlanLibrary.createGroup(this,name);else PhonePlanLibrary.renameGroup(this,group.optString("id"),name);
-                dialog.dismiss();renderSavedPlans();syncLibraryQuietly(group==null?"训练计划已创建":"计划名称已更新");
+                if(group==null){JSONObject created=PhonePlanLibrary.createGroup(this,name);dialog.dismiss();newPlanInGroup(created);syncLibraryQuietly("训练计划已创建");}
+                else{PhonePlanLibrary.renameGroup(this,group.optString("id"),name);dialog.dismiss();renderSavedPlans();syncLibraryQuietly("计划名称已更新");}
             }catch(Exception error){input.setError(error.getMessage());}
         }));
         dialog.show();
@@ -649,7 +797,7 @@ public class MainActivity extends Activity {
                 .setNegativeButton("取消",null)
                 .setPositiveButton("删除",(dialog,which)->{
                     try{PhonePlanLibrary.deleteGroup(this,group.optString("id"));renderSavedPlans();syncLibraryQuietly("训练计划已删除");}
-                    catch(Exception error){connection.setText("删除计划失败："+error.getMessage());}
+                    catch(Exception error){setSyncState("删除计划失败 · "+userError(error));}
                 }).show();
     }
 
@@ -659,13 +807,21 @@ public class MainActivity extends Activity {
     }
 
     private void queueAndSyncLibrary(JSONObject library,String successText){
+        setSyncState("计划已保存 · 正在同步");
         runIo(()->{
             try {
                 PhoneSyncOutbox.enqueueLibrary(this,library,"upsert","library");
                 JSONObject sync=PhoneSyncOutbox.drain(this,watchConnection);
-                runOnUiThread(()->connection.setText("synced".equals(sync.optString("state"))?successText:"计划已保存，等待手表连接"));
+                JSONObject confirmed=null;
+                if("synced".equals(sync.optString("state")))try{confirmed=new JSONObject(
+                        watchConnection.requestBlocking("GET","/v1/plan/profile","",10_000L));}
+                catch(Exception ignored){}
+                JSONObject confirmedProfile=confirmed;
+                runOnUiThread(()->{setSyncState("synced".equals(sync.optString("state"))
+                        ?successText:"计划已保存 · 等待手表连接");if(confirmedProfile!=null)showPlan(confirmedProfile);});
             } catch(Exception error) {
-                runOnUiThread(()->connection.setText("计划已保存，等待手表连接"));
+                PhonePlanProjectionWorker.schedule(this);
+                runOnUiThread(()->setSyncState("计划已保存 · 等待手表连接"));
             }
         });
     }
@@ -676,37 +832,45 @@ public class MainActivity extends Activity {
         return array;
     }
 
-    private JSONArray loadSavedPlans(){
-        try{return PhonePlanLibrary.load(this).getJSONArray("plans");}
-        catch(Exception ignored){return new JSONArray();}
-    }
-
-    private void persistSavedPlans(JSONArray plans){
-        try{JSONObject library=PhonePlanLibrary.load(this);library.put("plans",plans).put("revision",System.currentTimeMillis());PhonePlanLibrary.saveAndSync(this,library);}catch(Exception ignored){}
-    }
-
-    private boolean saveLocalPlan(boolean announce){
+    private JSONObject saveLocalPlan(){
         String name=planName.getText().toString().trim(), group=planGroup.getText().toString().trim();
-        if(name.isEmpty()){planName.setError("请填写安排名称");planName.requestFocus();return false;}
-        if(group.isEmpty()){planGroup.setError("请选择所属训练计划");planGroup.requestFocus();return false;}
-        if(stages.isEmpty()){Toast.makeText(this,"至少添加一项训练内容",Toast.LENGTH_SHORT).show();return false;}
+        if(name.isEmpty()){planName.setError("请填写安排名称");planName.requestFocus();return null;}
+        if(group.isEmpty()){planGroup.setError("请选择所属训练计划");planGroup.requestFocus();return null;}
+        if(stages.isEmpty()){Toast.makeText(this,"至少添加一项训练内容",Toast.LENGTH_SHORT).show();return null;}
         try{
             if(editingPlanId.isEmpty()) editingPlanId=UUID.randomUUID().toString();
             JSONObject item=new JSONObject().put("id",editingPlanId).put("name",name).put("group",group)
                     .put("requirement",planRequirement.getText().toString().trim()).put("stages",copyStages());
-            PhonePlanLibrary.upsert(this,item); renderSavedPlans();
-            if(announce)Toast.makeText(this,"安排已保存",Toast.LENGTH_SHORT).show(); return true;
-        }catch(Exception error){Toast.makeText(this,"保存失败："+error.getMessage(),Toast.LENGTH_LONG).show();return false;}
+            JSONObject library=PhonePlanLibrary.upsert(this,item);renderSavedPlans();
+            return findPlan(library,editingPlanId);
+        }catch(Exception error){Toast.makeText(this,"保存失败："+userError(error),Toast.LENGTH_LONG).show();return null;}
+    }
+
+    private void saveEditedPlan(){
+        JSONObject saved=saveLocalPlan();if(saved==null)return;
+        planDraftDirty=false;detailPlanId=editingPlanId;
+        JSONObject library=PhonePlanLibrary.load(this);
+        queueAndSyncLibrary(library,"安排已同步到手表");
+        showPlanDetail(saved);
+        Toast.makeText(this,"安排已保存",Toast.LENGTH_SHORT).show();
     }
 
     private void renderSavedPlans(){
         if(savedPlanList==null)return; savedPlanList.removeAllViews(); JSONObject library=PhonePlanLibrary.load(this);JSONArray plans=library.optJSONArray("plans");
         if(plans==null)plans=new JSONArray();
-        if(plans.length()==0)savedPlanList.addView(text("还没有安排。先新建训练计划，再点击“添加安排”。",14,false,Palette.TEXT_DIM));
+        if(plans.length()==0){
+            LinearLayout empty=card();empty.setGravity(Gravity.CENTER_HORIZONTAL);
+            TextView title=text("还没有训练安排",17,true,Palette.TEXT);title.setGravity(Gravity.CENTER);
+            TextView body=text("先建立第 1 天，之后可以继续按训练周期分组。",13,false,Palette.TEXT_DIM);body.setGravity(Gravity.CENTER);
+            Button first=button("新建第 1 个安排",Palette.EXERCISE,Palette.INK);
+            empty.addView(title);empty.addView(body);empty.addView(first,new LinearLayout.LayoutParams(-1,dp(48)));
+            first.setOnClickListener(v->newPlan());savedPlanList.addView(empty,margin());return;
+        }
         JSONArray groups=library.optJSONArray("groups");java.util.HashSet<String> rendered=new java.util.HashSet<>();
         if(groups!=null)for(int groupIndex=0;groupIndex<groups.length();groupIndex++){
             JSONObject group=groups.optJSONObject(groupIndex);if(group==null)continue;String groupId=group.optString("id");
             int arrangementCount=0;for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&groupId.equals(item.optString("groupId")))arrangementCount++;}
+            if(arrangementCount==0)continue;
             LinearLayout planBlock=card();planBlock.setPadding(dp(16),dp(14),dp(16),dp(14));planBlock.setBackground(rounded(Palette.CARD,22));
             LinearLayout titleRow=new LinearLayout(this);titleRow.setGravity(Gravity.CENTER_VERTICAL);
             TextView header=text(group.optString("name"),19,true,Palette.TEXT);header.setSingleLine(false);titleRow.addView(header,new LinearLayout.LayoutParams(0,-2,1));
@@ -718,48 +882,187 @@ public class MainActivity extends Activity {
             Button delete=button("删除",Color.TRANSPARENT,Palette.RED);actions.addView(delete,new LinearLayout.LayoutParams(dp(62),dp(48)));
             planBlock.addView(actions,new LinearLayout.LayoutParams(-1,dp(54)));
             addDay.setOnClickListener(v->newPlanInGroup(group));rename.setOnClickListener(v->showGroupNameDialog(group,group.optString("name")));delete.setOnClickListener(v->confirmDeleteGroup(group));
-            if(arrangementCount==0){TextView empty=text("暂无安排 · 点击上方按钮添加第1天",13,false,Palette.TEXT_DIM);empty.setGravity(Gravity.CENTER);empty.setBackground(rounded(Palette.CARD_HIGH,14));planBlock.addView(empty,new LinearLayout.LayoutParams(-1,dp(48)));}
             for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&groupId.equals(item.optString("groupId"))){addSavedPlanRow(planBlock,library,item);rendered.add(item.optString("id"));}}
             LinearLayout.LayoutParams blockParams=margin();blockParams.topMargin=dp(10);savedPlanList.addView(planBlock,blockParams);
         }
-        for(int i=0;i<plans.length();i++){JSONObject item=plans.optJSONObject(i);if(item!=null&&!rendered.contains(item.optString("id")))addSavedPlanRow(savedPlanList,library,item);}
+        LinearLayout ungrouped=null;
+        for(int i=0;i<plans.length();i++){
+            JSONObject item=plans.optJSONObject(i);if(item==null||rendered.contains(item.optString("id")))continue;
+            if(ungrouped==null){
+                ungrouped=card();ungrouped.setPadding(dp(16),dp(14),dp(16),dp(14));
+                ungrouped.addView(text("未分组",19,true,Palette.TEXT));
+                savedPlanList.addView(ungrouped,margin());
+            }
+            addSavedPlanRow(ungrouped,library,item);
+        }
     }
 
     private void addSavedPlanRow(LinearLayout parent,JSONObject library,JSONObject item){
-        String id=item.optString("id");LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(0,dp(5),0,0);
-        JSONArray savedStages=item.optJSONArray("stages");int count=savedStages==null?0:savedStages.length();boolean selected=id.equals(library.optString("selectedPlanId"));
-        String requirement=item.optString("requirement").trim();String summary=count+" 项训练内容"+(requirement.isEmpty()?"":" · "+requirement);
-        LinearLayout open=new LinearLayout(this);open.setOrientation(LinearLayout.VERTICAL);open.setPadding(dp(14),dp(9),dp(12),dp(9));open.setBackground(selected?roundedStroke(Palette.FILL_SELECTED,16,Palette.EXERCISE,1):rounded(Palette.CARD_HIGH,16));
-        TextView name=text((selected?"✓  ":"")+item.optString("name"),16,true,Palette.TEXT);open.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
-        TextView detail=text(summary,12,false,Palette.TEXT_DIM);detail.setSingleLine(true);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);open.addView(detail,new LinearLayout.LayoutParams(-1,dp(26)));
-        row.addView(open,new LinearLayout.LayoutParams(0,dp(76),1));
-        Button remove=button("删除",Color.TRANSPARENT,Palette.RED);LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(58),dp(76));rp.leftMargin=dp(4);row.addView(remove,rp);
-        open.setOnClickListener(v->openSavedPlan(item));remove.setOnClickListener(v->deleteSavedPlan(id));parent.addView(row);
+        String id=item.optString("id");JSONArray savedStages=item.optJSONArray("stages");
+        boolean selected=id.equals(library.optString("selectedPlanId"));boolean onWatch=id.equals(watchCurrentPlanId);
+        LinearLayout open=section();open.setPadding(dp(14),dp(11),dp(12),dp(11));
+        open.setBackground(clickableSurface(selected?Palette.FILL_SELECTED:Palette.CARD_HIGH,16,
+                selected?Palette.EXERCISE:Palette.BORDER));
+        LinearLayout titleRow=new LinearLayout(this);titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleRow.addView(text(item.optString("name"),16,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(30),1));
+        if(onWatch||selected){
+            TextView state=text(onWatch?"手表当前":"手机已选",11,true,onWatch?Palette.GREEN:Palette.EXERCISE);
+            state.setGravity(Gravity.CENTER);state.setBackground(rounded(Palette.CARD,12));
+            titleRow.addView(state,new LinearLayout.LayoutParams(dp(onWatch?68:62),dp(28)));
+        }
+        open.addView(titleRow);
+        TextView detail=text(PhonePlanUiModel.summary(savedStages),12,false,Palette.TEXT_DIM);open.addView(detail);
+        TextView sequence=text(PhonePlanUiModel.compactSequence(savedStages),12,false,Palette.TEXT_DIM);
+        sequence.setSingleLine(true);sequence.setEllipsize(android.text.TextUtils.TruncateAt.END);open.addView(sequence);
+        open.setClickable(true);open.setFocusable(true);open.setContentDescription(item.optString("name")+"，"+PhonePlanUiModel.summary(savedStages)+"，查看详情");
+        open.setOnClickListener(v->showPlanDetail(item));
+        LinearLayout.LayoutParams rowParams=new LinearLayout.LayoutParams(-1,dp(96));rowParams.topMargin=dp(7);parent.addView(open,rowParams);
     }
 
-    private void openSavedPlan(JSONObject item){
-        editingPlanId=item.optString("id");planName.setText(item.optString("name"));planGroup.setText(PhonePlanLibrary.groupName(PhonePlanLibrary.load(this),item.optString("groupId")));planRequirement.setText(item.optString("requirement"));
+    private void showPlanDetail(JSONObject item){
+        if(item==null){showPlanLibrary();return;}
+        detailPlanId=item.optString("id");JSONObject library=PhonePlanLibrary.load(this);
+        JSONArray array=item.optJSONArray("stages");
+        planDetailName.setText(item.optString("name"));
+        planDetailMeta.setText(PhonePlanLibrary.groupName(library,item.optString("groupId"))+" · "+PhonePlanUiModel.summary(array));
+        planDetailSequence.setText(PhonePlanUiModel.compactSequence(array));
+        String requirement=item.optString("requirement").trim();
+        planDetailRequirement.setText(requirement.isEmpty()?"按阶段顺序完成训练。":requirement);
+        planDetailStages.removeAllViews();
+        if(array!=null)for(int index=0;index<array.length();index++){
+            JSONObject stage=array.optJSONObject(index);if(stage==null)continue;
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);
+            TextView number=text(String.format(Locale.CHINA,"%02d",index+1),12,true,Palette.TEXT_DIM);number.setGravity(Gravity.CENTER);
+            row.addView(number,new LinearLayout.LayoutParams(dp(38),dp(44)));
+            row.addView(text(PhonePlanUiModel.stageLabel(stage),15,true,Palette.TEXT),new LinearLayout.LayoutParams(0,dp(44),1));
+            row.setBackground(rounded(index%2==0?Palette.CARD_HIGH:Palette.CARD,12));
+            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,dp(44));params.topMargin=dp(4);planDetailStages.addView(row,params);
+        }
+        planLibraryPanel.setVisibility(View.GONE);planEditorPanel.setVisibility(View.GONE);planDetailPanel.setVisibility(View.VISIBLE);
+        if(planScroll!=null)planScroll.smoothScrollTo(0,0);
+    }
+
+    private void editDetailPlan(){
+        JSONObject item=findPlan(PhonePlanLibrary.load(this),detailPlanId);if(item==null)return;
+        suppressPlanDraftTracking=true;
+        editingPlanId=item.optString("id");planName.setText(item.optString("name"));
+        planGroup.setText(PhonePlanLibrary.groupName(PhonePlanLibrary.load(this),item.optString("groupId")));
+        planRequirement.setText(item.optString("requirement"));
         JSONArray array=item.optJSONArray("stages");stages.clear();if(array!=null)for(int i=0;i<array.length();i++)try{stages.add(new JSONObject(array.getJSONObject(i).toString()));}catch(Exception ignored){}
-        renderPlan();showPlanEditor();Toast.makeText(this,"已打开“"+item.optString("name")+"”",Toast.LENGTH_SHORT).show();
+        suppressPlanDraftTracking=false;planDraftDirty=false;renderPlan();showPlanEditor();
     }
 
     private void showPlanLibrary(){
-        if(planLibraryPanel!=null)planLibraryPanel.setVisibility(View.VISIBLE);if(planEditorPanel!=null)planEditorPanel.setVisibility(View.GONE);renderSavedPlans();
+        if(planLibraryPanel!=null)planLibraryPanel.setVisibility(View.VISIBLE);
+        if(planDetailPanel!=null)planDetailPanel.setVisibility(View.GONE);
+        if(planEditorPanel!=null)planEditorPanel.setVisibility(View.GONE);renderSavedPlans();
+        if(planScroll!=null)planScroll.smoothScrollTo(0,0);
     }
 
     private void showPlanEditor(){
-        if(planLibraryPanel!=null)planLibraryPanel.setVisibility(View.GONE);if(planEditorPanel!=null)planEditorPanel.setVisibility(View.VISIBLE);
+        if(planLibraryPanel!=null)planLibraryPanel.setVisibility(View.GONE);
+        if(planDetailPanel!=null)planDetailPanel.setVisibility(View.GONE);
+        if(planEditorPanel!=null)planEditorPanel.setVisibility(View.VISIBLE);
+        planEditorTitle.setText(editingPlanId.isEmpty()?"新建安排":"编辑安排");
+        if(planScroll!=null)planScroll.smoothScrollTo(0,0);
+    }
+
+    private void selectPlan(String id){
+        if(id==null||id.isEmpty())return;
+        try{PhonePlanLibrary.select(this,id);JSONObject library=PhonePlanLibrary.load(this);
+            if(currentPlanSync!=null)currentPlanSync.setText("手机已选择 · 等待手表确认");
+            renderSavedPlans();queueAndSyncLibrary(library,"当前安排已同步到手表");
+            JSONObject item=findPlan(library,id);if(item!=null)showPlanDetail(item);
+        }catch(Exception error){setSyncState("设为当前失败 · "+userError(error));}
+    }
+
+    private void confirmDeletePlan(String id){
+        JSONObject item=findPlan(PhonePlanLibrary.load(this),id);if(item==null)return;
+        new android.app.AlertDialog.Builder(this).setTitle("删除“"+item.optString("name")+"”？")
+                .setMessage("该安排会从手机、云端和手表计划库中移除。")
+                .setNegativeButton("取消",null).setPositiveButton("删除",(dialog,which)->deleteSavedPlan(id)).show();
     }
 
     private void deleteSavedPlan(String id){
-        try{PhonePlanLibrary.deletePlan(this,id);if(id.equals(editingPlanId))editingPlanId="";renderSavedPlans();syncLibraryQuietly("安排已删除");}catch(Exception error){connection.setText("删除计划失败："+error.getMessage());}
+        try{PhonePlanLibrary.deletePlan(this,id);if(id.equals(editingPlanId))editingPlanId="";
+            detailPlanId="";showPlanLibrary();syncLibraryQuietly("安排已删除并同步");
+        }catch(Exception error){setSyncState("删除安排失败 · "+userError(error));}
+    }
+
+    private JSONObject findPlan(JSONObject library,String id){
+        JSONArray plans=library==null?null:library.optJSONArray("plans");
+        if(plans!=null)for(int index=0;index<plans.length();index++){
+            JSONObject item=plans.optJSONObject(index);
+            if(item!=null&&id.equals(item.optString("id")))return item;
+        }
+        return null;
+    }
+
+    private void markPlanDraftDirty(){
+        if(!suppressPlanDraftTracking&&planEditorPanel!=null
+                &&planEditorPanel.getVisibility()==View.VISIBLE)planDraftDirty=true;
+    }
+
+    private void leavePlanEditor(){
+        if(!planDraftDirty){
+            JSONObject detail=findPlan(PhonePlanLibrary.load(this),detailPlanId);
+            if(detail==null)showPlanLibrary();else showPlanDetail(detail);
+            return;
+        }
+        new android.app.AlertDialog.Builder(this).setTitle("放弃未保存的修改？")
+                .setMessage("返回后，本次对名称和阶段的修改不会保留。")
+                .setNegativeButton("继续编辑",null)
+                .setPositiveButton("放弃",(dialog,which)->{
+                    planDraftDirty=false;JSONObject detail=findPlan(PhonePlanLibrary.load(this),detailPlanId);
+                    if(detail==null)showPlanLibrary();else showPlanDetail(detail);
+                }).show();
+    }
+
+    @Override public void onBackPressed(){
+        if(setupScroll!=null&&setupScroll.getVisibility()==View.VISIBLE){toggleSetup(false);return;}
+        if(planEditorPanel!=null&&planEditorPanel.getVisibility()==View.VISIBLE){leavePlanEditor();return;}
+        if(planDetailPanel!=null&&planDetailPanel.getVisibility()==View.VISIBLE){showPlanLibrary();return;}
+        super.onBackPressed();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state){
+        super.onSaveInstanceState(state);
+        if(planEditorPanel!=null&&planEditorPanel.getVisibility()==View.VISIBLE){
+            state.putString("plan_mode","editor");state.putString("editing_plan_id",editingPlanId);
+            state.putString("detail_plan_id",detailPlanId);state.putString("draft_name",planName.getText().toString());
+            state.putString("draft_group",planGroup.getText().toString());
+            state.putString("draft_requirement",planRequirement.getText().toString());
+            state.putString("draft_stages",copyStages().toString());state.putBoolean("draft_dirty",planDraftDirty);
+        }else if(planDetailPanel!=null&&planDetailPanel.getVisibility()==View.VISIBLE){
+            state.putString("plan_mode","detail");state.putString("detail_plan_id",detailPlanId);
+        }
+        state.putInt("phone_section",currentSection);
+    }
+
+    private void restoreUiState(Bundle state){
+        if(state==null)return;
+        int section=Math.max(0,Math.min(3,state.getInt("phone_section",0)));showSection(section);
+        String mode=state.getString("plan_mode","");
+        if("detail".equals(mode)){
+            JSONObject detail=findPlan(PhonePlanLibrary.load(this),state.getString("detail_plan_id",""));
+            if(detail!=null)showPlanDetail(detail);
+            return;
+        }
+        if(!"editor".equals(mode))return;
+        suppressPlanDraftTracking=true;editingPlanId=state.getString("editing_plan_id","");
+        detailPlanId=state.getString("detail_plan_id","");planName.setText(state.getString("draft_name",""));
+        planGroup.setText(state.getString("draft_group",""));
+        planRequirement.setText(state.getString("draft_requirement",""));stages.clear();
+        try{JSONArray saved=new JSONArray(state.getString("draft_stages","[]"));for(int index=0;index<saved.length();index++)stages.add(new JSONObject(saved.getJSONObject(index).toString()));}
+        catch(Exception ignored){}
+        suppressPlanDraftTracking=false;planDraftDirty=state.getBoolean("draft_dirty",true);renderPlan();showPlanEditor();
     }
     private void control(String action){ runIo(()->{ try {
         String expected="pause".equals(action)?"RUNNING":"resume".equals(action)?"PAUSED":"start".equals(action)?"STOPPED":"";
         JSONObject command=new JSONObject().put("commandId",java.util.UUID.randomUUID().toString()).put("expiresAt",System.currentTimeMillis()+30_000L);
         if(!expected.isEmpty())command.put("expectedState",expected);
-        watchConnection.requestBlocking("POST","/v1/control/"+action,command.toString(),30_000L); runOnUiThread(()->connection.setText("训练操作已发送："+action));
-    } catch(Exception error){runOnUiThread(()->connection.setText("训练操作失败："+error.getMessage()));} }); }
+        watchConnection.requestBlocking("POST","/v1/control/"+action,command.toString(),30_000L); runOnUiThread(()->liveMeta.setText("操作已发送到手表"));
+    } catch(Exception error){runOnUiThread(()->liveMeta.setText("操作失败 · "+userError(error)));} }); }
 
     private void showHistory(JSONArray array){
         historyList.removeAllViews(); historySummary.setText(array.length()+" 次训练 · 点击查看地图轨迹与完整数据");
@@ -773,7 +1076,7 @@ public class MainActivity extends Activity {
             row.addView(primary);
             TextView secondary=text(record.optInt("steps")+" 步  ·  平均心率 "+(record.optInt("averageHeartRate")>0?record.optInt("averageHeartRate")+" bpm":"--")+"  ·  "+record.optInt("routePointCount")+" 个轨迹点",13,false,Palette.TEXT_DIM);
             row.addView(secondary);
-            row.setOnClickListener(v->runIo(()->{try{String detail=watchConnection.requestBlocking("GET","/v1/history/"+android.net.Uri.encode(record.optString("id")),"",20_000L);runOnUiThread(()->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",detail)));}catch(Exception error){runOnUiThread(()->connection.setText("读取训练详情失败："+error.getMessage()));}}));
+            row.setOnClickListener(v->runIo(()->{try{String detail=watchConnection.requestBlocking("GET","/v1/history/"+android.net.Uri.encode(record.optString("id")),"",20_000L);runOnUiThread(()->startActivity(new Intent(this,HistoryDetailActivity.class).putExtra("record",detail)));}catch(Exception error){runOnUiThread(()->historySummary.setText("读取详情失败 · "+userError(error)+" · 点击可重试"));}}));
             LinearLayout.LayoutParams params=margin(); params.setMargins(0,dp(10),0,0); historyList.addView(row,params);
         }
     }
@@ -791,8 +1094,7 @@ public class MainActivity extends Activity {
         }
         sleepSummary.setText(cached==null?"正在从手表读取最近 31 天…":cacheLabel(cached)+" · 正在后台刷新");
         io.execute(()->{try{
-            JSONObject result=new JSONObject(watchConnection.requestBlocking(
-                    "GET","/v1/sleep?days=31","",25_000L));
+            JSONObject result=PhoneSleepSync.fetchRecent(watchConnection,31);
             if("ready".equals(result.optString("state"))){
                 boolean receivedRecords=result.optJSONArray("records")!=null
                         &&result.optJSONArray("records").length()>0;
@@ -829,13 +1131,26 @@ public class MainActivity extends Activity {
             showSleepEmpty("最近没有睡眠记录", "系统已返回空列表；没有用估算数据补齐。");
             return;
         }
+        PhoneSleepWeek week=PhoneSleepWeek.from(records);
+        if(!week.nights.isEmpty()){
+            LinearLayout trend=card();trend.setPadding(dp(16),dp(14),dp(16),dp(12));
+            trend.addView(text("近 7 晚",17,true,Palette.TEXT));
+            trend.addView(text("柱顶为小时数；数据来自本机最近一次成功同步",12,false,Palette.TEXT_DIM));
+            SleepWeekTrendView chart=new SleepWeekTrendView(this);chart.setWeek(week);
+            trend.addView(chart,new LinearLayout.LayoutParams(-1,dp(154)));
+            LinearLayout.LayoutParams trendParams=margin();trendParams.topMargin=dp(12);sleepList.addView(trend,trendParams);
+        }
         for(int i=0;i<records.length();i++){
             JSONObject record=records.optJSONObject(i);if(record==null)continue;
             PhoneSleepOverview overview=PhoneSleepOverview.from(record);
+            PhoneSleepTimeline timeline=PhoneSleepTimeline.from(record);
             LinearLayout row=card();row.setPadding(dp(16),dp(15),dp(16),dp(16));
-            String date=overview.timestamp>0L
-                    ?new SimpleDateFormat("MM月dd日  HH:mm",Locale.CHINA).format(new Date(overview.timestamp))
+            long displayTime=timeline.available()?timeline.endTime:overview.timestamp;
+            String date=displayTime>0L
+                    ?new SimpleDateFormat("MM月dd日",Locale.CHINA).format(new Date(displayTime))
                     :"日期未返回";
+            if(timeline.available())date+="  ·  "+new SimpleDateFormat("HH:mm",Locale.CHINA).format(new Date(timeline.startTime))
+                    +" – "+new SimpleDateFormat("HH:mm",Locale.CHINA).format(new Date(timeline.endTime));
             row.addView(text(date,15,true,Palette.TEXT_DIM));
 
             LinearLayout hero=new LinearLayout(this);hero.setOrientation(LinearLayout.HORIZONTAL);
@@ -845,7 +1160,14 @@ public class MainActivity extends Activity {
                     ?sleepMinutes(overview.totalDurationMinutes):"--"),weight());
             row.addView(hero);
 
-            row.addView(text("睡眠结构",15,true,Palette.TEXT));
+            row.addView(text("阶段时间线",15,true,Palette.TEXT));
+            if(timeline.available()){
+                SleepStageTimelineView timelineView=new SleepStageTimelineView(this);timelineView.setTimeline(timeline);
+                LinearLayout.LayoutParams timelineParams=new LinearLayout.LayoutParams(-1,dp(154));
+                timelineParams.setMargins(0,dp(4),0,dp(8));row.addView(timelineView,timelineParams);
+                if(timeline.unknownCount()>0)row.addView(text(timeline.unknownCount()+" 段厂商未知阶段以灰色保留，没有猜测成深睡或 REM。",12,false,Palette.TEXT_DIM));
+            }else row.addView(text("系统没有返回有效的阶段起止时间，本晚只显示时长构成。",13,false,Palette.TEXT_DIM));
+            row.addView(text("阶段构成",15,true,Palette.TEXT));
             if(overview.stageBreakdownAvailable){
                 SleepStageBarView chart=new SleepStageBarView(this);chart.setOverview(overview);
                 LinearLayout.LayoutParams chartParams=new LinearLayout.LayoutParams(-1,dp(18));
@@ -863,6 +1185,11 @@ public class MainActivity extends Activity {
             second.addView(sleepStageMetric("清醒",overview.awakeMinutes,
                     overview.awakeAvailable,Palette.SLEEP_AWAKE),weight());
             row.addView(first);row.addView(second);
+            if(overview.durationAvailable&&overview.stageTotalMinutes()>0L
+                    &&Math.abs(overview.totalDurationMinutes-overview.stageTotalMinutes())>10L){
+                row.addView(text("系统总时长 "+sleepMinutes(overview.totalDurationMinutes)+"，阶段合计 "
+                        +sleepMinutes(overview.stageTotalMinutes())+"；两组原始字段不一致，均按原值展示。",12,false,Palette.ORANGE));
+            }
 
             ArrayList<String> health=new ArrayList<>();
             if(overview.spo2Available)health.add("平均血氧 "+overview.spo2AveragePercent+"%");
@@ -907,15 +1234,42 @@ public class MainActivity extends Activity {
     private String sleepMinutes(long value){
         return PhoneFormat.minutesHuman((int)Math.min(Integer.MAX_VALUE,Math.max(0L,value)));
     }
-    private void runIo(Throwing action){ connection.setText("正在同步…"); io.execute(()->{ try{action.run();}catch(Exception error){
-        // ExecutionException and friends often carry a null message; surface the cause instead
-        // of the literal text "null".
-        Throwable cause=error; while(cause.getCause()!=null&&cause.getMessage()==null)cause=cause.getCause();
-        String reason=cause.getMessage()!=null?cause.getMessage():cause.getClass().getSimpleName();
-        runOnUiThread(()->connection.setText("连接失败："+reason));
-    } }); }
+    private void runIo(Throwing action){io.execute(()->{try{action.run();}catch(Exception error){
+        runOnUiThread(()->setSyncState("操作未完成 · "+userError(error)));
+    }});}
     interface Throwing{void run()throws Exception;}
-    private String kindName(String kind){return "WALK".equals(kind)?"快走":"REST".equals(kind)?"休息":"跑步";}
+    private void setSyncState(String value){
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()){
+            runOnUiThread(()->setSyncState(value));return;
+        }
+        if(syncSummary!=null)syncSummary.setText(value);
+    }
+    private void setSyncBusy(boolean busy,String value){
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()){
+            runOnUiThread(()->setSyncBusy(busy,value));return;
+        }
+        if(syncAction!=null){syncAction.setEnabled(!busy);syncAction.setText(busy?"同步中":"同步");}
+        setSyncState(value);
+    }
+    private String lastSyncLabel(){
+        long value=getSharedPreferences("phone_sync_ui",MODE_PRIVATE).getLong("last_full_sync_at",0L);
+        return value<=0L?"已同步的数据会保存在本机":"上次完整同步 · "+new SimpleDateFormat("MM月dd日 HH:mm",Locale.CHINA).format(new Date(value));
+    }
+    private void rememberLastSync(long value){
+        getSharedPreferences("phone_sync_ui",MODE_PRIVATE).edit().putLong("last_full_sync_at",Math.max(0L,value)).apply();
+    }
+    private String userError(Throwable error){
+        Throwable cause=error;while(cause!=null&&cause.getCause()!=null)cause=cause.getCause();
+        String message=cause==null?"":String.valueOf(cause.getMessage());String lower=message.toLowerCase(Locale.ROOT);
+        if(lower.contains("timeout"))return "请求超时";
+        if(lower.contains("pair")||lower.contains("401"))return "手表配对需要重新确认";
+        if(lower.contains("bluetooth")||lower.contains("ble")||lower.contains("gatt")||lower.contains("offline"))return "手表连接中断";
+        if(message.matches(".*[\u4e00-\u9fa5].*")&&message.length()<=80)return message;
+        return "暂时无法完成，请稍后重试";
+    }
+    private String kindName(String kind){return PhonePlanUiModel.kindName(kind);}
+    private int kindColor(String kind){return "WALK".equals(kind)?Palette.FILL_WALK:"REST".equals(kind)?Palette.FILL_REST:Palette.FILL_RUN;}
+    private int kindTextColor(String kind){return "WALK".equals(kind)?Palette.STAND:"REST".equals(kind)?Palette.YELLOW:Palette.EXERCISE;}
     private LinearLayout section(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
     private LinearLayout card(){LinearLayout v=section();v.setPadding(dp(18),dp(16),dp(18),dp(16));v.setBackground(roundedStroke(Palette.CARD,22,Palette.BORDER,1));v.setElevation(dp(1));return v;}
     private LinearLayout compactCard(){LinearLayout v=section();v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(roundedStroke(Palette.CARD,20,Palette.BORDER,1));return v;}
@@ -925,10 +1279,17 @@ public class MainActivity extends Activity {
     private TextView text(String s,int sp,boolean bold,int color){TextView v=new TextView(this);v.setText(s);v.setTextSize(sp);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);v.setTypeface(null,bold?Typeface.BOLD:Typeface.NORMAL);v.setPadding(0,dp(5),0,dp(5));return v;}
     private LinearLayout pageTitle(String title,String subtitle){LinearLayout box=section();TextView heading=text(title,34,true,Palette.TEXT);heading.setMinHeight(dp(46));heading.setLetterSpacing(.01f);box.addView(heading,new LinearLayout.LayoutParams(-1,-2));TextView detail=text(subtitle,14,false,Palette.TEXT_DIM);detail.setMinHeight(dp(28));box.addView(detail,new LinearLayout.LayoutParams(-1,-2));return box;}
     private EditText input(String hint){EditText v=new EditText(this);v.setHint(hint);v.setTextSize(16);v.setSingleLine(true);v.setTextColor(Palette.TEXT);v.setHintTextColor(Palette.HINT);v.setMinHeight(dp(54));v.setPadding(dp(14),dp(10),dp(14),dp(10));v.setBackground(rounded(Palette.CARD_HIGH,14));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(7);v.setLayoutParams(p);return v;}
-    private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setMinHeight(dp(48));v.setBackground(rounded(bg,16));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
+    private Button button(String s,int bg,int fg){Button v=new Button(this);v.setText(s);v.setTextSize(15);v.setTextColor(fg);v.setMinHeight(dp(48));v.setBackground(rippleSurface(bg,16,Color.TRANSPARENT,0));v.setAllCaps(false);v.setStateListAnimator(null);return v;}
     private GradientDrawable rounded(int color,int radius){GradientDrawable shape=new GradientDrawable();shape.setColor(color);shape.setCornerRadius(dp(radius));return shape;}
     private GradientDrawable roundedStroke(int color,int radius,int strokeColor,int strokeWidth){GradientDrawable shape=rounded(color,radius);shape.setStroke(dp(strokeWidth),strokeColor);return shape;}
+    private android.graphics.drawable.Drawable clickableSurface(int color,int radius,int strokeColor){return rippleSurface(color,radius,strokeColor,1);}
+    private android.graphics.drawable.Drawable rippleSurface(int color,int radius,int strokeColor,int strokeWidth){
+        GradientDrawable content=strokeWidth>0?roundedStroke(color,radius,strokeColor,strokeWidth):rounded(color,radius);
+        GradientDrawable mask=rounded(Color.WHITE,radius);
+        return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(
+                Color.argb(34,0,0,0)),content,mask);
+    }
     private GradientDrawable glassSurface(int radius){GradientDrawable shape=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{Palette.GLASS_TOP,Palette.GLASS_BOTTOM});shape.setCornerRadius(dp(radius));shape.setStroke(dp(1),Palette.GLASS_BORDER);return shape;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
-    @Override protected void onDestroy(){stopDiscovery();if(watchConnection!=null)watchConnection.removeObserver(connectionObserver);io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stopDiscovery();syncRetryHandler.removeCallbacks(syncRetry);if(watchConnection!=null)watchConnection.removeObserver(connectionObserver);io.shutdownNow();super.onDestroy();}
 }

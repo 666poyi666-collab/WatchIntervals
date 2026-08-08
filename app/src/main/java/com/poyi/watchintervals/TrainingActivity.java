@@ -32,6 +32,8 @@ public class TrainingActivity extends Activity {
     private boolean bound;
     private final WorkoutUxPolicy.TransientCueTracker transientCueTracker =
             new WorkoutUxPolicy.TransientCueTracker();
+    private final WatchInteractionPolicy.ConfirmationGate stopConfirmationGate =
+            new WatchInteractionPolicy.ConfirmationGate();
     private int displayedStageAccent = Integer.MIN_VALUE;
     private int displayedControlTone = Integer.MIN_VALUE;
     private boolean displayedPauseStyle;
@@ -312,13 +314,12 @@ public class TrainingActivity extends Activity {
         action.rightMargin = Ui.dp(this, 20); controls.addView(pause, action);
         controls.addView(stop, new LinearLayout.LayoutParams(Ui.dp(this, 102), Ui.dp(this, 102)));
         page.addView(controls, new LinearLayout.LayoutParams(-1, Ui.dp(this, 114)));
-        TextView instruction = Ui.text(this, "轻触暂停 · 长按结束", Ui.CAPTION, Ui.MUTED); instruction.setGravity(Gravity.CENTER);
+        TextView instruction = Ui.text(this, "轻触暂停 · 轻触结束", Ui.CAPTION, Ui.MUTED); instruction.setGravity(Gravity.CENTER);
         page.addView(instruction, new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
         page.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
         page.addView(Ui.pagerDots(this, 0, 5), new LinearLayout.LayoutParams(-1, Ui.dp(this, 14)));
         pause.setOnClickListener(v -> { if (service != null) service.togglePause(); });
-        stop.setOnLongClickListener(v -> { confirmStop(); return true; });
-        stop.setOnClickListener(v -> android.widget.Toast.makeText(this, "长按结束训练", android.widget.Toast.LENGTH_SHORT).show());
+        stop.setOnClickListener(v -> confirmStop());
         return page;
     }
 
@@ -721,12 +722,14 @@ public class TrainingActivity extends Activity {
 
     private void confirmStop() {
         if (stopConfirmation == null) return;
+        stopConfirmationGate.request();
         if (stopScrim != null) stopScrim.setVisibility(View.VISIBLE);
         stopConfirmation.setVisibility(View.VISIBLE);
         stopConfirmation.requestFocus();
     }
 
     private void hideStopConfirmation() {
+        stopConfirmationGate.cancel();
         if (stopConfirmation != null) stopConfirmation.setVisibility(View.GONE);
         if (stopScrim != null) stopScrim.setVisibility(View.GONE);
     }
@@ -739,7 +742,11 @@ public class TrainingActivity extends Activity {
         if (workoutPager != null) workoutPager.setCurrentItem(1,true);
     }
 
-    private void stopAndFinish() { if (service != null) service.finishAndStop(); finish(); }
+    private void stopAndFinish() {
+        if (!stopConfirmationGate.confirm()) return;
+        if (service != null) service.finishAndStop();
+        finish();
+    }
     @Override public void onBackPressed() {
         if (workoutPager != null && workoutPager.getCurrentItem() != 1) { workoutPager.setCurrentItem(1, true); return; }
         if (stopConfirmation != null && stopConfirmation.getVisibility() == View.VISIBLE) hideStopConfirmation();

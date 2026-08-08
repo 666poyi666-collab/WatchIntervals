@@ -17,7 +17,9 @@ import org.json.JSONObject;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -71,41 +73,110 @@ final class SystemSleepBridge {
     }
 
     JSONObject read(int requestedDays) {
+        return read(requestedDays, 0);
+    }
+
+    JSONObject read(int requestedDays, int requestedOffsetDays) {
         int days = Math.max(1, Math.min(requestedDays, 31));
-        long endSeconds = System.currentTimeMillis() / 1000L + 86_400L;
+        int offsetDays = Math.max(0, Math.min(requestedOffsetDays, 365));
+        long endSeconds = System.currentTimeMillis() / 1000L + 86_400L
+                - offsetDays * 86_400L;
         long startSeconds = endSeconds - days * 86_400L;
         try {
             IBinder binder = awaitStore();
             ClassLoader loader = loader();
-            byte[] request = buildReadRequest(loader, startSeconds, endSeconds);
-            ReadCallback callback = new ReadCallback(loader);
-            Parcel data = Parcel.obtain();
-            Parcel reply = Parcel.obtain();
-            try {
-                data.writeInterfaceToken(STORE_DESCRIPTOR);
-                data.writeInt(1);
-                data.writeByteArray(request);
-                data.writeStrongBinder(callback);
-                if (!binder.transact(TRANSACTION_READ_RECORDS, data, reply, 0)) {
-                    throw new IllegalStateException("sleep store transaction rejected");
-                }
-                reply.readException();
-            } finally {
-                reply.recycle();
-                data.recycle();
-            }
-            if (!callback.done.await(8, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("sleep store response timed out");
-            }
-            if (callback.error != null) {
-                String state = callback.error.contains("permission") ? "permission_required" : "error";
-                return withError(envelope(state, days), callback.error);
-            }
-            return parseResponse(loader, callback.responseBytes, days);
+            ArrayList<JSONObject> records = new ArrayList<>();
+            boolean complete = collectRange(binder, loader, startSeconds, endSeconds,
+                    days, records, 0);
+            Map<String, JSONObject> unique = new LinkedHashMap<>();
+            for (JSONObject record : records) unique.put(recordKey(record), record);
+            ArrayList<JSONObject> sorted = new ArrayList<>(unique.values());
+            sorted.sort(Comparator.comparingLong((JSONObject item) ->
+                    item.optLong("timestamp")).reversed());
+            JSONArray output = new JSONArray();
+            for (JSONObject item : sorted) output.put(item);
+            return envelope("ready", days)
+                    .put("offsetDays", offsetDays)
+                    .put("complete", complete)
+                    .put("hasMore", !complete)
+                    .put("coverageStart", startSeconds * 1000L)
+                    .put("coverageEnd", endSeconds * 1000L)
+                    .put("recordCount", output.length())
+                    .put("records", output);
+        } catch (SleepReadFailure failure) {
+            JSONObject result = envelope(failure.state, days);
+            try { result.put("offsetDays", offsetDays).put("complete", false); }
+            catch (Exception ignored) {}
+            return withError(result, failure.getMessage());
         } catch (Throwable error) {
             Log.w(TAG, "System sleep read failed", error);
-            return withError(envelope("error", days), rootMessage(error));
+            JSONObject result = envelope("error", days);
+            try { result.put("offsetDays", offsetDays).put("complete", false); }
+            catch (Exception ignored) {}
+            return withError(result, rootMessage(error));
         }
+    }
+
+    private boolean collectRange(IBinder binder, ClassLoader loader, long start, long end,
+            int days, List<JSONObject> output, int depth) throws Exception {
+        JSONObject page = readRange(binder, loader, start, end, days);
+        String state = page.optString("state");
+        if (!"ready".equals(state)) {
+            throw new SleepReadFailure(state.isEmpty() ? "error" : state,
+                    page.optString("error", "sleep range unavailable"));
+        }
+        boolean hasMore = page.optBoolean("hasMore", false);
+        // HealthKit exposes hasMore but no cursor. Bisect the time window until every response is
+        // complete, which keeps each binder/BLE payload bounded without dropping older records.
+        if (SleepReadWindowPolicy.shouldSplit(hasMore, depth, end - start)) {
+            long middle = start + (end - start) / 2L;
+            boolean first = collectRange(binder, loader, start, middle, days, output,
+                    depth + 1);
+            boolean second = collectRange(binder, loader, middle, end, days, output,
+                    depth + 1);
+            return first && second;
+        }
+        JSONArray records = page.optJSONArray("records");
+        if (records != null) for (int index = 0; index < records.length(); index++) {
+            JSONObject record = records.optJSONObject(index);
+            if (record != null) output.add(record);
+        }
+        return !hasMore;
+    }
+
+    private JSONObject readRange(IBinder binder, ClassLoader loader, long start, long end,
+            int days) throws Exception {
+        byte[] request = buildReadRequest(loader, start, end);
+        ReadCallback callback = new ReadCallback(loader);
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(STORE_DESCRIPTOR);
+            data.writeInt(1);
+            data.writeByteArray(request);
+            data.writeStrongBinder(callback);
+            if (!binder.transact(TRANSACTION_READ_RECORDS, data, reply, 0)) {
+                throw new IllegalStateException("sleep store transaction rejected");
+            }
+            reply.readException();
+        } finally {
+            reply.recycle();
+            data.recycle();
+        }
+        if (!callback.done.await(8, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("sleep store response timed out");
+        }
+        if (callback.error != null) {
+            String state = callback.error.contains("permission")
+                    ? "permission_required" : "error";
+            return withError(envelope(state, days), callback.error);
+        }
+        return parseResponse(loader, callback.responseBytes, days);
+    }
+
+    private String recordKey(JSONObject record) {
+        long timestamp = Math.max(0L, record.optLong("timestamp"));
+        return timestamp > 0L ? "time:" + timestamp : "raw:" + record.toString();
     }
 
     private JSONObject parseResponse(ClassLoader loader, byte[] responseBytes, int days) throws Exception {
@@ -273,6 +344,14 @@ final class SystemSleepBridge {
                 return true;
             }
             return super.onTransact(code, data, reply, flags);
+        }
+    }
+
+    private static final class SleepReadFailure extends Exception {
+        final String state;
+        SleepReadFailure(String state, String message) {
+            super(message);
+            this.state = state;
         }
     }
 

@@ -17,9 +17,15 @@ public final class PhoneCompanionService extends Service {
             new java.util.concurrent.atomic.AtomicBoolean();
     private CloudV3Channel cloudChannel;
     private WatchConnectionManager watchConnection;
-    private final WatchConnectionManager.Observer projectionObserver=snapshot->drainPlanOutboxAsync();
+    private com.poyi.watchintervals.phone.connection.ConnectionState lastObservedState;
+    private final WatchConnectionManager.Observer projectionObserver=snapshot->{
+        drainPlanOutboxAsync();
+        boolean becameReady=PhoneSyncPolicy.shouldAutoSync(lastObservedState,snapshot.state,false);
+        lastObservedState=snapshot.state;
+        if(becameReady) PhoneSleepSyncWorker.schedule(this);
+    };
     private final Runnable statusUpload=new Runnable(){@Override public void run(){CloudV3Sync.syncLiveAsync(PhoneCompanionService.this);drainPlanOutboxAsync();syncHandler.postDelayed(this,CloudV3Sync.lastActiveSession(PhoneCompanionService.this)?10_000L:60_000L);}};
-    @Override public void onCreate(){super.onCreate();NotificationChannel channel=new NotificationChannel(CHANNEL,"手表蓝牙连接",NotificationManager.IMPORTANCE_MIN);getSystemService(NotificationManager.class).createNotificationChannel(channel);Notification notification=new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).setContentTitle("步序手表连接").setContentText("正在保持蓝牙与云端命令通道").setOngoing(true).build();startForeground(64,notification);watchConnection=WatchConnectionManager.get(this);watchConnection.observe(projectionObserver);watchConnection.connect();cloudChannel=new CloudV3Channel(this);cloudChannel.start();PhonePlanProjectionWorker.schedule(this);syncHandler.post(statusUpload);}
+    @Override public void onCreate(){super.onCreate();NotificationChannel channel=new NotificationChannel(CHANNEL,"手表蓝牙连接",NotificationManager.IMPORTANCE_MIN);getSystemService(NotificationManager.class).createNotificationChannel(channel);Notification notification=new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).setContentTitle("步序手表连接").setContentText("正在保持蓝牙与云端命令通道").setOngoing(true).build();startForeground(64,notification);watchConnection=WatchConnectionManager.get(this);watchConnection.observe(projectionObserver);watchConnection.connect();cloudChannel=new CloudV3Channel(this);cloudChannel.start();PhonePlanProjectionWorker.schedule(this);PhoneSleepSyncWorker.ensurePeriodic(this);syncHandler.post(statusUpload);}
     @Override public int onStartCommand(Intent intent,int flags,int startId){WatchConnectionManager.get(this).connect();if(cloudChannel!=null)cloudChannel.start();EncryptedWatchSyncWorker.schedule(this);PhonePlanProjectionWorker.schedule(this);return START_STICKY;}
     private void drainPlanOutboxAsync(){
         if(destroyed.get())return;

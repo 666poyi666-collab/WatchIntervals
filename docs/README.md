@@ -22,12 +22,12 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 基线日期 | 2026-08-03 |
+| 基线日期 | 2026-08-04 |
 | 手表应用 | `app`，`com.poyi.watchintervals`，`0.21.1`（32） |
 | 手机应用 | `phone`，`com.poyi.watchintervals.phone`，`0.23.0`（19） |
 | 主要实机 | OPPO Watch 4 Pro，OWW221，378×496，Android 11 |
 | 编译环境 | JDK 17、Android SDK 35、Gradle 8.14.3 |
-| 发布状态 | Watch `0.21.1` / Phone `0.23.0` 最新本地候选已完成 Phone 日光亮色、双端统一图标、31 天离线睡眠总览、训练阶段轻提示与活动训练界面恢复；API 35 模拟器、双模块单测/Lint/构建均通过。2026-08-01 安装的 Xiaomi 包已被本批源码取代；2026-08-03 最终设备探测仅见临时模拟器，验证后已停止，当前 ADB/mDNS 无设备，Xiaomi xaga 与 OWW221 均未在线，因此最新候选尚未覆盖真实设备。手机 OPPO 健康保持厂商原包，项目仍通过独立 Phone APK、独立 Watch APK 和手表 HealthKit bridge 工作；外部门禁为 PT-026/027/028、WT-026/027、BUG-016 双端重连，以及既有户外 GNSS/心率与 Phone Doze/重启恢复 |
+| 发布状态 | Watch `0.21.1` / Phone `0.23.0` 最新候选已使用现有设备链的稳定 debug 证书重新构建，并于 2026-08-04 分别通过 USB 覆盖到 OWW221 与 Xiaomi xaga。两端首次安装时间和私有文件计数均保持不变，设备回读 APK 与本地产物 SHA-256 一致，进程正常运行；Watch 冷启动直接恢复现有 `TrainingActivity`。安装后 Phone↔Watch 自动建立 GATT、MTU 517、订阅与安全会话，证明一次基础重连成功。手机 OPPO 健康保持厂商原包，项目仍通过独立 Phone APK、独立 Watch APK 和手表 HealthKit bridge 工作；外部门禁为 PT-026/027/028、WT-026/027、BUG-016 的双端重启/蓝牙开关/长时门禁，以及既有户外 GNSS/心率与 Phone Doze/重启恢复 |
 
 ## 事实来源
 

@@ -117,7 +117,9 @@ public class WatchBridgeService extends Service {
             } else if ("GET".equals(method) && "/v1/plan".equals(path)) {
                 respond(socket, 200, PlanStore.encode(PlanStore.load(this)));
             } else if ("GET".equals(method) && "/v1/plan/profile".equals(path)) {
-                JSONObject profile = new JSONObject().put("name", PlanStore.name(this)).put("group", PlanStore.group(this))
+                JSONObject selected = PlanLibraryStore.selectedPlanFrom(PlanLibraryStore.load(this));
+                JSONObject profile = new JSONObject().put("id", selected == null ? "" : selected.optString("id"))
+                        .put("name", PlanStore.name(this)).put("group", PlanStore.group(this))
                         .put("requirement", PlanStore.requirement(this)).put("stages", new org.json.JSONArray(PlanStore.encode(PlanStore.load(this))));
                 respond(socket, 200, profile.toString());
             } else if ("GET".equals(method) && "/v1/plan-library".equals(path)) {
@@ -149,7 +151,8 @@ public class WatchBridgeService extends Service {
                 respond(socket, 200, HistoryStore.toJson(this).toString());
             } else if ("GET".equals(method) && ("/v1/sleep".equals(path) || path.startsWith("/v1/sleep?"))) {
                 int days = queryDays(path);
-                JSONObject sleep = sleepBridge.read(days);
+                JSONObject sleep = sleepBridge.read(days,
+                        queryInt(path,"offsetDays",0,0,365));
                 respond(socket, 200, sleep.toString());
             } else if ("GET".equals(method) && path.startsWith("/v1/history/") && path.contains("/route")) {
                 String id = historyId(path, "/route");

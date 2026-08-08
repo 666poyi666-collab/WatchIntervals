@@ -44,7 +44,48 @@ public final class WatchConnectionManager {
      *  LAN readiness must not depend on a successful BLE cycle first. */
     private void verifyLan(){if(!lan.isAvailable()){lanVerified=false;publish();return;}if(!lanVerifyInFlight.compareAndSet(false,true))return;lan.connect().whenComplete((session,error)->{lanVerifyInFlight.set(false);lanVerified=error==null;if(!lanVerified){publish();return;}lastSeen=System.currentTimeMillis();boolean bleUp=state==ConnectionState.CONNECTED_BLE||state==ConnectionState.CONNECTED_BLE_LAN;setState(bleUp?ConnectionState.CONNECTED_BLE_LAN:ConnectionState.CONNECTED_LAN,bleUp?null:"ble_unavailable");});}
 
-    public CompletableFuture<ResponseEnvelope> request(String method,String path,String body,long ttlMillis){RequestEnvelope request=RequestEnvelope.create(method,path,body,ttlMillis);WatchTransport transport=select(path);CompletableFuture<ResponseEnvelope> pending=transport==null?connect().thenCompose(ignored->{WatchTransport connectedTransport=select(path);if(connectedTransport==null){CompletableFuture<ResponseEnvelope> failed=new CompletableFuture<>();failed.completeExceptionally(new IllegalStateException("WATCH_OFFLINE"));return failed;}return connectedTransport.request(request);}):transport.request(request);return pending.thenApply(response->{lastSeen=System.currentTimeMillis();lastRequest=lastSeen;publish();if(response.status>=400)throw new RuntimeException("WATCH_"+response.status+" "+response.body);return response;});}
+    public CompletableFuture<ResponseEnvelope> request(String method,String path,String body,long ttlMillis){
+        RequestEnvelope request=RequestEnvelope.create(method,path,body,ttlMillis);
+        WatchTransport transport=select(path);
+        CompletableFuture<ResponseEnvelope> pending;
+        if(transport==null){
+            pending=connect().thenCompose(ignored->{
+                WatchTransport connectedTransport=select(path);
+                if(connectedTransport==null){
+                    CompletableFuture<ResponseEnvelope> failed=new CompletableFuture<>();
+                    failed.completeExceptionally(new IllegalStateException("WATCH_OFFLINE"));
+                    return failed;
+                }
+                return requestWithFallback(method,request,connectedTransport);
+            });
+        }else pending=requestWithFallback(method,request,transport);
+        return pending.thenApply(response->{lastSeen=System.currentTimeMillis();lastRequest=lastSeen;publish();if(response.status>=400)throw new RuntimeException("WATCH_"+response.status+" "+response.body);return response;});
+    }
+
+    private CompletableFuture<ResponseEnvelope> requestWithFallback(String method,
+            RequestEnvelope request, WatchTransport transport){
+        CompletableFuture<ResponseEnvelope> first=transport.request(request);
+        if(transport!=lan || !TransportFallbackPolicy.shouldRetryOnBle(method,
+                TransportType.LAN,ble.isAvailable())) return first;
+        CompletableFuture<ResponseEnvelope> result=new CompletableFuture<>();
+        first.whenComplete((response,error)->{
+            if(error==null){result.complete(response);return;}
+            // A remembered LAN address can outlive the Wi-Fi session. Mark it degraded and
+            // replay only idempotent reads over the already-authenticated BLE link.
+            lanVerified=false;
+            if(state==ConnectionState.CONNECTED_LAN||state==ConnectionState.CONNECTED_BLE_LAN)
+                setState(ConnectionState.CONNECTED_BLE,"lan_request_failed");
+            long retryTtl=request.expiresAt<=0L?0L:Math.max(5_000L,
+                    request.expiresAt-request.createdAt);
+            RequestEnvelope retry=RequestEnvelope.create(request.method,request.path,
+                    request.body,retryTtl);
+            ble.request(retry).whenComplete((bleResponse,bleError)->{
+                if(bleError==null)result.complete(bleResponse);
+                else result.completeExceptionally(error);
+            });
+        });
+        return result;
+    }
     public String requestBlocking(String method,String path,String body,long ttlMillis)throws Exception{return request(method,path,body,ttlMillis).get(Math.max(5_000L,ttlMillis<=0?20_000L:ttlMillis+2_000L),TimeUnit.MILLISECONDS).body;}
     private WatchTransport select(String path){boolean control=path.equals("/v1/status")||path.startsWith("/v1/control/")||path.equals("/v1/location")||path.equals("/v1/sync/operations")||path.startsWith("/v1/plan");if(control&&ble.isAvailable()&&(state==ConnectionState.CONNECTED_BLE||state==ConnectionState.CONNECTED_BLE_LAN||state==ConnectionState.SYNCING))return ble;if(!control&&lanVerified&&lan.isAvailable())return lan;if(ble.isAvailable()&&(state==ConnectionState.CONNECTED_BLE||state==ConnectionState.CONNECTED_BLE_LAN||state==ConnectionState.DEGRADED_BLE))return ble;if(lanVerified&&lan.isAvailable())return lan;return null;}
     public synchronized void disconnect(){reconnectScheduled=false;ble.disconnect();lan.disconnect();lanVerified=false;setState(ConnectionState.DISCONNECTED,"requested");}

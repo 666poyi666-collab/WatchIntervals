@@ -31,6 +31,7 @@ final class CloudV3Sync {
     private static final String STATE = "state";
     private static final String STATE_BACKUP_PREFIX = "state_backup_device_change_";
     private static final int MAX_ITEMS = 25;
+    private static final int MAX_DRAIN_ROUNDS = 8;
     private static final int MAX_RESPONSE_BYTES = 1_500_000;
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
@@ -120,7 +121,7 @@ final class CloudV3Sync {
             boolean collectBeforeBuild = collectDeviceData
                     && state.optJSONObject("activeRequest") == null;
             int cursorResets = 0;
-            for (int round = 0; round < 2; round++) {
+            for (int round = 0; round < MAX_DRAIN_ROUNDS; round++) {
                 JSONObject active = state.optJSONObject("activeRequest");
                 if (active != null && !activeMatchesCredential(active, config)) {
                     state.remove("activeRequest");
@@ -187,10 +188,10 @@ final class CloudV3Sync {
                     return SyncOutcome.PERMANENT_FAILURE;
                 }
                 if (responseOutcome[0] != null) return responseOutcome[0];
-                if (!producedResults[0]) break;
+                if (!shouldContinueDrain(state, producedResults[0])) break;
                 collectBeforeBuild = false;
             }
-            if (state.optJSONArray("commandResults").length() > 0) {
+            if (shouldContinueDrain(state, false)) {
                 EncryptedWatchSyncWorker.schedule(context);
             }
             return SyncOutcome.SUCCESS;
@@ -207,17 +208,25 @@ final class CloudV3Sync {
         try { collectWorkouts(state, outbox, new JSONArray(
                 watch.requestBlocking("GET", "/v1/history", "", 20_000L))); }
         catch (Exception unavailable) { /* WorkManager/reconnect will compensate. */ }
+        JSONObject sleep = PhoneSleepRepository.load(context);
         try {
-            JSONObject sleep = new JSONObject(watch.requestBlocking(
-                    "GET", "/v1/sleep?days=31", "", 25_000L));
+            sleep = PhoneSleepSync.fetchRecent(watch, 31);
             try {
                 PhoneSleepRepository.mergeAndSave(context, sleep, System.currentTimeMillis());
             } catch (Exception cacheError) {
                 android.util.Log.w("WatchCloudV3", "Unable to persist phone sleep cache",
                         cacheError);
             }
-            collectSleep(state, outbox, sleep.optJSONArray("records"));
         } catch (Exception unavailable) { /* A temporary read failure is not a deletion. */ }
+        if (sleep != null) collectSleep(state, outbox, sleep.optJSONArray("records"));
+    }
+
+    static boolean shouldContinueDrain(JSONObject state, boolean producedCommandResults) {
+        if (producedCommandResults) return true;
+        JSONArray outbox = state == null ? null : state.optJSONArray("outbox");
+        JSONArray commands = state == null ? null : state.optJSONArray("commandResults");
+        return outbox != null && outbox.length() > 0
+                || commands != null && commands.length() > 0;
     }
 
     private static void collectPlan(Context context, JSONObject state, JSONArray outbox)

@@ -631,5 +631,17 @@
 - OPPO 健康安装边界：静态证据确认手机 `com.heytap.health` 的关键 provider/service 受厂商 signature 权限和非导出组件保护；重签包不能覆盖厂商签名包，也得不到相同权限。正确链路仍是独立 Phone APK ↔ 独立 Watch APK ↔ 手表已安装的 `com.heytap.wearable.health` HealthKit bridge；本批没有修改、重签、覆盖或提交任何厂商 APK。
 - 自动化门禁：隔离输出目录执行 `:app:testDebugUnitTest :phone:testDebugUnitTest :app:lintDebug :phone:lintDebug :app:assembleDebug :phone:assembleDebug --rerun-tasks --no-daemon`，98 tasks 全部成功；Watch 57/57、Phone 98/98，两个模块均 0 test failure/error、Lint 0 error（Watch 40 warning、Phone 29 warning）。`git diff --check` 与 15 份已跟踪 Markdown 本地链接检查通过。
 - 模拟器证据：API 35、1080×2340 覆盖亮色设置/计划、睡眠空态、离线双 session 总览、2.0× 字体和 app drawer；UI hierarchy 确认四目的地可访问名称/选中状态及阶段图描述。证据位于忽略目录 `.gradle/codex-build-20260803-ux/ui`，不进入 Git。
-- 最终 debug APK：Watch `0.21.1`（32）8,482,170 bytes，SHA-256 `677AA79A9C373111A27F91DD04B92FE2AD24F447B9D76CA8394F3EB890F792AF`；Phone `0.23.0`（19）8,620,957 bytes，SHA-256 `F593BF49E9472482EDDDE95891765C8B790BE5860567D53DE5002B72AA76F9AF`。产物位于忽略的 `.gradle/codex-build-20260803-ux/{app,phone}/outputs/apk/debug/`，不进入 Git。
+- 最终 debug APK：2026-08-04 以设备链既有 debug 证书重新构建后，Watch `0.21.1`（32）8,482,170 bytes，SHA-256 `CBEFBE289EE9328C148FC7FE87BB78C012FA8C7526F7CB34319F92986C1687B3`；Phone `0.23.0`（19）8,620,957 bytes，SHA-256 `345FF2B843D6C2A60C004FA9452B32E4798E1FAEFD0B4FB1684549E2609190DB`。两包证书 SHA-256 均为 `7EB76B41EE20B76E877282F63D5468C016F09AED4513F5985F524ED325915FCD`；产物位于忽略的 `.gradle/codex-build-20260803-ux/{app,phone}/outputs/apk/debug/`，不进入 Git。
 - 外部门禁：2026-08-03 最终设备探测只见临时 API 35 模拟器；最新 Phone APK 覆盖安装并冷启动成功后已停止模拟器，当前 ADB/mDNS 无设备。Xiaomi xaga 与 OWW221 均未在线，故没有对真实设备执行覆盖安装，也无法复现用户再次报告的偶发连接失败。关闭条件唯一且明确：两台设备上线并授权 ADB 后安装上述两个候选，执行 Phone PT-026/027/028、Watch WT-026/027，并按 BUG-016 保存双端断联/退避/GATT/恢复证据；户外 GNSS/心率及 Phone Doze/重启继续按既有用例验收。
+
+## 2026-08-04：OWW221 USB 覆盖安装与稳定签名恢复
+
+- 目标：用户用数据线连接 OWW221 后，把最新 Watch 候选覆盖安装到真实手表并保留现有业务数据；同时修正已发送的双端安装包签名，避免 Phone 后续出现相同更新冲突。
+- 设备识别：Windows 先识别到 `OWW221` 与 `ADB Interface`，USB 接触短暂掉线；用户重新压紧连接并确认调试后，ADB 状态恢复为 `device`。安装目标经 `ro.product.model=OWW221` 与 378×496 物理画布双重确认，未向其他设备安装。
+- 首次 `install -r` 被 Android 以 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 安全拒绝，旧包和数据未改变。APK 画像确认手表现有包证书 SHA-256 为 `7EB76B41EE20B76E877282F63D5468C016F09AED4513F5985F524ED325915FCD`，隔离输出目录中的陈旧 APK 则为另一张临时 debug 证书。匹配设备链的标准 debug keystore 仍在本机，`:app:signingReport :phone:signingReport` 均指向该证书，因此不需要卸载、重签厂商包或迁移应用数据。
+- 强制重建：执行 `:app:assembleDebug :phone:assembleDebug --rerun-tasks --no-daemon`，68 tasks 成功；新 Watch/Phone APK 的签名证书均与已安装 Watch 一致。最终 Watch SHA-256 为 `CBEFBE289EE9328C148FC7FE87BB78C012FA8C7526F7CB34319F92986C1687B3`，Phone 为 `345FF2B843D6C2A60C004FA9452B32E4798E1FAEFD0B4FB1684549E2609190DB`。
+- 覆盖安装：OWW221 `adb install -r` 返回 `Success`；安装前后均为 Watch `0.21.1`（32），首次安装时间保持不变，私有 `files/` 文件计数保持 76。设备包管理器路径拉回的 `base.apk` SHA-256 与本地 Watch APK 完全一致，进程存活，`am start -W` 返回 `Status: ok`，存在可恢复训练会话时顶层 Activity 直接为 `TrainingActivity`。
+- Phone 覆盖安装：随后经 USB 识别 `xaga / 22041216C / Android 15`，只选择该设备而排除同时在线的 OWW221。现有 Phone 与候选证书一致，`adb install -r` 返回 `Success`；安装前后均为 Phone `0.23.0`（19），首次安装时间保持不变，私有 `files/` 计数保持 37。设备回读 `base.apk` SHA-256 与本地 `345FF2B843D6C2A60C004FA9452B32E4798E1FAEFD0B4FB1684549E2609190DB` 完全一致，`MainActivity` 进程运行。
+- 基础 BLE 证据：双端安装后 Watch 日志确认 `advertising_ready`，随后 GATT `state=2/status=0`、MTU 517、四项订阅成功并出现 `secure_session_ready`。这证明当前候选安装后一次安全会话自动恢复，不证明偶发断联已关闭，也不替代双端重启、蓝牙开关、分页续传和非充电长测。
+- 隐私处理：尝试只读截图烟测时捕获画面与目标 Activity 不一致，不能作为 PT-026 证据；本地 PNG 和 UI hierarchy XML 已立即永久删除，没有写入 Git、文档附件或安装包。
+- 验证边界：本批证明两端 USB 识别、同签名覆盖、数据保留、APK 字节一致、进程启动、Watch 活动训练入口恢复和一次基础安全 BLE 重连；未主动暂停或结束用户现有会话，也未冒充 PT-026/027/028、WT-026/027 或 BLE-004/005/009/010 的完整验证。

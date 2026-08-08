@@ -148,6 +148,13 @@ git diff --check
 | PT-027 | 原创图标与启动器一致性 | 并排检查 Phone/Watch 普通、圆形/方圆/水滴启动器蒙版，Phone Android 13 themed icon、深浅壁纸及底栏四种选中态；双端“间歇路线”path、颜色、背景和安全区一致，单色层可辨，训练小人在 34–38dp 无折断感，底栏不出现 OEM 字体替代符 |
 | PT-028 | 睡眠离线缓存 | 在线读取最近 31 天后记录更新时间并断开 BLE/LAN、重启 Phone；再次进入睡眠页，再模拟刷新失败、空响应和损坏缓存 | 断连/暂时失败仍显示最后成功的完整 record/session/stage 与阶段总览并标注缓存时间；失败或空响应不清空有效数据；损坏缓存安全显示空态并可在下次成功刷新后恢复 |
 
+### 2026-08-04 双端覆盖安装烟测
+
+- OWW221 经 USB `install -r` 覆盖 Watch `0.21.1`（32）：首次安装时间不变，私有文件计数 76→76，设备回读 APK SHA-256 与本地候选一致；冷启动 `Status: ok`，存在可恢复会话时顶层为 `TrainingActivity`。
+- Xiaomi xaga 经 USB `install -r` 覆盖 Phone `0.23.0`（19）：首次安装时间不变，私有文件计数 37→37，设备回读 APK SHA-256 与本地候选一致，`MainActivity` 进程运行。
+- 两端安装后 Watch 观察到 GATT `state=2/status=0`、MTU 517、订阅成功和 `secure_session_ready`，只判定一次基础安全重连通过；未据此判定 BLE-004/005/009/010、PT-026/027/028 或 WT-026/027 通过。
+- Phone 可视截图因捕获时前台页面与目标 Activity 不一致而作废；本地 PNG/UI XML 已立即永久删除，不含该截图的项目证据或提交。
+
 ## 5. MCP/API 回归
 
 | ID | 验证 |

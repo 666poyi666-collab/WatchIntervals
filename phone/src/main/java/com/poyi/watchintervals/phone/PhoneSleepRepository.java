@@ -44,14 +44,33 @@ final class PhoneSleepRepository {
         ArrayList<JSONObject> sorted = new ArrayList<>(records.values());
         sorted.sort(Comparator.comparingLong(PhoneSleepRepository::recordTimestamp).reversed());
         JSONArray output = new JSONArray();
-        for (int index = 0; index < sorted.size() && index < MAX_RECORDS; index++) {
-            output.put(sorted.get(index));
-        }
         int requestedDays = Math.max(incoming.optInt("requestedDays", 0),
                 cached == null ? 0 : cached.optInt("requestedDays", 0));
         boolean incomingHasRecords = incoming.optJSONArray("records").length() > 0;
         boolean cachedHasRecords = cached != null && cached.optJSONArray("records") != null
                 && cached.optJSONArray("records").length() > 0;
+        boolean useIncomingMetadata = incomingHasRecords || !cachedHasRecords;
+        boolean completeValue = useIncomingMetadata
+                ? incoming.optBoolean("complete", false)
+                : cached != null && cached.optBoolean("complete", false);
+        boolean hasMoreValue = useIncomingMetadata
+                ? incoming.optBoolean("hasMore", false)
+                : cached != null && cached.optBoolean("hasMore", false);
+        long coverageStart = Math.max(0L, useIncomingMetadata
+                ? incoming.optLong("coverageStart")
+                : cached == null ? 0L : cached.optLong("coverageStart"));
+        long coverageEnd = Math.max(0L, useIncomingMetadata
+                ? incoming.optLong("coverageEnd")
+                : cached == null ? 0L : cached.optLong("coverageEnd"));
+        boolean completeWindow = incomingHasRecords && completeValue;
+        for (JSONObject record : sorted) {
+            long timestamp = recordTimestamp(record);
+            if (completeWindow && coverageStart > 0L && timestamp > 0L
+                    && (timestamp < coverageStart
+                    || (coverageEnd > coverageStart && timestamp > coverageEnd))) continue;
+            output.put(record);
+            if (output.length() >= MAX_RECORDS) break;
+        }
         long dataCachedAt = incomingHasRecords || !cachedHasRecords ? cachedAt
                 : cached.optLong("cachedAt", 0L);
         return new JSONObject().put("schemaVersion", SCHEMA_VERSION)
@@ -59,7 +78,12 @@ final class PhoneSleepRepository {
                 .put("requestedDays", requestedDays)
                 .put("cachedAt", Math.max(0L, dataCachedAt))
                 .put("lastCheckedAt", Math.max(0L, cachedAt))
-                .put("sourceFetchedAt", incoming.optLong("fetchedAt", cachedAt))
+                .put("sourceFetchedAt", useIncomingMetadata
+                        ? incoming.optLong("fetchedAt", cachedAt)
+                        : cached == null ? 0L : cached.optLong("sourceFetchedAt", 0L))
+                .put("complete", completeValue)
+                .put("hasMore", hasMoreValue)
+                .put("coverageStart", coverageStart).put("coverageEnd", coverageEnd)
                 .put("records", output);
     }
 
@@ -89,8 +113,13 @@ final class PhoneSleepRepository {
                     .put("source", source.optString("source", "system_healthkit"))
                     .put("requestedDays", Math.max(0, source.optInt("requestedDays", 0)))
                     .put("cachedAt", cachedAt)
+                    .put("lastCheckedAt", Math.max(0L, source.optLong("lastCheckedAt", cachedAt)))
                     .put("sourceFetchedAt", Math.max(0L,
                             source.optLong("sourceFetchedAt", source.optLong("fetchedAt", 0L))))
+                    .put("complete", source.optBoolean("complete", false))
+                    .put("hasMore", source.optBoolean("hasMore", false))
+                    .put("coverageStart", Math.max(0L, source.optLong("coverageStart")))
+                    .put("coverageEnd", Math.max(0L, source.optLong("coverageEnd")))
                     .put("records", cleanRecords);
         } catch (Exception corrupt) {
             return null;
@@ -115,12 +144,14 @@ final class PhoneSleepRepository {
     }
 
     private static String recordKey(JSONObject record) {
-        long timestamp = recordTimestamp(record);
+        long timestamp = Math.max(0L, record.optLong("timestamp"));
+        if (timestamp <= 0L) timestamp = recordTimestamp(record);
         return timestamp > 0L ? "time:" + timestamp : "raw:" + record.toString();
     }
 
     private static long recordTimestamp(JSONObject record) {
         long timestamp = Math.max(0L, record.optLong("timestamp"));
+        if (timestamp > 0L) return timestamp;
         JSONArray sessions = record.optJSONArray("sessions");
         if (sessions == null) return timestamp;
         for (int index = 0; index < sessions.length(); index++) {

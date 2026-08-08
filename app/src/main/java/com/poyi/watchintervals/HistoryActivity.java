@@ -5,7 +5,6 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.content.Intent;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -18,12 +17,14 @@ import java.util.Calendar;
 public class HistoryActivity extends Activity {
     private WorkoutRecord selected;
     private SwipeTracker swipeTracker;
+    private final WatchInteractionPolicy.ConfirmationGate deleteConfirmationGate =
+            new WatchInteractionPolicy.ConfirmationGate();
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         swipeTracker = new SwipeTracker(this, new SwipeTracker.Listener() {
-            @Override public void onSwipeRight() { if (selected == null) startActivity(new Intent(HistoryActivity.this, PlanActivity.class)); }
-            @Override public void onSwipeLeft() { if (selected == null) startActivity(new Intent(HistoryActivity.this, PlanActivity.class)); }
+            @Override public void onSwipeRight() { handleHistorySwipe(true); }
+            @Override public void onSwipeLeft() { handleHistorySwipe(false); }
         });
         String recordId=getIntent().getStringExtra("record_id");
         WorkoutRecord record=recordId==null?null:HistoryStore.find(this,recordId);
@@ -32,6 +33,7 @@ public class HistoryActivity extends Activity {
 
     private void showList() {
         selected = null;
+        deleteConfirmationGate.cancel();
         LinearLayout root = base();
         root.addView(header("训练历史", this::finish));
         List<WorkoutRecord> records = HistoryStore.load(this);
@@ -99,6 +101,7 @@ public class HistoryActivity extends Activity {
         WorkoutRecord loaded = HistoryStore.find(this, summaryRecord.id);
         WorkoutRecord record = loaded != null ? loaded : summaryRecord;
         selected = record;
+        deleteConfirmationGate.cancel();
         LinearLayout page = base();
         page.addView(header("训练详情", this::showList));
         LinearLayout identity = new LinearLayout(this); identity.setGravity(Gravity.CENTER_VERTICAL);
@@ -174,8 +177,52 @@ public class HistoryActivity extends Activity {
         TextView delete = Ui.action(this, "删除本次记录", 15, Ui.RED, Ui.PANEL);
         LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 48));
         deleteParams.topMargin = Ui.dp(this, 12); page.addView(delete, deleteParams);
-        delete.setOnClickListener(v -> { HistoryStore.delete(this, record.id); showList(); });
+        LinearLayout deleteConfirmation = buildDeleteConfirmation(record, delete);
+        LinearLayout.LayoutParams confirmationParams = new LinearLayout.LayoutParams(-1, Ui.dp(this, 128));
+        confirmationParams.topMargin = Ui.dp(this, 12); page.addView(deleteConfirmation, confirmationParams);
+        delete.setOnClickListener(v -> {
+            deleteConfirmationGate.request();
+            delete.setVisibility(View.GONE);
+            deleteConfirmation.setVisibility(View.VISIBLE);
+            deleteConfirmation.requestFocus();
+        });
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);scroll.addView(page,new ScrollView.LayoutParams(-1,-2));setContentView(scroll);
+    }
+
+    private LinearLayout buildDeleteConfirmation(WorkoutRecord record, TextView deleteAction) {
+        LinearLayout panel = Ui.card(this);
+        panel.setVisibility(View.GONE);
+        panel.setFocusable(true);
+        panel.addView(Ui.bold(this, "删除这次记录？", 17, Ui.WHITE),
+                new LinearLayout.LayoutParams(-1, Ui.dp(this, 26)));
+        panel.addView(Ui.text(this, "删除后无法恢复", Ui.CAPTION, Ui.MUTED),
+                new LinearLayout.LayoutParams(-1, Ui.dp(this, 24)));
+        LinearLayout choices = new LinearLayout(this);
+        TextView cancel = Ui.action(this, "取消", 14, Ui.WHITE, Ui.PANEL_ACTIVE);
+        TextView confirm = Ui.action(this, "确认删除", 14, Ui.WHITE, Ui.RED);
+        LinearLayout.LayoutParams cancelParams =
+                new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1);
+        cancelParams.rightMargin = Ui.dp(this, 7);
+        choices.addView(cancel, cancelParams);
+        choices.addView(confirm, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1));
+        panel.addView(choices);
+        cancel.setOnClickListener(v -> {
+            deleteConfirmationGate.cancel();
+            panel.setVisibility(View.GONE);
+            deleteAction.setVisibility(View.VISIBLE);
+            deleteAction.requestFocus();
+        });
+        confirm.setOnClickListener(v -> {
+            if (!deleteConfirmationGate.confirm()) return;
+            HistoryStore.delete(this, record.id);
+            showList();
+        });
+        return panel;
+    }
+
+    private void handleHistorySwipe(boolean swipedRight) {
+        if (WatchInteractionPolicy.historySwipeAction(swipedRight)
+                == WatchInteractionPolicy.HistorySwipeAction.FINISH) finish();
     }
 
     /** Duration, pace and heart rate — the line a runner scans a log by. Steps only stand in

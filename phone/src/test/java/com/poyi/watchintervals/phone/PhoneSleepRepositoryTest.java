@@ -46,7 +46,8 @@ public class PhoneSleepRepositoryTest {
 
     @Test public void emptySuccessfulReadKeepsTheOriginalDataFreshness() throws Exception {
         JSONObject cached = ready(31, new JSONArray().put(record(42L, 88)))
-                .put("cachedAt", 1234L);
+                .put("cachedAt", 1234L).put("complete", true)
+                .put("coverageStart", 10L).put("coverageEnd", 50L);
 
         JSONObject merged = PhoneSleepRepository.merge(cached,
                 ready(31, new JSONArray()), 9999L);
@@ -54,6 +55,8 @@ public class PhoneSleepRepositoryTest {
         assertEquals(1, merged.getJSONArray("records").length());
         assertEquals(1234L, merged.getLong("cachedAt"));
         assertEquals(9999L, merged.getLong("lastCheckedAt"));
+        assertEquals(10L, merged.getLong("coverageStart"));
+        assertEquals(50L, merged.getLong("coverageEnd"));
     }
 
     @Test public void legacyCacheIsDeduplicatedSortedAndBoundedOnRead() throws Exception {
@@ -90,6 +93,35 @@ public class PhoneSleepRepositoryTest {
         assertEquals(31, records.length());
         assertEquals(40L, records.getJSONObject(0).getLong("timestamp"));
         assertEquals(10L, records.getJSONObject(30).getLong("timestamp"));
+    }
+
+    @Test public void completeNonEmptyWindowPrunesRecordsOutsideCoverage() throws Exception {
+        JSONObject cached = ready(31, new JSONArray().put(record(500L, 70))
+                .put(record(200L, 80)).put(record(50L, 90)));
+        JSONObject incoming = ready(31, new JSONArray().put(record(500L, 95)))
+                .put("complete", true).put("coverageStart", 100L).put("coverageEnd", 600L);
+
+        JSONArray records = PhoneSleepRepository.merge(cached, incoming, 700L)
+                .getJSONArray("records");
+
+        assertEquals(2, records.length());
+        assertEquals(500L, records.getJSONObject(0).getLong("timestamp"));
+        assertEquals(200L, records.getJSONObject(1).getLong("timestamp"));
+    }
+
+    @Test public void recordIdentityDoesNotChangeWhenEarlierSessionArrives() throws Exception {
+        JSONObject old = record(500L, 70);
+        JSONObject updated = record(500L, 95);
+        updated.getJSONArray("sessions").put(new JSONObject().put("startTime", 100L)
+                .put("stages", new JSONArray()));
+
+        JSONArray records = PhoneSleepRepository.merge(ready(31,
+                new JSONArray().put(old)), ready(31, new JSONArray().put(updated)), 700L)
+                .getJSONArray("records");
+
+        assertEquals(1, records.length());
+        assertEquals(95, records.getJSONObject(0).getInt("sleepScore"));
+        assertEquals(2, records.getJSONObject(0).getJSONArray("sessions").length());
     }
 
     private static JSONObject ready(int days, JSONArray records) throws Exception {

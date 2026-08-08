@@ -40,6 +40,7 @@ public class PhoneBootReceiver extends BroadcastReceiver {
             // watchdog tick retries, so this must not take the receiver down.
             android.util.Log.w("PhoneBootReceiver", "service start deferred", error);
         }
+        PhoneSleepSyncWorker.schedule(context);
     }
 
     /**

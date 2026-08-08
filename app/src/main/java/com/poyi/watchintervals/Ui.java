@@ -24,6 +24,7 @@ import android.widget.TextView;
 
 final class Ui {
     private static final float WATCH_SCALE = 1.35f;
+    private static final float MIN_TOUCH_TARGET = 40f;
     private static final PathInterpolator PRESS_IN = new PathInterpolator(.2f, 0f, .2f, 1f);
     private static final PathInterpolator PRESS_OUT = new PathInterpolator(.33f, 0f, .67f, 1f);
 
@@ -79,17 +80,39 @@ final class Ui {
         return Math.round(value * scale(context));
     }
 
-    static TextView text(Context context, String value, float sizeDp, int color) {
-        TextView view = new TextView(context);
+    /**
+     * Respect the system's readable-text preference without letting a 378 x 496 fixed-height
+     * instrument panel collapse. Body copy gets the largest bounded increase; hero workout
+     * figures keep their calibrated size because their surrounding unit/label already conveys
+     * the value and their rows cannot safely grow.
+     */
+    private static float textScale(Context context, float sizeDp) {
+        float requested = context.getResources().getConfiguration().fontScale;
+        if (!Float.isFinite(requested) || requested <= 0f) requested = 1f;
+        if (sizeDp > TITLE) return 1f;
+        float maximum = sizeDp <= BODY ? 1.25f : sizeDp <= HEADLINE ? 1.20f : 1.12f;
+        return Math.max(.90f, Math.min(maximum, requested));
+    }
+
+    private static float textPixels(Context context, float sizeDp) {
+        return sizeDp * scale(context) * textScale(context, sizeDp);
+    }
+
+    private static <T extends TextView> T configureText(
+            T view, Context context, String value, float sizeDp, int color) {
         view.setText(value);
         view.setTextColor(color);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, sizeDp * scale(context));
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textPixels(context, sizeDp));
         view.setGravity(Gravity.CENTER_VERTICAL);
         view.setIncludeFontPadding(false);
         view.setLetterSpacing(0);
         view.setSingleLine(true);
         view.setEllipsize(TextUtils.TruncateAt.END);
         return view;
+    }
+
+    static TextView text(Context context, String value, float sizeDp, int color) {
+        return configureText(new TextView(context), context, value, sizeDp, color);
     }
 
     static TextView bold(Context context, String value, float sizeDp, int color) {
@@ -169,7 +192,9 @@ final class Ui {
     }
 
     static TextView action(Context context, String value, float sizeDp, int foreground, int background) {
-        TextView view = bold(context, value, sizeDp, foreground);
+        TextView view = configureText(new MinimumTouchTargetTextView(context),
+                context, value, sizeDp, foreground);
+        view.setTypeface(Typeface.create("sans", Typeface.BOLD));
         view.setGravity(Gravity.CENTER);
         view.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.argb(45, 255, 255, 255)), background(context, background, 16), null));
         view.setClickable(true);
@@ -183,6 +208,9 @@ final class Ui {
      * it adds physical feedback without forcing a layout pass or allocating a new drawable.
      */
     static <T extends View> T pressable(T view) {
+        int minimum = dp(view.getContext(), MIN_TOUCH_TARGET);
+        view.setMinimumWidth(Math.max(view.getMinimumWidth(), minimum));
+        view.setMinimumHeight(Math.max(view.getMinimumHeight(), minimum));
         view.setOnTouchListener((target, event) -> {
             if (!target.isEnabled()) return false;
             int action = event.getActionMasked();
@@ -211,6 +239,28 @@ final class Ui {
             return false;
         });
         return view;
+    }
+
+    /**
+     * Layouts predating the accessibility pass still request 34/36dp back discs. Android's
+     * ordinary minimum size loses to an EXACTLY spec, so actions enforce the 40dp hit target at
+     * measurement time. The largest growth is 6dp and fits the existing 40dp watch headers.
+     */
+    private static final class MinimumTouchTargetTextView extends TextView {
+        private final int minimumTarget;
+
+        MinimumTouchTargetTextView(Context context) {
+            super(context);
+            minimumTarget = dp(context, MIN_TOUCH_TARGET);
+            setMinimumWidth(minimumTarget);
+            setMinimumHeight(minimumTarget);
+        }
+
+        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            setMeasuredDimension(Math.max(getMeasuredWidth(), minimumTarget),
+                    Math.max(getMeasuredHeight(), minimumTarget));
+        }
     }
 
     /** One-shot entrance for countdown figures and transient workout cards. */
@@ -354,7 +404,7 @@ final class Ui {
             fill.setStyle(Paint.Style.FILL);
             panel.setColor(Color.rgb(12, 14, 16));
             guide.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-            guide.setTextSize(11f * scale(context));
+            guide.setTextSize(textPixels(context, 11f));
         }
 
         void setExpanded(boolean value) {
@@ -583,9 +633,11 @@ final class Ui {
         return view;
     }
 
-    /** Circular back affordance shared by every secondary screen (36dp panel disc with "‹"). */
+    /** Circular back affordance shared by every secondary screen (minimum 40dp hit target). */
     static TextView backButton(Context context) {
-        TextView view = bold(context, "‹", 22, WHITE);
+        TextView view = configureText(new MinimumTouchTargetTextView(context),
+                context, "‹", 22, WHITE);
+        view.setTypeface(Typeface.create("sans", Typeface.BOLD));
         view.setGravity(Gravity.CENTER);
         view.setBackground(new RippleDrawable(
                 ColorStateList.valueOf(Color.argb(45, 255, 255, 255)), oval(PANEL), null));
@@ -656,6 +708,7 @@ final class Ui {
             this.active = active;
             radius = dp(context, 2.6f);
             spacing = dp(context, 9f);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
         void setActive(int value) {

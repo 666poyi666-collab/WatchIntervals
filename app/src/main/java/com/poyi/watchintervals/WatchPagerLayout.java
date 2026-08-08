@@ -3,14 +3,19 @@ package com.poyi.watchintervals;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.os.Bundle;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.Interpolator;
 import android.widget.Scroller;
+
+import java.util.IdentityHashMap;
 
 /** Pixel-following watch pager modeled after the system sports TossViewPager behavior. */
 final class WatchPagerLayout extends ViewGroup {
@@ -31,6 +36,8 @@ final class WatchPagerLayout extends ViewGroup {
     private static final float EDGE_DAMPING = 3f;
     /** Fraction of the page width the RAW finger travel past the edge must cover to exit. */
     private static final float EXIT_FRACTION = 0.22f;
+    /** A pager class name TalkBack already understands, without taking a ViewPager dependency. */
+    private static final String ACCESSIBILITY_CLASS_NAME = "androidx.viewpager.widget.ViewPager";
 
     private final Scroller scroller;
     private final int touchSlop, minimumVelocity, maximumVelocity;
@@ -50,6 +57,10 @@ final class WatchPagerLayout extends ViewGroup {
     private int gestureStartItem;
     private OnExitListener exitListener;
     private OnPageSettledListener pageSettledListener;
+    /** Preserve each page's own accessibility choice while it is the visible page. */
+    private final IdentityHashMap<View, Integer> pageAccessibilityImportance =
+            new IdentityHashMap<>();
+    private boolean pendingAccessibilityPageChange;
     private final Paint indicatorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Runnable warmStaticPageLayers = () -> {
         // buildLayer() may synchronously rasterize a full 378 x 496 page. Never let a delayed
@@ -75,6 +86,7 @@ final class WatchPagerLayout extends ViewGroup {
         minimumVelocity = Math.max(config.getScaledMinimumFlingVelocity(), systemPagerVelocity);
         maximumVelocity = config.getScaledMaximumFlingVelocity();
         setFocusable(true);
+        setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
         setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
         setMotionEventSplittingEnabled(false);
         setOverScrollMode(OVER_SCROLL_NEVER);
@@ -101,6 +113,100 @@ final class WatchPagerLayout extends ViewGroup {
         ViewGroup group = (ViewGroup) view;
         for (int index = 0; index < group.getChildCount(); index++) {
             setEmbeddedDotsVisibility(group.getChildAt(index), visibility);
+        }
+    }
+
+    @Override public void onViewAdded(View child) {
+        super.onViewAdded(child);
+        pageAccessibilityImportance.put(child, child.getImportantForAccessibility());
+        updatePageAccessibility();
+    }
+
+    @Override public void onViewRemoved(View child) {
+        pageAccessibilityImportance.remove(child);
+        super.onViewRemoved(child);
+        currentItem = clampPage(currentItem);
+        updatePageAccessibility();
+    }
+
+    /**
+     * Off-screen pages are still laid out beside the viewport, so TalkBack would otherwise walk
+     * into controls the user cannot see. Keep only the selected page's subtree exposed and
+     * restore that page's original importance instead of blindly forcing its root focusable.
+     */
+    private void updatePageAccessibility() {
+        for (int index = 0; index < getChildCount(); index++) {
+            View child = getChildAt(index);
+            Integer original = pageAccessibilityImportance.get(child);
+            int desired = index == currentItem
+                    ? (original == null ? IMPORTANT_FOR_ACCESSIBILITY_AUTO : original)
+                    : IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS;
+            if (child.getImportantForAccessibility() != desired) {
+                child.setImportantForAccessibility(desired);
+            }
+        }
+    }
+
+    private String accessibilityPageStatus() {
+        int count = getChildCount();
+        if (count == 0) return "";
+        return "第" + (currentItem + 1) + "页，共" + count + "页";
+    }
+
+    @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        int count = getChildCount();
+        info.setClassName(ACCESSIBILITY_CLASS_NAME);
+        info.setScrollable(count > 1);
+        info.setScreenReaderFocusable(true);
+        if (count > 0) {
+            info.setCollectionInfo(AccessibilityNodeInfo.CollectionInfo.obtain(
+                    1, count, false,
+                    AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_SINGLE));
+            info.setStateDescription(accessibilityPageStatus());
+        }
+        if (currentItem > 0) {
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
+        }
+        if (currentItem + 1 < count) {
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
+        }
+    }
+
+    @Override public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        int count = getChildCount();
+        event.setClassName(ACCESSIBILITY_CLASS_NAME);
+        event.setScrollable(count > 1);
+        if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_SCROLLED && count > 0) {
+            event.setItemCount(count);
+            event.setFromIndex(currentItem);
+            event.setToIndex(currentItem);
+            event.setScrollX(currentItem);
+            event.setMaxScrollX(count - 1);
+            event.getText().add(accessibilityPageStatus());
+        }
+    }
+
+    @Override public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                && currentItem + 1 < getChildCount()) {
+            setCurrentItem(currentItem + 1, true);
+            return true;
+        }
+        if (action == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD && currentItem > 0) {
+            setCurrentItem(currentItem - 1, true);
+            return true;
+        }
+        return super.performAccessibilityAction(action, arguments);
+    }
+
+    private void dispatchPageChangedForAccessibility() {
+        if (!pendingAccessibilityPageChange) return;
+        pendingAccessibilityPageChange = false;
+        updatePageAccessibility();
+        if (isAttachedToWindow()) {
+            sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_SCROLLED);
         }
     }
 
@@ -311,6 +417,10 @@ final class WatchPagerLayout extends ViewGroup {
         int target = clampPage(item);
         boolean pageChanged = target != currentItem;
         currentItem = target;
+        if (pageChanged) {
+            pendingAccessibilityPageChange = true;
+            updatePageAccessibility();
+        }
         int destination = currentItem * getWidth();
         if (!smooth || getWidth() == 0) {
             scroller.abortAnimation();
@@ -320,6 +430,7 @@ final class WatchPagerLayout extends ViewGroup {
             if (pageSettledListener != null && getWidth() > 0) {
                 pageSettledListener.onPageSettled(currentItem);
             }
+            dispatchPageChangedForAccessibility();
             scheduleStaticLayerWarmup(120L);
             return;
         }
@@ -351,6 +462,7 @@ final class WatchPagerLayout extends ViewGroup {
         boolean notify = settling || forceNotify;
         settling = false;
         if (notify && pageSettledListener != null) pageSettledListener.onPageSettled(currentItem);
+        dispatchPageChangedForAccessibility();
         // Build a newly adjacent page after motion stops, never in ACTION_UP or the settle frame.
         scheduleStaticLayerWarmup(45L);
     }
